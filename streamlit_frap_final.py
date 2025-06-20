@@ -14,11 +14,13 @@ from math import log
 from scipy.optimize import curve_fit
 from scipy.ndimage import minimum_position
 import plotly.graph_objects as go
+import plotly.express as px
 from typing import Dict, Any, Optional, Tuple, List
 import logging
 from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
+from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 
 # --- Page and Logging Configuration ---
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
@@ -450,7 +452,7 @@ def plot_average_curve(group_files_data):
     return fig
 
 # --- Core Analysis and Data Logic ---
-class FRAPAnalysisCore:
+class FRAPAnalysisCore_Deprecated:
     @staticmethod
     def get_post_bleach_data(time, intensity):
         i_min = np.argmin(intensity)
@@ -622,14 +624,14 @@ class FRAPAnalysisCore:
 
     @staticmethod
     def fit_all_models(time,intensity):
-        t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+        t_fit, intensity_fit, _ = CoreFRAPAnalysis.get_post_bleach_data(time, intensity)
         fits, n = [], len(t_fit)
         if n < 3: return fits
         A0, C0, k0 = max(0.1, np.max(intensity_fit)-intensity_fit[0]), intensity_fit[0], 0.1
         models = {
-            'single':(FRAPAnalysisCore.single_component,[A0,k0,C0],([0,1e-6,-np.inf],[np.inf,np.inf,np.inf])),
-            'double':(FRAPAnalysisCore.two_component,[A0/2,k0*2,A0/2,k0/2,C0],([0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf])),
-            'triple':(FRAPAnalysisCore.three_component,[A0/3,k0*3,A0/3,k0,A0/3,k0/3,C0],([0,1e-6,0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf,np.inf,np.inf]))
+            'single':(CoreFRAPAnalysis.single_component,[A0,k0,C0],([0,1e-6,-np.inf],[np.inf,np.inf,np.inf])),
+            'double':(CoreFRAPAnalysis.two_component,[A0/2,k0*2,A0/2,k0/2,C0],([0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf])),
+            'triple':(CoreFRAPAnalysis.three_component,[A0/3,k0*3,A0/3,k0,A0/3,k0/3,C0],([0,1e-6,0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf,np.inf,np.inf]))
         }
         for name,(func,p0,bounds) in models.items():
             try:
@@ -638,8 +640,8 @@ class FRAPAnalysisCore:
                 rss = np.sum((intensity_fit-fitted)**2)
                 fits.append({
                     'model':name,'params':popt,'fitted_values':fitted,'rss':rss,'n_params':len(popt),
-                    'r2':FRAPAnalysisCore.compute_r_squared(intensity_fit,fitted),
-                    'aic':FRAPAnalysisCore.compute_aic(rss,n,len(popt))
+                    'r2':CoreFRAPAnalysis.compute_r_squared(intensity_fit,fitted),
+                    'aic':CoreFRAPAnalysis.compute_aic(rss,n,len(popt))
                 })
             except Exception as e: 
                 logger.error(f"{name}-fit failed: {e}")
@@ -693,12 +695,31 @@ class FRAPDataManager:
     
     def load_file(self,file_path,file_name):
         try:
-            processed_df = FRAPAnalysisCore.preprocess(FRAPAnalysisCore.load_data(file_path))
+            # Extract original extension before the hash suffix
+            original_path = file_path
+            if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
+                # Find the original extension and create a temporary file with correct extension
+                import tempfile
+                import shutil
+                if '.xlsx_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.xlsx')
+                elif '.xls_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.xls')
+                elif '.csv_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.csv')
+                else:
+                    temp_path = file_path
+                
+                if temp_path != file_path:
+                    shutil.copy2(file_path, temp_path)
+                    file_path = temp_path
+            
+            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
-                fits = FRAPAnalysisCore.fit_all_models(time,intensity)
-                best_fit = FRAPAnalysisCore.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = FRAPAnalysisCore.extract_kinetic_parameters(best_fit)
+                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
+                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                params = CoreFRAPAnalysis.compute_kinetic_details(best_fit)
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params
@@ -839,7 +860,7 @@ with tab1:
             st.subheader(f"Results for: {file_data['name']}")
             if file_data['best_fit']:
                 best_fit,params=file_data['best_fit'],file_data['features']
-                t_fit,intensity_fit,_=FRAPAnalysisCore.get_post_bleach_data(file_data['time'],file_data['intensity'])
+                t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
                 
                 # Enhanced metrics display
                 st.markdown("### Kinetic Analysis Results")
@@ -1011,7 +1032,7 @@ with tab2:
                 defaults=[c for c in ['mobile_fraction','immobile_fraction'] if c in opts]
                 outlier_check_features=st.multiselect("Check for outliers based on:",options=opts,default=defaults)
                 iqr_multiplier=st.slider("Outlier Sensitivity",1.0,3.0,1.5,0.1,help="Lower value = more sensitive.")
-                identified=FRAPAnalysisCore.identify_outliers(features_df,outlier_check_features,iqr_multiplier)
+                identified=CoreFRAPAnalysis.identify_outliers(features_df,outlier_check_features,iqr_multiplier)
                 excluded_paths=st.multiselect("Select files to EXCLUDE (outliers are pre-selected):",options=group['files'],default=identified,format_func=lambda p:dm.files[p]['name'])
             
             dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
