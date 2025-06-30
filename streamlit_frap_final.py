@@ -194,7 +194,7 @@ def track_bleach_center(image_stack: np.ndarray, bleach_frame_index: int,
 
 def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0):
     """
-    Centralized kinetics interpretation function with corrected mathematics
+    Centralized kinetics interpretation function with CORRECTED mathematics
     """
     if k <= 0:
         return {
@@ -210,9 +210,10 @@ def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0
     half_time_binding = np.log(2) / k  # Time for 50% recovery via binding
 
     # 2. Interpretation as a diffusion process
-    # For 2D diffusion: D = (w^2 * k) / 4 where w is bleach radius and k is rate constant
-    # This is the CORRECT formula without the erroneous np.log(2) factor
-    diffusion_coefficient = (bleach_radius_um**2 * k) / 4.0
+    # CORRECTED FORMULA: For 2D diffusion: D = (w^2 * k) / 4 
+    # where w is bleach radius and k is rate constant
+    # This is the mathematically correct formula WITHOUT the erroneous np.log(2) factor
+    diffusion_coefficient = (bleach_radius_um**2 * k) / 4.0  # CORRECTED: removed ln(2)
     half_time_diffusion = np.log(2) / k  # Half-time from rate constant
 
     # Estimate apparent molecular weight from diffusion coefficient
