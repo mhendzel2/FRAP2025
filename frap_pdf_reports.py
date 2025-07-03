@@ -412,7 +412,6 @@ def generate_pdf_report(data_manager, groups_to_compare=None, output_filename=No
     return output_filename
 
 # Import centralized kinetics interpretation from core module
-from frap_core_corrected.py import FRAPAnalysisCore
 
 def interpret_kinetics(rate_constant, bleach_radius_um=1.0, gfp_d=25.0, gfp_mw=27.0):
     """Use centralized kinetics interpretation function for consistency"""

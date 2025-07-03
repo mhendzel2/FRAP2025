@@ -20,7 +20,7 @@ import logging
 from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
-from frap_core_corrected.py_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 
 # --- Page and Logging Configuration ---
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
@@ -484,7 +484,7 @@ class FRAPDataManager:
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
                 fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
                 best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = CoreFRAPAnalysis.extract_kinetic_parameters(best_fit)
+                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params
