@@ -20,7 +20,7 @@ import logging
 from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
-from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 
 # --- Page and Logging Configuration ---
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
@@ -373,7 +373,7 @@ The kinetic rates can be interpreted in two ways:
 **Curve Fitting:** Multi-component exponential models (1, 2, or 3 components) fitted using least-squares optimization with model selection based on AIC/BIC criteria.
 
 **Dual Interpretation:** Each kinetic rate constant k is interpreted as both:
-- Diffusion coefficient: D = (w² × k) / (4 × ln(2))
+- Diffusion coefficient: D = (w² × k) / 4 (CORRECTED FORMULA)
 - Binding dissociation rate: k_off = k
 
 **Quality Control:** Statistical outlier detection using IQR-based filtering to ensure robust population averages.
@@ -453,242 +453,6 @@ def plot_average_curve(group_files_data):
     return fig
 
 # --- Core Analysis and Data Logic ---
-class FRAPAnalysisCore_Deprecated:
-    @staticmethod
-    def get_post_bleach_data(time, intensity):
-        i_min = np.argmin(intensity)
-        if i_min == 0 or i_min >= len(time): return time - time[0], intensity, i_min
-        t_pre, t_bleach = time[i_min - 1], time[i_min]
-        t_mid = (t_pre + t_bleach) / 2.0
-        slope = (intensity[i_min + 1] - intensity[i_min]) / (time[i_min + 1] - t_bleach) if i_min + 1 < len(time) else 0
-        extrapolated_intensity = intensity[i_min] - slope * (t_bleach - t_mid)
-        new_time = np.insert(time[i_min:], 0, t_mid)
-        new_intensity = np.insert(intensity[i_min:], 0, extrapolated_intensity)
-        return new_time - t_mid, new_intensity, i_min
-
-    @staticmethod
-    def load_data(file_path):
-        """
-        Load data from various file formats (CSV, XLS, XLSX) with improved column mapping.
-        """
-        try:
-            # Extract the original filename from the path that may include hash suffixes
-            logger.info(f"Determining file type for: {file_path}")
-            
-            file_type = None
-            if '.xls_' in file_path:
-                file_type = 'xls'
-            elif '.xlsx_' in file_path:
-                file_type = 'xlsx'
-            elif '.csv_' in file_path:
-                file_type = 'csv'
-            elif file_path.lower().endswith('.xls'):
-                file_type = 'xls'
-            elif file_path.lower().endswith('.xlsx'):
-                file_type = 'xlsx'
-            elif file_path.lower().endswith('.csv'):
-                file_type = 'csv'
-            else:
-                raise ValueError(f"Unsupported file format for {file_path}. Only .xls, .xlsx, and .csv are supported.")
-            
-            logger.info(f"Detected file type: {file_type} for {file_path}")
-            
-            # Load the data based on file type
-            df = None
-            if file_type == 'csv':
-                # Handle CSV files with multiple encoding attempts
-                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-                    try:
-                        df = pd.read_csv(file_path, encoding=encoding)
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                else:
-                    raise ValueError(f"Could not decode CSV file {file_path} with any standard encoding")
-            elif file_type in ['xls', 'xlsx']:
-                # Handle Excel files with appropriate engines
-                engine = 'xlrd' if file_type == 'xls' else 'openpyxl'
-                try:
-                    df = pd.read_excel(file_path, engine=engine)
-                    logger.info(f"Successfully loaded {file_path} with {engine}")
-                except Exception as e1:
-                    if file_type == 'xls':
-                        logger.warning(f"Standard Excel reading failed for {file_path}: {e1}")
-                        try:
-                            # Fallback: Direct xlrd parsing
-                            import xlrd
-                            workbook = xlrd.open_workbook(file_path, encoding_override='cp1252')
-                            sheet = workbook.sheet_by_index(0)
-                            
-                            # Extract all data
-                            data = []
-                            for row_idx in range(sheet.nrows):
-                                row_data = []
-                                for col_idx in range(sheet.ncols):
-                                    cell_value = sheet.cell_value(row_idx, col_idx)
-                                    row_data.append(cell_value)
-                                data.append(row_data)
-                            
-                            # Create DataFrame with first row as headers
-                            if len(data) > 1:
-                                df = pd.DataFrame(data[1:], columns=data[0])
-                            else:
-                                df = pd.DataFrame(data)
-                            logger.info(f"Successfully loaded {file_path} with xlrd fallback")
-                        except Exception as e2:
-                            logger.error(f"Both Excel reading methods failed for {file_path}: {e2}")
-                            raise e2
-                    else:
-                        raise e1
-            
-            if df is None:
-                raise ValueError(f"Failed to load data from {file_path}")
-            
-            # Improved robust column mapping strategy
-            column_mapping = {
-                'time': ['time [s]', 'time', 'time(s)', 't', 'seconds', 'sec'],
-                'ROI1': ['intensity region 1', 'roi1', 'bleach', 'frap', 'intensity1', 'signal', 'region 1', 'region1'],
-                'ROI2': ['intensity region 2', 'roi2', 'control', 'reference', 'intensity2', 'region 2', 'region2'], 
-                'ROI3': ['intensity region 3', 'roi3', 'background', 'bg', 'intensity3', 'region 3', 'region3']
-            }
-
-            standardized_df = pd.DataFrame()
-            missing_columns = []
-            
-            for standard_name, potential_names in column_mapping.items():
-                found = False
-                for col in df.columns:
-                    if any(potential_name in str(col).lower() for potential_name in potential_names):
-                        standardized_df[standard_name] = df[col]
-                        logger.info(f"Mapped '{col}' to '{standard_name}'")
-                        found = True
-                        break
-                if not found:
-                    missing_columns.append(standard_name)
-            
-            # If we have missing critical columns, try positional assignment as fallback
-            if missing_columns and len(df.columns) >= 4:
-                logger.warning(f"Missing columns {missing_columns}, attempting positional assignment")
-                col_names = ['time', 'ROI1', 'ROI2', 'ROI3']
-                for i, col_name in enumerate(col_names):
-                    if col_name not in standardized_df.columns and i < len(df.columns):
-                        standardized_df[col_name] = df.iloc[:, i]
-                        logger.info(f"Positionally assigned column {i} to '{col_name}'")
-            
-            # Validate we have all required columns
-            required_cols = ['time', 'ROI1', 'ROI2', 'ROI3']
-            final_missing = [col for col in required_cols if col not in standardized_df.columns]
-            if final_missing:
-                raise ValueError(f"Could not find required columns {final_missing} in {file_path}")
-            
-            logger.info(f"Successfully mapped columns: {list(standardized_df.columns)}")
-            
-            # Validate the loaded data
-            if not validate_frap_data(standardized_df, file_path):
-                raise ValueError(f"Data validation failed for {file_path}")
-            
-            return standardized_df
-                
-        except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
-            raise
-
-    @staticmethod
-    def preprocess(df):
-        df['ROI1_corr'] = df['ROI1'] - df['ROI3']
-        df['ROI2_corr'] = df['ROI2'] - df['ROI3']
-        pre_bleach_roi1 = df[df['time'] < 0]['ROI1_corr'].mean()
-        pre_bleach_roi2 = df[df['time'] < 0]['ROI2_corr'].mean()
-        if pd.isna(pre_bleach_roi1) or pd.isna(pre_bleach_roi2) or pre_bleach_roi2 == 0:
-            pre_bleach_factor = df['ROI1_corr'].iloc[0] if not df.empty else 1.0
-            df['normalized'] = df['ROI1_corr'] / (pre_bleach_factor if pre_bleach_factor != 0 else 1.0)
-        else:
-            df['normalized'] = (df['ROI1_corr'] / pre_bleach_roi1) / (df['ROI2_corr'] / pre_bleach_roi2)
-        df['normalized'] = df['normalized'].fillna(method='ffill')
-        return df
-
-    @staticmethod
-    def single_component(t,A,k,C): return A*(1-np.exp(-k*t))+C
-    @staticmethod
-    def two_component(t,A1,k1,A2,k2,C): return A1*(1-np.exp(-k1*t))+A2*(1-np.exp(-k2*t))+C
-    @staticmethod
-    def three_component(t,A1,k1,A2,k2,A3,k3,C): return A1*(1-np.exp(-k1*t))+A2*(1-np.exp(-k2*t))+A3*(1-np.exp(-k3*t))+C
-    
-    @staticmethod
-    def compute_r_squared(y,y_fit): 
-        ss_res, ss_tot = np.sum((y-y_fit)**2), np.sum((y-np.mean(y))**2)
-        return 1-ss_res/ss_tot if ss_tot!=0 else np.nan
-    
-    @staticmethod
-    def compute_aic(rss,n,n_params): 
-        return 2*n_params+n*log(rss/n) if rss>0 else np.nan
-
-    @staticmethod
-    def fit_all_models(time,intensity):
-        t_fit, intensity_fit, _ = CoreFRAPAnalysis.get_post_bleach_data(time, intensity)
-        fits, n = [], len(t_fit)
-        if n < 3: return fits
-        A0, C0, k0 = max(0.1, np.max(intensity_fit)-intensity_fit[0]), intensity_fit[0], 0.1
-        models = {
-            'single':(CoreFRAPAnalysis.single_component,[A0,k0,C0],([0,1e-6,-np.inf],[np.inf,np.inf,np.inf])),
-            'double':(CoreFRAPAnalysis.two_component,[A0/2,k0*2,A0/2,k0/2,C0],([0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf])),
-            'triple':(CoreFRAPAnalysis.three_component,[A0/3,k0*3,A0/3,k0,A0/3,k0/3,C0],([0,1e-6,0,1e-6,0,1e-6,-np.inf],[np.inf,np.inf,np.inf,np.inf,np.inf,np.inf,np.inf]))
-        }
-        for name,(func,p0,bounds) in models.items():
-            try:
-                popt,_ = curve_fit(func, t_fit, intensity_fit, p0=p0, bounds=bounds, maxfev=5000)
-                fitted = func(t_fit, *popt)
-                rss = np.sum((intensity_fit-fitted)**2)
-                fits.append({
-                    'model':name,'params':popt,'fitted_values':fitted,'rss':rss,'n_params':len(popt),
-                    'r2':CoreFRAPAnalysis.compute_r_squared(intensity_fit,fitted),
-                    'aic':CoreFRAPAnalysis.compute_aic(rss,n,len(popt))
-                })
-            except Exception as e: 
-                logger.error(f"{name}-fit failed: {e}")
-        return fits
-
-    @staticmethod
-    def select_best_fit(fits,criterion='aic'): 
-        return min(fits,key=lambda x:x.get(criterion,float('inf'))) if fits else None
-
-    @staticmethod
-    def extract_kinetic_parameters(best_fit):
-        if not best_fit: return None
-        model, params = best_fit['model'], best_fit['params']
-        features = {'model':model,'r2':best_fit['r2'],'aic':best_fit['aic']}
-        C, amplitudes, rates = params[-1], params[:-1:2], params[1:-1:2]
-        total_amplitude = sum(amplitudes)
-        plateau = total_amplitude + C
-        features.update({
-            'mobile_fraction':total_amplitude*100,
-            'immobile_fraction':max(0,1-plateau)*100,
-            'offset':C
-        })
-        sorted_components = sorted(zip(rates,amplitudes),reverse=True)
-        comp_names = ['fast','medium','slow']
-        safe_total_amplitude = total_amplitude if total_amplitude > 1e-9 else 1.0
-        for i, (k, A) in enumerate(sorted_components):
-            name = comp_names[i]
-            features[f'proportion_of_total_{name}'] = A * 100
-            features[f'proportion_of_mobile_{name}'] = (A / safe_total_amplitude) * 100
-            features[f'rate_constant_{name}'] = k
-            features[f'half_time_{name}'] = np.log(2)/k if k>0 else np.nan
-        return features
-
-    @staticmethod
-    def identify_outliers(features_df,columns,iqr_multiplier=1.5):
-        if features_df is None or features_df.empty: return []
-        outlier_indices = set()
-        for col in columns:
-            if col in features_df.columns and pd.api.types.is_numeric_dtype(features_df[col]):
-                Q1,Q3 = features_df[col].quantile(0.25),features_df[col].quantile(0.75)
-                IQR=Q3-Q1
-                if IQR > 0:
-                    lower,upper = Q1-iqr_multiplier*IQR,Q3+iqr_multiplier*IQR
-                    outliers = features_df[(features_df[col]<lower)|(features_df[col]>upper)]
-                    outlier_indices.update(outliers.index)
-        return features_df.loc[list(outlier_indices),'file_path'].tolist() if 'file_path' in features_df.columns else []
 
 class FRAPDataManager:
     def __init__(self): 
@@ -986,8 +750,8 @@ with tab1:
                     pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
                     effective_radius_um=bleach_radius*pixel_size
                     
-                    # Diffusion interpretation: D = (r² × k) / (4 × ln(2))
-                    diffusion_coeff=(effective_radius_um**2*primary_rate)/(4.0*np.log(2))
+                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
                     
                     # Binding interpretation: k_off = k
                     k_off=primary_rate
