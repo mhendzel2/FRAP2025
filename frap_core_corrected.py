@@ -1041,3 +1041,35 @@ class FRAPAnalysisCore:
             silhouette = np.nan
             
         return labels, model, silhouette
+
+    @staticmethod
+    def identify_outliers(features_df, columns, iqr_multiplier=1.5):
+        """
+        Identify outliers in the dataset based on the IQR method.
+        
+        Parameters:
+        -----------
+        features_df : pandas.DataFrame
+            DataFrame containing features. Must contain a 'file_path' column.
+        columns : list
+            List of columns to check for outliers.
+        iqr_multiplier : float
+            The multiplier for the IQR range.
+            
+        Returns:
+        --------
+        list
+            List of file paths identified as outliers.
+        """
+        if features_df.empty or not columns or 'file_path' not in features_df.columns:
+            return []
+        outlier_indices = set()
+        for col in columns:
+            if col in features_df.columns and pd.api.types.is_numeric_dtype(features_df[col]):
+                Q1, Q3 = features_df[col].quantile(0.25), features_df[col].quantile(0.75)
+                IQR = Q3 - Q1
+                if IQR == 0: continue
+                lower_bound, upper_bound = Q1 - iqr_multiplier * IQR, Q3 + iqr_multiplier * IQR
+                current_outliers = features_df.index[(features_df[col] < lower_bound) | (features_df[col] > upper_bound)].tolist()
+                outlier_indices.update(current_outliers)
+        return features_df.loc[list(outlier_indices), 'file_path'].tolist() if outlier_indices else []
