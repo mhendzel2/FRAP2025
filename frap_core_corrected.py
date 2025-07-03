@@ -33,8 +33,11 @@ class FRAPAnalysisCore:
     @staticmethod
     def get_post_bleach_data(time, intensity):
         """
-        Identify the minimum ROI1 intensity (bleach point) and return only the post-bleach data.
-        The returned time is re-zeroed at the bleach event.
+        Return post-bleach trace with mid-point start-value correction.
+        
+        This method implements mid-point interpolation between the last pre-bleach
+        and first post-bleach frames to remove bias from discrete sampling of
+        instantaneous bleach events.
         
         Parameters:
         -----------
@@ -52,16 +55,22 @@ class FRAPAnalysisCore:
             raise ValueError("Time and intensity arrays must have the same length")
             
         # Find the bleach point (minimum intensity)
-        bleach_index = np.argmin(intensity)
+        i_min = np.argmin(intensity)
         
-        # Get the post-bleach data
-        post_bleach_time = time[bleach_index:]
-        post_bleach_intensity = intensity[bleach_index:]
+        if i_min == 0:
+            raise ValueError("Bleach frame found at first index – cannot interpolate.")
         
-        # Re-zero the time at the bleach point
-        post_bleach_time = post_bleach_time - post_bleach_time[0]
+        # --- Mid-point interpolation correction ---
+        # Linear interpolation half-way between last pre-bleach and first post-bleach
+        t0 = (time[i_min-1] + time[i_min]) / 2.0
+        i0 = (intensity[i_min-1] + intensity[i_min]) / 2.0
+        # --------------------------------------------------------
         
-        return post_bleach_time, post_bleach_intensity, bleach_index
+        # Build corrected vectors
+        t_post = np.hstack((t0, time[i_min:])) - t0          # set bleach to t=0
+        i_post = np.hstack((i0, intensity[i_min:]))
+        
+        return t_post, i_post, i_min
 
     @staticmethod
     def load_data(file_path):
@@ -1073,3 +1082,180 @@ class FRAPAnalysisCore:
                 current_outliers = features_df.index[(features_df[col] < lower_bound) | (features_df[col] > upper_bound)].tolist()
                 outlier_indices.update(current_outliers)
         return features_df.loc[list(outlier_indices), 'file_path'].tolist() if outlier_indices else []
+
+    @staticmethod
+    def fit_group_models(traces, model='single'):
+        """
+        Perform global simultaneous fitting across multiple traces with shared kinetic parameters
+        but individual amplitudes and offsets.
+        
+        Parameters:
+        -----------
+        traces : list
+            List of (time, intensity) tuples for each trace
+        model : str
+            Model type ('single', 'double', or 'triple')
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing global fit results
+        """
+        from scipy import optimize
+        
+        if len(traces) < 2:
+            raise ValueError("Need at least 2 traces for global fitting")
+        
+        # Use the shortest timeline as reference and interpolate others
+        min_time_end = min(t[-1] for t, _ in traces)
+        t_common = np.linspace(0, min_time_end, 200)
+        
+        # Interpolate all traces to common time grid
+        Y = []
+        for t, y in traces:
+            Y.append(np.interp(t_common, t, y))
+        Y = np.vstack(Y)  # shape: n_files × n_time
+        
+        n_traces = Y.shape[0]
+        
+        if model == 'single':
+            # Parameters: [k_shared, A1, A2, ..., An, C_shared]
+            def residual(p):
+                k = p[0]  # shared rate constant
+                As = p[1:1+n_traces]  # per-trace amplitudes
+                C = p[-1]  # shared offset
+                
+                # Model: y = A_i * (1 - exp(-k * t)) + C
+                fit = As[:, None] * (1 - np.exp(-k * t_common)) + C
+                return (Y - fit).ravel()
+            
+            # Initial parameters: k, A_i..., C
+            A0_estimates = [np.max(y) - np.min(y) for y in Y]
+            k0 = 0.05  # reasonable initial guess
+            C0 = np.mean([np.min(y) for y in Y])
+            
+            p0 = np.hstack([k0, A0_estimates, C0])
+            bounds_lower = np.hstack([1e-6, np.zeros(n_traces), -np.inf])
+            bounds_upper = np.hstack([np.inf, np.full(n_traces, np.inf), np.inf])
+            bounds = (bounds_lower, bounds_upper)
+            
+        elif model == 'double':
+            # Parameters: [k1_shared, k2_shared, A1_1, A2_1, A1_2, A2_2, ..., C_shared]
+            def residual(p):
+                k1, k2 = p[0], p[1]  # shared rate constants
+                As = p[2:2+2*n_traces].reshape(n_traces, 2)  # per-trace amplitudes (A1, A2 for each trace)
+                C = p[-1]  # shared offset
+                
+                # Model: y = A1_i * (1 - exp(-k1 * t)) + A2_i * (1 - exp(-k2 * t)) + C
+                fit = (As[:, 0:1] * (1 - np.exp(-k1 * t_common)) + 
+                       As[:, 1:2] * (1 - np.exp(-k2 * t_common)) + C)
+                return (Y - fit).ravel()
+            
+            # Initial parameters
+            A0_estimates = [(np.max(y) - np.min(y))/2 for y in Y]
+            k1_0, k2_0 = 0.1, 0.02  # fast and slow components
+            C0 = np.mean([np.min(y) for y in Y])
+            
+            p0 = np.hstack([k1_0, k2_0, np.tile(A0_estimates, 2), C0])
+            bounds_lower = np.hstack([1e-6, 1e-6, np.zeros(2*n_traces), -np.inf])
+            bounds_upper = np.hstack([np.inf, np.inf, np.full(2*n_traces, np.inf), np.inf])
+            bounds = (bounds_lower, bounds_upper)
+            
+        elif model == 'triple':
+            # Parameters: [k1_shared, k2_shared, k3_shared, A1_1, A2_1, A3_1, A1_2, A2_2, A3_2, ..., C_shared]
+            def residual(p):
+                k1, k2, k3 = p[0], p[1], p[2]  # shared rate constants
+                As = p[3:3+3*n_traces].reshape(n_traces, 3)  # per-trace amplitudes
+                C = p[-1]  # shared offset
+                
+                # Model: y = A1_i * (1 - exp(-k1 * t)) + A2_i * (1 - exp(-k2 * t)) + A3_i * (1 - exp(-k3 * t)) + C
+                fit = (As[:, 0:1] * (1 - np.exp(-k1 * t_common)) + 
+                       As[:, 1:2] * (1 - np.exp(-k2 * t_common)) + 
+                       As[:, 2:3] * (1 - np.exp(-k3 * t_common)) + C)
+                return (Y - fit).ravel()
+            
+            # Initial parameters
+            A0_estimates = [(np.max(y) - np.min(y))/3 for y in Y]
+            k1_0, k2_0, k3_0 = 0.2, 0.05, 0.01  # fast, medium, slow components
+            C0 = np.mean([np.min(y) for y in Y])
+            
+            p0 = np.hstack([k1_0, k2_0, k3_0, np.tile(A0_estimates, 3), C0])
+            bounds_lower = np.hstack([1e-6, 1e-6, 1e-6, np.zeros(3*n_traces), -np.inf])
+            bounds_upper = np.hstack([np.inf, np.inf, np.inf, np.full(3*n_traces, np.inf), np.inf])
+            bounds = (bounds_lower, bounds_upper)
+        else:
+            raise ValueError(f"Unsupported model type: {model}")
+        
+        try:
+            # Perform global optimization
+            sol = optimize.least_squares(residual, p0, bounds=bounds, max_nfev=5000)
+            
+            # Calculate fit statistics
+            fitted_residuals = residual(sol.x)
+            rss = np.sum(fitted_residuals**2)
+            n_data = len(fitted_residuals)
+            n_params = len(sol.x)
+            
+            # Calculate AIC and BIC
+            aic = FRAPAnalysisCore.compute_aic(rss, n_data, n_params)
+            bic = FRAPAnalysisCore.compute_bic(rss, n_data, n_params)
+            
+            # Calculate R-squared for each trace
+            fitted_curves = (fitted_residuals.reshape(Y.shape) - Y + Y)  # Reconstruct fitted values
+            r2_values = []
+            for i in range(n_traces):
+                r2 = FRAPAnalysisCore.compute_r_squared(Y[i], fitted_curves[i])
+                r2_values.append(r2)
+            
+            # Extract parameters based on model
+            if model == 'single':
+                shared_params = {'k': sol.x[0]}
+                individual_params = [{'A': sol.x[1+i]} for i in range(n_traces)]
+                shared_offset = sol.x[-1]
+                
+            elif model == 'double':
+                shared_params = {'k1': sol.x[0], 'k2': sol.x[1]}
+                individual_params = []
+                for i in range(n_traces):
+                    individual_params.append({
+                        'A1': sol.x[2 + i],
+                        'A2': sol.x[2 + n_traces + i]
+                    })
+                shared_offset = sol.x[-1]
+                
+            elif model == 'triple':
+                shared_params = {'k1': sol.x[0], 'k2': sol.x[1], 'k3': sol.x[2]}
+                individual_params = []
+                for i in range(n_traces):
+                    individual_params.append({
+                        'A1': sol.x[3 + i],
+                        'A2': sol.x[3 + n_traces + i],
+                        'A3': sol.x[3 + 2*n_traces + i]
+                    })
+                shared_offset = sol.x[-1]
+            
+            return {
+                'model': model,
+                'success': sol.success,
+                'shared_params': shared_params,
+                'individual_params': individual_params,
+                'shared_offset': shared_offset,
+                'rss': rss,
+                'aic': aic,
+                'bic': bic,
+                'r2_values': r2_values,
+                'mean_r2': np.mean(r2_values),
+                'n_traces': n_traces,
+                'n_params': n_params,
+                'fitted_curves': fitted_curves,
+                'common_time': t_common,
+                'optimization_result': sol
+            }
+            
+        except Exception as e:
+            logging.error(f"Global fitting failed for {model} model: {e}")
+            return {
+                'model': model,
+                'success': False,
+                'error': str(e)
+            }

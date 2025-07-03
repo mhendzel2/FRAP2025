@@ -792,13 +792,38 @@ with tab2:
             dm.update_group_analysis(selected_group_name)
             features_df=group.get('features_df')
             excluded_paths=[]
+            
             if features_df is not None and not features_df.empty:
+                # Show automatic outlier detection results
+                auto_outliers = group.get('auto_outliers', [])
+                if auto_outliers:
+                    st.info(f"🤖 **Automatic outlier detection** identified {len(auto_outliers)} potential outliers based on half-time analysis")
+                    with st.expander("View auto-detected outliers"):
+                        for outlier_path in auto_outliers:
+                            if outlier_path in dm.files:
+                                st.write(f"• {dm.files[outlier_path]['name']}")
+                
+                # Manual outlier selection with auto-outliers pre-selected
                 opts=[c for c in features_df.select_dtypes(include=np.number).columns if 'fraction' in c or 'rate' in c]
                 defaults=[c for c in ['mobile_fraction','immobile_fraction'] if c in opts]
-                outlier_check_features=st.multiselect("Check for outliers based on:",options=opts,default=defaults)
-                iqr_multiplier=st.slider("Outlier Sensitivity",1.0,3.0,1.5,0.1,help="Lower value = more sensitive.")
-                identified=CoreFRAPAnalysis.identify_outliers(features_df,outlier_check_features,iqr_multiplier)
-                excluded_paths=st.multiselect("Select files to EXCLUDE (outliers are pre-selected):",options=group['files'],default=identified,format_func=lambda p:dm.files[p]['name'])
+                
+                col_outlier1, col_outlier2 = st.columns(2)
+                with col_outlier1:
+                    outlier_check_features=st.multiselect("Check for outliers based on:",options=opts,default=defaults)
+                with col_outlier2:
+                    iqr_multiplier=st.slider("Outlier Sensitivity",1.0,3.0,1.5,0.1,help="Lower value = more sensitive.")
+                
+                # Combine automatic and manual outlier detection
+                manual_identified = CoreFRAPAnalysis.identify_outliers(features_df,outlier_check_features,iqr_multiplier)
+                all_identified = list(set(auto_outliers + manual_identified))
+                
+                excluded_paths=st.multiselect(
+                    "Select files to EXCLUDE (auto-detected outliers are pre-selected):",
+                    options=group['files'],
+                    default=all_identified,
+                    format_func=lambda p:dm.files[p]['name'],
+                    help="Auto-detected outliers are pre-selected. You can add or remove files as needed."
+                )
             
             dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
             filtered_df=group.get('features_df')
@@ -1168,7 +1193,218 @@ with tab2:
                             st.warning("No valid data for selected parameter")
                 
                 st.markdown("---")
-                st.markdown("### Step 6: Group Recovery Plots")
+                st.markdown("### Step 6: Global Simultaneous Fitting")
+                st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
+                
+                with st.expander("🌐 Global Simultaneous Fit", expanded=False):
+                    st.markdown("""
+                    **Global fitting** constrains kinetic rate constants to be identical across all traces 
+                    while allowing individual amplitudes and offsets. This approach:
+                    - Increases statistical power by pooling data
+                    - Provides more robust parameter estimates
+                    - Enables direct comparison of amplitudes between conditions
+                    """)
+                    
+                    col_global1, col_global2 = st.columns(2)
+                    
+                    with col_global1:
+                        global_model = st.selectbox(
+                            "Select model for global fitting:",
+                            ["single", "double", "triple"],
+                            format_func=lambda x: f"{x.title()}-component exponential",
+                            help="Choose the kinetic model for global fitting"
+                        )
+                        
+                        include_outliers_global = st.checkbox(
+                            "Include outliers in global fit",
+                            value=False,
+                            help="Whether to include previously excluded outliers in global fitting"
+                        )
+                    
+                    with col_global2:
+                        if st.button("🚀 Run Global Fit", type="primary"):
+                            try:
+                                with st.spinner(f"Performing global {global_model}-component fitting..."):
+                                    # Determine which files to exclude
+                                    files_to_exclude = [] if include_outliers_global else excluded_paths
+                                    
+                                    # Import the FRAPData class and perform global fitting
+                                    from frap_data import FRAPData
+                                    
+                                    # Create a temporary FRAPData instance with current data
+                                    temp_dm = FRAPData()
+                                    temp_dm.files = dm.files
+                                    temp_dm.groups = dm.groups
+                                    
+                                    # Perform global fitting
+                                    global_result = temp_dm.fit_group_models(
+                                        selected_group_name, 
+                                        model=global_model,
+                                        excluded_files=files_to_exclude
+                                    )
+                                    
+                                    if global_result.get('success', False):
+                                        st.success("✅ Global fitting completed successfully!")
+                                        
+                                        # Display global fit results
+                                        st.markdown("#### Global Fit Results")
+                                        
+                                        # Shared parameters
+                                        shared_params = global_result['shared_params']
+                                        col_param1, col_param2, col_param3 = st.columns(3)
+                                        
+                                        if global_model == 'single':
+                                            with col_param1:
+                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                            with col_param3:
+                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
+                                        
+                                        elif global_model == 'double':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                        
+                                        elif global_model == 'triple':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s⁻¹")
+                                        
+                                        # Individual amplitudes table
+                                        st.markdown("#### Individual File Amplitudes")
+                                        individual_data = []
+                                        for i, (file_name, params, r2) in enumerate(zip(
+                                            global_result['file_names'],
+                                            global_result['individual_params'],
+                                            global_result['r2_values']
+                                        )):
+                                            row_data = {'File': file_name, 'R²': r2}
+                                            
+                                            if global_model == 'single':
+                                                row_data['Amplitude (A)'] = params['A']
+                                            elif global_model == 'double':
+                                                row_data['Fast Amplitude (A₁)'] = params['A1']
+                                                row_data['Slow Amplitude (A₂)'] = params['A2']
+                                                row_data['Total Amplitude'] = params['A1'] + params['A2']
+                                            elif global_model == 'triple':
+                                                row_data['Fast Amplitude (A₁)'] = params['A1']
+                                                row_data['Medium Amplitude (A₂)'] = params['A2']
+                                                row_data['Slow Amplitude (A₃)'] = params['A3']
+                                                row_data['Total Amplitude'] = params['A1'] + params['A2'] + params['A3']
+                                            
+                                            individual_data.append(row_data)
+                                        
+                                        individual_df = pd.DataFrame(individual_data)
+                                        st.dataframe(individual_df.style.format({
+                                            col: '{:.4f}' for col in individual_df.columns if col not in ['File']
+                                        }), use_container_width=True)
+                                        
+                                        # Global fit visualization
+                                        st.markdown("#### Global Fit Visualization")
+                                        
+                                        # Create plot showing all traces with global fit
+                                        fig_global = go.Figure()
+                                        
+                                        # Plot individual data and fits
+                                        fitted_curves = global_result['fitted_curves']
+                                        common_time = global_result['common_time']
+                                        
+                                        for i, (file_name, fitted_curve) in enumerate(zip(global_result['file_names'], fitted_curves)):
+                                            # Find original file data
+                                            file_path = None
+                                            for fp in group['files']:
+                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
+                                                    file_path = fp
+                                                    break
+                                            
+                                            if file_path:
+                                                file_data = dm.files[file_path]
+                                                t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                                                    file_data['time'], file_data['intensity']
+                                                )
+                                                
+                                                # Plot original data
+                                                fig_global.add_trace(go.Scatter(
+                                                    x=t_post, y=i_post,
+                                                    mode='markers',
+                                                    name=f"{file_name} (data)",
+                                                    marker=dict(size=4, opacity=0.6),
+                                                    showlegend=False
+                                                ))
+                                                
+                                                # Plot global fit
+                                                fig_global.add_trace(go.Scatter(
+                                                    x=common_time, y=fitted_curve,
+                                                    mode='lines',
+                                                    name=f"{file_name} (global fit)",
+                                                    line=dict(width=2),
+                                                    showlegend=False
+                                                ))
+                                        
+                                        fig_global.update_layout(
+                                            title=f"Global {global_model.title()}-Component Fit Results",
+                                            xaxis_title="Time (s)",
+                                            yaxis_title="Normalized Intensity",
+                                            height=500
+                                        )
+                                        st.plotly_chart(fig_global, use_container_width=True)
+                                        
+                                        # Comparison with individual fits
+                                        st.markdown("#### Comparison with Individual Fits")
+                                        comparison_data = []
+                                        
+                                        for file_name in global_result['file_names']:
+                                            # Find corresponding individual fit
+                                            file_path = None
+                                            for fp in group['files']:
+                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
+                                                    file_path = fp
+                                                    break
+                                            
+                                            if file_path and file_path in dm.files:
+                                                file_data = dm.files[file_path]
+                                                individual_fit = file_data.get('best_fit')
+                                                
+                                                if individual_fit and individual_fit['model'] == global_model:
+                                                    individual_r2 = individual_fit.get('r2', np.nan)
+                                                    global_r2 = global_result['r2_values'][global_result['file_names'].index(file_name)]
+                                                    
+                                                    comparison_data.append({
+                                                        'File': file_name,
+                                                        'Individual R²': individual_r2,
+                                                        'Global R²': global_r2,
+                                                        'Δ R²': global_r2 - individual_r2
+                                                    })
+                                        
+                                        if comparison_data:
+                                            comparison_df = pd.DataFrame(comparison_data)
+                                            st.dataframe(comparison_df.style.format({
+                                                'Individual R²': '{:.4f}',
+                                                'Global R²': '{:.4f}',
+                                                'Δ R²': '{:.4f}'
+                                            }), use_container_width=True)
+                                            
+                                            avg_improvement = comparison_df['Δ R²'].mean()
+                                            if avg_improvement > 0:
+                                                st.success(f"Global fitting improved average R² by {avg_improvement:.4f}")
+                                            else:
+                                                st.info(f"Individual fits performed better on average (Δ R² = {avg_improvement:.4f})")
+                                    
+                                    else:
+                                        st.error(f"❌ Global fitting failed: {global_result.get('error', 'Unknown error')}")
+                                        
+                            except Exception as e:
+                                st.error(f"Error during global fitting: {e}")
+                
+                st.markdown("---")
+                st.markdown("### Step 7: Group Recovery Plots")
                 plot_data={path:dm.files[path] for path in filtered_df['file_path'].tolist()}
                 st.markdown("##### Average Recovery Curve")
                 avg_fig = plot_average_curve(plot_data)
