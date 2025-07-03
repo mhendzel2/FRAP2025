@@ -458,6 +458,19 @@ class FRAPDataManager:
     def __init__(self): 
         self.files,self.groups = {},{}
     
+    def add_file_to_group(self, group_name, file_path):
+        """Add a file to a group and update group analysis."""
+        if group_name in self.groups and file_path in self.files:
+            if file_path not in self.groups[group_name]['files']:
+                self.groups[group_name]['files'].append(file_path)
+                self.update_group_analysis(group_name)
+
+    def remove_file_from_group(self, group_name, file_path):
+        """Remove a file from a group and update group analysis."""
+        if group_name in self.groups and file_path in self.groups[group_name]['files']:
+            self.groups[group_name]['files'].remove(file_path)
+            self.update_group_analysis(group_name)
+    
     def load_file(self,file_path,file_name):
         try:
             # Extract original extension before the hash suffix
@@ -610,8 +623,8 @@ with st.sidebar:
             with button_col1:
                 if st.button("Add Selected Files", key=f"btn_add_{selected_group_name}"):
                     if selected_files:
-                        group['files'].extend(selected_files)
-                        dm.update_group_analysis(selected_group_name)
+                        for file_path in selected_files:
+                            dm.add_file_to_group(selected_group_name, file_path)
                         st.success(f"Added {len(selected_files)} files to {selected_group_name}")
                         st.rerun()
                     else:
@@ -621,8 +634,7 @@ with st.sidebar:
                 if st.button("Remove Selected Files", key=f"btn_rm_{selected_group_name}"):
                     if files_to_remove:
                         for file_path in files_to_remove:
-                            group['files'].remove(file_path)
-                        dm.update_group_analysis(selected_group_name)
+                            dm.remove_file_from_group(selected_group_name, file_path)
                         st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
                         st.rerun()
                     else:
@@ -1864,14 +1876,62 @@ with tab5:
                         st.error("Invalid session file format")
                         
                 except Exception as e:
-                    st.error(f"Error loading session: {e}")
-    
-    with col_session2:
-        st.subheader("Data Export")
-        
-        if dm.groups:
+            # Sanitize group name for use as a Streamlit widget key
+            import re
+            sanitized_group_key = re.sub(r'\W+', '_', str(selected_group_name))
+            group_uploaded_files = st.file_uploader(
+                "Upload and add files directly to this group",
+                type=['xls', 'xlsx', 'csv'],
+                accept_multiple_files=True,
+                key=f"group_uploader_{sanitized_group_key}" # Unique key to reset on group change
+            )
+                "Upload and add files directly to this group",
+                type=['xls', 'xlsx', 'csv'],
+                accept_multiple_files=True,
+                key=f"group_uploader_{selected_group_name}" # Unique key to reset on group change
+            )
+            
+            if group_uploaded_files:
+                files_added_count = 0
+                failed_files = []
+                dm_files_set = set(dm.files.keys())
+                group_files_set = set(dm.groups[selected_group_name]['files'])
+                for uf in group_uploaded_files:
+                    # Use a unique path to handle files with the same name
+                    tp = f"data/{uf.name}_{hash(uf.getvalue())}"
+                    
+                    # Load file if not already loaded
+                    if tp not in dm_files_set:
+                        with open(tp, "wb") as f:
+                            f.write(uf.getbuffer())
+                        if not dm.load_file(tp, uf.name):
+                            failed_files.append(uf.name)
+                            continue
+                        dm_files_set.add(tp)
+                    
+                    # Add file to the current group
+                    if tp not in group_files_set:
+                        dm.add_file_to_group(selected_group_name, tp)
+                        files_added_count += 1
+                        group_files_set.add(tp)
+                
+                if files_added_count > 0:
+                    st.success(f"Added {files_added_count} new file(s) to '{selected_group_name}'.")
+                    st.rerun()
+                if failed_files:
+                    st.warning(f"Could not load the following files: {', '.join(failed_files)}. Skipped.")
             # Excel export functionality
-            if st.button("📊 Export to Excel", type="primary"):
+            # Only enable if there is at least one group with at least one file with data
+            has_exportable_data = any(
+                group_info.get('files') and any(
+                    fp in dm.files and dm.files[fp].get('features') for fp in group_info.get('files', [])
+                )
+                for group_info in dm.groups.values()
+            )
+            export_excel_btn = st.button("📊 Export to Excel", type="primary", disabled=not has_exportable_data)
+            if not has_exportable_data:
+                st.warning("No groups with data available for Excel export. Please add files to groups and analyze them first.")
+            if export_excel_btn and has_exportable_data:
                 try:
                     import io
                     
@@ -1955,6 +2015,10 @@ with tab5:
                         help="Download complete analysis results as Excel workbook"
                     )
                     
+                    st.success("Excel export prepared for download!")
+                    
+                except Exception as e:
+                    st.error(f"Error creating Excel export: {e}")
                     st.success("Excel export prepared for download!")
                     
                 except Exception as e:
