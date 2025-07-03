@@ -229,7 +229,7 @@ class FRAPPlots:
         """
         try:
             # Get post-bleach data for fitting
-            from frap_core import FRAPAnalysisCore
+            from frap_core_corrected.py import FRAPAnalysisCore
             t_post, i_post, i_min = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
             
             # Create figure
@@ -321,7 +321,7 @@ class FRAPPlots:
         """
         try:
             # Get post-bleach data for fitting
-            from frap_core import FRAPAnalysisCore
+            from frap_core_corrected.py import FRAPAnalysisCore
             t_post, i_post, i_min = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
             
             # Calculate residuals
@@ -625,7 +625,7 @@ class FRAPPlots:
                     file_data = data_manager.files[file_path]
                     
                     # Get post-bleach data
-                    from frap_core import FRAPAnalysisCore
+                    from frap_core_corrected.py import FRAPAnalysisCore
                     t_post, i_post, _ = FRAPAnalysisCore.get_post_bleach_data(
                         file_data['time'], 
                         file_data['intensity']
@@ -696,7 +696,7 @@ class FRAPPlots:
             
             # If we have a dominant model, fit the average data with it
             if dominant_model is not None and max_count > 0:
-                from frap_core import FRAPAnalysisCore
+                from frap_core_corrected.py import FRAPAnalysisCore
                 
                 # Fit the average data with all models and select the dominant model type
                 fits = FRAPAnalysisCore.fit_all_models(common_times, mean_intensity)

@@ -60,7 +60,7 @@ streamlit run streamlit_frap_final.py --server.headless true --server.port 5000
 ## File Structure
 
 - `streamlit_frap_final.py` - Main application interface
-- `frap_core_corrected.py` - Core mathematical functions with corrected formulas
+- `frap_core_corrected.py_corrected.py` - Core mathematical functions with corrected formulas
 - `frap_pdf_reports.py` - Professional report generation
 - `frap_image_analysis.py` - Image processing capabilities
 - `sample_data/` - Example FRAP data files

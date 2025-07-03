@@ -107,7 +107,7 @@ Rg = Rg_ref × (D_ref / D_measured)  # CORRECT
 ## Code Implementation Status
 
 ### Files Updated with Corrections:
-- ✅ `frap_core_corrected.py` - All formulas corrected
+- ✅ `frap_core_corrected.py_corrected.py` - All formulas corrected
 - ✅ `MATHEMATICAL_VERIFICATION_CORRECTED.md` - This document
 
 ### Key Functions Corrected:

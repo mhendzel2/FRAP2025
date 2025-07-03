@@ -20,7 +20,7 @@ import logging
 from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
-from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core_corrected.py_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 
 # --- Page and Logging Configuration ---
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
