@@ -1,6 +1,4 @@
-Of course. Here is the full, corrected code for `streamlit_frap_final.py` with the two required patches applied.
 
-```python
 """
 FRAP Analysis App - Final Verified Version
 A comprehensive FRAP analysis application with supervised outlier removal, sequential group plots,
