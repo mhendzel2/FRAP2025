@@ -7,7 +7,8 @@ import os
 import glob
 import pandas as pd
 import numpy as np
-from frap_core_corrected.py import FRAPAnalysisCore
+from frap_core_corrected import FRAPAnalysisCore
+from frap_outliers import identify_curve_outliers
 import logging
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ class FRAPData:
             
         return True
     
-    def update_group_analysis(self, group_name):
+    def update_group_analysis(self, group_name, excluded_files=None):
         """
         Update analysis for a group (features, clustering, statistics)
         
@@ -245,6 +246,8 @@ class FRAPData:
         -----------
         group_name : str
             Name of the group
+        excluded_files : list, optional
+            List of file paths to exclude from analysis
             
         Returns:
         --------
@@ -256,11 +259,12 @@ class FRAPData:
             return None
         
         group = self.groups[group_name]
+        excluded_files = excluded_files or []
         
         # Create DataFrame of features from all files in the group
         features_list = []
         for file_path in group['files']:
-            if file_path in self.files and self.files[file_path]['features']:
+            if file_path not in excluded_files and file_path in self.files and self.files[file_path]['features']:
                 file_features = self.files[file_path]['features'].copy()
                 file_features['file_path'] = file_path
                 file_features['file_name'] = self.files[file_path]['name']
@@ -268,6 +272,33 @@ class FRAPData:
         
         if features_list:
             group['features_df'] = pd.DataFrame(features_list)
+            
+            # Automatic outlier detection
+            try:
+                curves = []
+                for file_path in group['files']:
+                    if file_path in self.files:
+                        file_data = self.files[file_path]
+                        curve_data = {
+                            'filename': file_data['name'],
+                            'clustering_features': file_data.get('features', {})
+                        }
+                        curves.append(curve_data)
+                
+                # Identify outliers using half_time as primary feature
+                out_idx, _ = identify_curve_outliers(
+                    curves=curves,
+                    method='iqr',
+                    feature='half_time',
+                    threshold=1.5
+                )
+                
+                # Store auto-detected outliers
+                group['auto_outliers'] = [group['files'][i] for i in out_idx if i < len(group['files'])]
+                
+            except Exception as e:
+                logger.error(f"Error in automatic outlier detection for group {group_name}: {e}")
+                group['auto_outliers'] = []
             
             # Calculate basic statistics
             numerical_columns = group['features_df'].select_dtypes(include=[np.number]).columns
@@ -303,6 +334,7 @@ class FRAPData:
             group['features_df'] = None
             group['stats'] = None
             group['clusters'] = None
+            group['auto_outliers'] = []
         
         # Update the group
         self.groups[group_name] = group
@@ -348,3 +380,71 @@ class FRAPData:
             return pd.DataFrame(comparison).T
         else:
             return None
+    
+    def fit_group_models(self, group_name, model='single', excluded_files=None):
+        """
+        Perform global simultaneous fitting for a group with shared kinetic parameters
+        but individual amplitudes.
+        
+        Parameters:
+        -----------
+        group_name : str
+            Name of the group to fit
+        model : str
+            Model type ('single', 'double', or 'triple')
+        excluded_files : list, optional
+            List of file paths to exclude from global fitting
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing global fit results
+        """
+        if group_name not in self.groups:
+            raise KeyError(f"Group {group_name} not found.")
+        
+        group = self.groups[group_name]
+        excluded_files = excluded_files or []
+        
+        # Prepare traces for global fitting
+        traces = []
+        file_names = []
+        
+        for file_path in group['files']:
+            if file_path not in excluded_files and file_path in self.files:
+                file_data = self.files[file_path]
+                t, y, _ = FRAPAnalysisCore.get_post_bleach_data(
+                    file_data['time'],
+                    file_data['intensity']
+                )
+                traces.append((t, y))
+                file_names.append(file_data['name'])
+        
+        if len(traces) < 2:
+            raise ValueError("Need at least 2 traces for global fitting")
+        
+        try:
+            # Perform global fitting using the core analysis function
+            global_fit_result = FRAPAnalysisCore.fit_group_models(traces, model=model)
+            
+            # Add file names for reference
+            global_fit_result['file_names'] = file_names
+            global_fit_result['excluded_files'] = excluded_files
+            
+            # Store the result in the group
+            if 'global_fit' not in group:
+                group['global_fit'] = {}
+            group['global_fit'][model] = global_fit_result
+            
+            # Update the group
+            self.groups[group_name] = group
+            
+            return global_fit_result
+            
+        except Exception as e:
+            logger.error(f"Error in global fitting for group {group_name}: {e}")
+            return {
+                'model': model,
+                'success': False,
+                'error': str(e)
+            }
