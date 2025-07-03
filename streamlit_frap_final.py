@@ -574,7 +574,7 @@ with st.sidebar:
                         "Select files to add:",
                         ungrouped_files,
                         format_func=lambda p: dm.files[p]['name'],
-                        key="ungrouped_files_selector"
+                        key=f"add_files_to_{selected_group_name}"
                     )
                 else:
                     st.info("No ungrouped files available.")
@@ -591,7 +591,7 @@ with st.sidebar:
                         "Select files to remove:",
                         group['files'],
                         format_func=lambda p: dm.files[p]['name'],
-                        key="group_files_selector"
+                        key=f"remove_files_from_{selected_group_name}"
                     )
                 else:
                     st.info("No files in this group yet.")
