@@ -484,7 +484,7 @@ class FRAPDataManager:
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
                 fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
                 best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = CoreFRAPAnalysis.compute_kinetic_details(best_fit)
+                params = CoreFRAPAnalysis.extract_kinetic_parameters(best_fit)
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params
