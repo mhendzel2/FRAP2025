@@ -11,9 +11,14 @@ import pandas as pd
 from sqlalchemy import (
     create_engine, Column, Integer, Float, String, 
     DateTime, ForeignKey, Text, Boolean, inspect,
-    JSON, ARRAY
+    JSON
 )
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
+try:
+    from sqlalchemy.dialects.postgresql import ARRAY
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
 from sqlalchemy.orm import sessionmaker, relationship
 
 # Set up logging
@@ -115,12 +120,13 @@ class FRAPFit(Base):
     
     # Multiple component additional info
     component_count = Column(Integer)
-    rate_constants = Column(ARRAY(Float))
-    amplitudes = Column(ARRAY(Float))
-    proportions = Column(ARRAY(Float))
-    diffusion_coefficients = Column(ARRAY(Float))
-    radii_of_gyration = Column(ARRAY(Float))
-    molecular_weight_estimates = Column(ARRAY(Float))
+    # Use ARRAY for PostgreSQL, JSON for other databases
+    rate_constants = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
+    amplitudes = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
+    proportions = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
+    diffusion_coefficients = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
+    radii_of_gyration = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
+    molecular_weight_estimates = Column(ARRAY(Float) if POSTGRES_AVAILABLE else Text)
     
     # Relationship
     frap_file = relationship("FRAPFile", back_populates="fits")
@@ -137,6 +143,30 @@ class FRAPFit(Base):
         if self.parameters_json:
             return json.loads(self.parameters_json)
         return {}
+    
+    def _set_array_field(self, field_name, values):
+        """Helper to set array fields based on database type"""
+        if POSTGRES_AVAILABLE and hasattr(self, '_engine') and 'postgresql' in str(self._engine.dialect):
+            # Use native ARRAY for PostgreSQL
+            setattr(self, field_name, values)
+        else:
+            # Use JSON string for other databases
+            setattr(self, field_name, json.dumps(values) if values else None)
+    
+    def _get_array_field(self, field_name):
+        """Helper to get array fields based on database type"""
+        value = getattr(self, field_name)
+        if value is None:
+            return None
+        if isinstance(value, str):
+            # JSON string format
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        else:
+            # Native array format
+            return value
 
 class FRAPGroup(Base):
     """FRAPGroup table for storing analysis groups"""
@@ -385,13 +415,21 @@ class FRAPDatabase:
                 frap_fit.radius_of_gyration = features.get('radius_of_gyration')
                 frap_fit.molecular_weight_estimate = features.get('molecular_weight_estimate')
                 
-                # Set arrays for consistency
-                frap_fit.rate_constants = [features.get('rate_constant')]
-                frap_fit.amplitudes = [features.get('amplitude')]
-                frap_fit.proportions = [1.0]
-                frap_fit.diffusion_coefficients = [features.get('diffusion_coefficient')]
-                frap_fit.radii_of_gyration = [features.get('radius_of_gyration')]
-                frap_fit.molecular_weight_estimates = [features.get('molecular_weight_estimate')]
+                # Set arrays for consistency (handle database compatibility)
+                if 'postgresql' in str(self.engine.dialect):
+                    frap_fit.rate_constants = [features.get('rate_constant')]
+                    frap_fit.amplitudes = [features.get('amplitude')]
+                    frap_fit.proportions = [1.0]
+                    frap_fit.diffusion_coefficients = [features.get('diffusion_coefficient')]
+                    frap_fit.radii_of_gyration = [features.get('radius_of_gyration')]
+                    frap_fit.molecular_weight_estimates = [features.get('molecular_weight_estimate')]
+                else:
+                    frap_fit.rate_constants = json.dumps([features.get('rate_constant')])
+                    frap_fit.amplitudes = json.dumps([features.get('amplitude')])
+                    frap_fit.proportions = json.dumps([1.0])
+                    frap_fit.diffusion_coefficients = json.dumps([features.get('diffusion_coefficient')])
+                    frap_fit.radii_of_gyration = json.dumps([features.get('radius_of_gyration')])
+                    frap_fit.molecular_weight_estimates = json.dumps([features.get('molecular_weight_estimate')])
             else:
                 # For multiple components, store the primary (fastest) component values
                 component_count = 2 if model_type == 'double' else 3
@@ -412,13 +450,21 @@ class FRAPDatabase:
                     radii.append(features.get(f'radius_of_gyration_{i}', 0))
                     mw_estimates.append(features.get(f'molecular_weight_estimate_{i}', 0))
                 
-                # Store arrays
-                frap_fit.rate_constants = rate_constants
-                frap_fit.amplitudes = amplitudes
-                frap_fit.proportions = proportions
-                frap_fit.diffusion_coefficients = diffusion_coeffs
-                frap_fit.radii_of_gyration = radii
-                frap_fit.molecular_weight_estimates = mw_estimates
+                # Store arrays (handle database compatibility)
+                if 'postgresql' in str(self.engine.dialect):
+                    frap_fit.rate_constants = rate_constants
+                    frap_fit.amplitudes = amplitudes
+                    frap_fit.proportions = proportions
+                    frap_fit.diffusion_coefficients = diffusion_coeffs
+                    frap_fit.radii_of_gyration = radii
+                    frap_fit.molecular_weight_estimates = mw_estimates
+                else:
+                    frap_fit.rate_constants = json.dumps(rate_constants)
+                    frap_fit.amplitudes = json.dumps(amplitudes)
+                    frap_fit.proportions = json.dumps(proportions)
+                    frap_fit.diffusion_coefficients = json.dumps(diffusion_coeffs)
+                    frap_fit.radii_of_gyration = json.dumps(radii)
+                    frap_fit.molecular_weight_estimates = json.dumps(mw_estimates)
                 
                 # Store main component values (fastest, usually component 1)
                 frap_fit.diffusion_coefficient = diffusion_coeffs[0] if diffusion_coeffs else None

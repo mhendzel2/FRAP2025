@@ -600,14 +600,14 @@ with st.sidebar:
             # Action buttons
             button_col1, button_col2 = st.columns(2)
             with button_col1:
-                if st.button("Add Selected Files", disabled=not selected_files):
+                if st.button("Add Selected Files", disabled=len(selected_files) == 0, key=f"btn_add_{selected_group_name}"):
                     group['files'].extend(selected_files)
                     dm.update_group_analysis(selected_group_name)
                     st.success(f"Added {len(selected_files)} files to {selected_group_name}")
                     st.rerun()
             
             with button_col2:
-                if st.button("Remove Selected Files", disabled=not files_to_remove):
+                if st.button("Remove Selected Files", disabled=len(files_to_remove) == 0, key=f"btn_rm_{selected_group_name}"):
                     for file_path in files_to_remove:
                         group['files'].remove(file_path)
                     dm.update_group_analysis(selected_group_name)
