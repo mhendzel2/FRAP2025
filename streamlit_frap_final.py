@@ -1,4 +1,3 @@
-
 """
 FRAP Analysis App - Final Verified Version
 A comprehensive FRAP analysis application with supervised outlier removal, sequential group plots,
@@ -323,7 +322,8 @@ The kinetic rates can be interpreted in two ways:
     report_str += """
 ### Detailed Results Table
 
-**Legend:** - ✅ Included in population analysis
+**Legend:** 
+- ✅ Included in population analysis
 - ❌ Excluded as outlier
 
 | File | Status | Mobile (%) | Rate (k) | k_off (1/s) | App. D (μm²/s) | App. MW (kDa) | Model | R² |
@@ -458,19 +458,6 @@ class FRAPDataManager:
     def __init__(self): 
         self.files,self.groups = {},{}
     
-    def add_file_to_group(self, group_name, file_path):
-        """Add a file to a group and update group analysis."""
-        if group_name in self.groups and file_path in self.files:
-            if file_path not in self.groups[group_name]['files']:
-                self.groups[group_name]['files'].append(file_path)
-                self.update_group_analysis(group_name)
-
-    def remove_file_from_group(self, group_name, file_path):
-        """Remove a file from a group and update group analysis."""
-        if group_name in self.groups and file_path in self.groups[group_name]['files']:
-            self.groups[group_name]['files'].remove(file_path)
-            self.update_group_analysis(group_name)
-    
     def load_file(self,file_path,file_name):
         try:
             # Extract original extension before the hash suffix
@@ -494,23 +481,13 @@ class FRAPDataManager:
             
             processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
-                # PATCH 1: Use mid-point corrected data for fitting
-                time_raw = processed_df['time'].values
-                int_raw = processed_df['normalized'].values
-                t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(time_raw, int_raw)
-                
-                fits = CoreFRAPAnalysis.fit_all_models(t_post, i_post)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits, st.session_state.settings['default_criterion'])
+                time,intensity = processed_df['time'].values,processed_df['normalized'].values
+                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
+                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
                 params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                
-                self.files[file_path] = {
-                    'name': file_name,
-                    'data': processed_df,
-                    'time': t_post,
-                    'intensity': i_post,
-                    'fits': fits,
-                    'best_fit': best_fit,
-                    'features': params
+                self.files[file_path]={
+                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
+                    'fits':fits,'best_fit':best_fit,'features':params
                 }
                 logger.info(f"Loaded: {file_name}")
                 return True
@@ -597,6 +574,7 @@ with st.sidebar:
                         "Select files to add:",
                         ungrouped_files,
                         format_func=lambda p: dm.files[p]['name'],
+                        key=f"add_files_to_{selected_group_name}"
                     )
                 else:
                     st.info("No ungrouped files available.")
@@ -613,32 +591,28 @@ with st.sidebar:
                         "Select files to remove:",
                         group['files'],
                         format_func=lambda p: dm.files[p]['name'],
+                        key=f"remove_files_from_{selected_group_name}"
                     )
                 else:
                     st.info("No files in this group yet.")
                     files_to_remove = []
             
-            # PATCH 2: Action buttons with server-side guard
+            # Action buttons
             button_col1, button_col2 = st.columns(2)
             with button_col1:
-                if st.button("Add Selected Files", key=f"btn_add_{selected_group_name}"):
-                    if selected_files:
-                        for file_path in selected_files:
-                            dm.add_file_to_group(selected_group_name, file_path)
-                        st.success(f"Added {len(selected_files)} files to {selected_group_name}")
-                        st.rerun()
-                    else:
-                        st.warning("Please select one or more files to add.")
+                if st.button("Add Selected Files", disabled=len(selected_files) == 0, key=f"btn_add_{selected_group_name}"):
+                    group['files'].extend(selected_files)
+                    dm.update_group_analysis(selected_group_name)
+                    st.success(f"Added {len(selected_files)} files to {selected_group_name}")
+                    st.rerun()
             
             with button_col2:
-                if st.button("Remove Selected Files", key=f"btn_rm_{selected_group_name}"):
-                    if files_to_remove:
-                        for file_path in files_to_remove:
-                            dm.remove_file_from_group(selected_group_name, file_path)
-                        st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
-                        st.rerun()
-                    else:
-                        st.warning("Please select one or more files to remove.")
+                if st.button("Remove Selected Files", disabled=len(files_to_remove) == 0, key=f"btn_rm_{selected_group_name}"):
+                    for file_path in files_to_remove:
+                        group['files'].remove(file_path)
+                    dm.update_group_analysis(selected_group_name)
+                    st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
+                    st.rerun()
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
 
@@ -651,7 +625,7 @@ with tab1:
             st.subheader(f"Results for: {file_data['name']}")
             if file_data['best_fit']:
                 best_fit,params=file_data['best_fit'],file_data['features']
-                t_fit,intensity_fit = file_data['time'], file_data['intensity']
+                t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
                 
                 # Enhanced metrics display
                 st.markdown("### Kinetic Analysis Results")
@@ -766,67 +740,39 @@ with tab1:
                     )
                     st.plotly_chart(comp_fig,use_container_width=True)
                 
-                # Enhanced Biophysical Interpretation Section
+                # Biophysical parameters
                 st.markdown("### Biophysical Interpretation")
-                st.markdown("Each kinetic rate constant (k) can be interpreted as representing either a diffusion-limited or a binding-limited process.")
-
-                best_fit = file_data['best_fit']
                 
-                # Use the centralized function to get detailed kinetic info
-                kinetic_details = CoreFRAPAnalysis.compute_kinetic_details(
-                    fit_data=best_fit,
-                    bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
-                    pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
-                    reference_D=st.session_state.settings.get('default_gfp_diffusion', 25.0),
-                    reference_Rg=st.session_state.settings.get('default_gfp_rg', 2.82),
-                    reference_MW=st.session_state.settings.get('default_gfp_mw', 27.0)
-                )
-
-                if not kinetic_details:
-                    st.warning("Could not compute kinetic details. The model fit may be invalid.")
+                # Calculate diffusion coefficient and molecular weight estimates
+                primary_rate=params.get('rate_constant_fast',params.get('rate_constant',0))
+                if primary_rate>0:
+                    bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
+                    pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
+                    effective_radius_um=bleach_radius*pixel_size
+                    
+                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
+                    
+                    # Binding interpretation: k_off = k
+                    k_off=primary_rate
+                    
+                    # Molecular weight estimation (relative to GFP)
+                    gfp_d=25.0  # μm²/s
+                    gfp_mw=27.0  # kDa
+                    apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
+                    
+                    col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
+                    with col_bio1:
+                        st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+                    with col_bio2:
+                        st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+                    with col_bio3:
+                        st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+                    with col_bio4:
+                        st.metric("Immobile (%)",f"{params.get('immobile_fraction',0):.1f}")
+                
                 else:
-                    interp_data = []
-                    if best_fit['model'] == 'single':
-                        comp_details = kinetic_details['single_component']
-                        interp_data.append({
-                            'Component': 'Single',
-                            'k (s⁻¹)': f"{comp_details['rate_constant']:.4f}",
-                            'Interpretation 1: Diffusion': f"{comp_details['diffusion_coef']:.3f}",
-                            'Interpretation 2: Binding (k_off)': f"{comp_details['rate_constant']:.4f}",
-                            'Interpretation 3: Radius of Gyration (Rg)': f"{comp_details['radius_gyration']:.2f}"
-                        })
-                    else: # double or triple
-                        for comp in kinetic_details.get('components', []):
-                             interp_data.append({
-                                'Component': f"Component {comp['component']} ({comp['proportion']*100:.1f}%)",
-                                'k (s⁻¹)': f"{comp['rate_constant']:.4f}",
-                                'Interpretation 1: Diffusion': f"{comp['diffusion_coef']:.3f}",
-                                'Interpretation 2: Binding (k_off)': f"{comp['rate_constant']:.4f}",
-                                'Interpretation 3: Radius of Gyration (Rg)': f"{comp['radius_gyration']:.2f}"
-                            })
-
-                    if interp_data:
-                        df_interp = pd.DataFrame(interp_data).set_index('Component')
-                        
-                        # Add units to column headers for clarity
-                        df_interp.columns = [
-                            'Rate Constant (k)', 
-                            'Apparent D (μm²/s)', 
-                            'k_off (s⁻¹)', 
-                            'Apparent Rg (nm)'
-                        ]
-                        
-                        st.table(df_interp)
-                        
-                        with st.expander("Interpretation Notes"):
-                            st.markdown("""
-                            - **Apparent D**: The calculated diffusion coefficient, assuming recovery is governed by 2D diffusion. This uses the corrected formula $D = (w^2 \cdot k) / 4$.
-                            - **k_off**: The equivalent dissociation rate constant, assuming recovery is limited by a first-order unbinding reaction. Here, $k_{off} = k$.
-                            - **Apparent Rg**: An estimated radius of gyration for a globular protein, calculated from the apparent diffusion coefficient relative to a reference (default: EGFP).
-                            - All calculations use parameters from the **Settings** tab.
-                            """)
-                    else:
-                        st.warning("Cannot calculate biophysical parameters - the model fit produced an invalid rate constant.")
+                    st.warning("Cannot calculate biophysical parameters - invalid rate constant")
             else: 
                 st.error("Could not determine a best fit for this file.")
     else: 
@@ -1247,75 +1193,7 @@ with tab2:
                             st.warning("No valid data for selected parameter")
                 
                 st.markdown("---")
-                st.markdown("### Step 6: Bivariate Analysis (Parameter Correlation)")
-                st.markdown("Visualize the relationship between two kinetic parameters to identify potential correlations.")
-
-                if numeric_cols and len(numeric_cols) >= 2:
-                    col_scatter1, col_scatter2 = st.columns(2)
-                    with col_scatter1:
-                        # Default to half_time if available, otherwise first column
-                        x_idx = numeric_cols.index('half_time') if 'half_time' in numeric_cols else 0
-                        x_axis_param = st.selectbox(
-                            "Select X-axis parameter:",
-                            numeric_cols,
-                            index=x_idx,
-                            key="scatter_x"
-                        )
-                    with col_scatter2:
-                        # Default to mobile_fraction if available, otherwise second column
-                        y_idx = numeric_cols.index('mobile_fraction') if 'mobile_fraction' in numeric_cols else 1
-                        y_axis_param = st.selectbox(
-                            "Select Y-axis parameter:",
-                            numeric_cols,
-                            index=y_idx,
-                            key="scatter_y"
-                        )
-                    
-                    if x_axis_param and y_axis_param and x_axis_param != y_axis_param:
-                        # Create scatter plot
-                        scatter_df = filtered_df.dropna(subset=[x_axis_param, y_axis_param])
-                        
-                        if len(scatter_df) > 2: # Need at least 3 points for a meaningful correlation
-                            fig_scatter = px.scatter(
-                                scatter_df,
-                                x=x_axis_param,
-                                y=y_axis_param,
-                                title=f"Correlation: {y_axis_param.replace('_', ' ').title()} vs. {x_axis_param.replace('_', ' ').title()}",
-                                trendline="ols",  # Ordinary Least Squares trendline
-                                hover_data=['file_name'],
-                                labels={
-                                    x_axis_param: x_axis_param.replace('_', ' ').title(),
-                                    y_axis_param: y_axis_param.replace('_', ' ').title()
-                                }
-                            )
-                            
-                            # Calculate Pearson correlation
-                            from scipy.stats import pearsonr
-                            corr, p_value = pearsonr(scatter_df[x_axis_param], scatter_df[y_axis_param])
-                            
-                            # Add annotation with correlation stats
-                            fig_scatter.add_annotation(
-                                x=0.02, y=0.98,
-                                xref="paper", yref="paper",
-                                align="left",
-                                text=f"<b>Pearson's r = {corr:.3f}</b><br>p-value = {p_value:.3f}<br>N = {len(scatter_df)}",
-                                showarrow=False,
-                                bgcolor="rgba(255, 255, 255, 0.8)",
-                                bordercolor="gray",
-                                borderwidth=1
-                            )
-                            
-                            fig_scatter.update_layout(height=500)
-                            st.plotly_chart(fig_scatter, use_container_width=True)
-                        else:
-                            st.warning("Not enough data points (need at least 3) to create a scatter plot for the selected parameters.")
-                    elif x_axis_param == y_axis_param:
-                        st.info("Please select different parameters for the X and Y axes.")
-                else:
-                    st.info("Not enough parameters available for bivariate analysis.")
-                
-                st.markdown("---")
-                st.markdown("### Step 7: Global Simultaneous Fitting")
+                st.markdown("### Step 6: Global Simultaneous Fitting")
                 st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
                 
                 with st.expander("🌐 Global Simultaneous Fit", expanded=False):
@@ -1449,7 +1327,7 @@ with tab2:
                                             if file_path:
                                                 file_data = dm.files[file_path]
                                                 t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
-                                                    file_data['data']['time'], file_data['data']['normalized']
+                                                    file_data['time'], file_data['intensity']
                                                 )
                                                 
                                                 # Plot original data
@@ -1526,7 +1404,7 @@ with tab2:
                                 st.error(f"Error during global fitting: {e}")
                 
                 st.markdown("---")
-                st.markdown("### Step 8: Group Recovery Plots")
+                st.markdown("### Step 7: Group Recovery Plots")
                 plot_data={path:dm.files[path] for path in filtered_df['file_path'].tolist()}
                 st.markdown("##### Average Recovery Curve")
                 avg_fig = plot_average_curve(plot_data)
@@ -1876,62 +1754,14 @@ with tab5:
                         st.error("Invalid session file format")
                         
                 except Exception as e:
-            # Sanitize group name for use as a Streamlit widget key
-            import re
-            sanitized_group_key = re.sub(r'\W+', '_', str(selected_group_name))
-            group_uploaded_files = st.file_uploader(
-                "Upload and add files directly to this group",
-                type=['xls', 'xlsx', 'csv'],
-                accept_multiple_files=True,
-                key=f"group_uploader_{sanitized_group_key}" # Unique key to reset on group change
-            )
-                "Upload and add files directly to this group",
-                type=['xls', 'xlsx', 'csv'],
-                accept_multiple_files=True,
-                key=f"group_uploader_{selected_group_name}" # Unique key to reset on group change
-            )
-            
-            if group_uploaded_files:
-                files_added_count = 0
-                failed_files = []
-                dm_files_set = set(dm.files.keys())
-                group_files_set = set(dm.groups[selected_group_name]['files'])
-                for uf in group_uploaded_files:
-                    # Use a unique path to handle files with the same name
-                    tp = f"data/{uf.name}_{hash(uf.getvalue())}"
-                    
-                    # Load file if not already loaded
-                    if tp not in dm_files_set:
-                        with open(tp, "wb") as f:
-                            f.write(uf.getbuffer())
-                        if not dm.load_file(tp, uf.name):
-                            failed_files.append(uf.name)
-                            continue
-                        dm_files_set.add(tp)
-                    
-                    # Add file to the current group
-                    if tp not in group_files_set:
-                        dm.add_file_to_group(selected_group_name, tp)
-                        files_added_count += 1
-                        group_files_set.add(tp)
-                
-                if files_added_count > 0:
-                    st.success(f"Added {files_added_count} new file(s) to '{selected_group_name}'.")
-                    st.rerun()
-                if failed_files:
-                    st.warning(f"Could not load the following files: {', '.join(failed_files)}. Skipped.")
+                    st.error(f"Error loading session: {e}")
+    
+    with col_session2:
+        st.subheader("Data Export")
+        
+        if dm.groups:
             # Excel export functionality
-            # Only enable if there is at least one group with at least one file with data
-            has_exportable_data = any(
-                group_info.get('files') and any(
-                    fp in dm.files and dm.files[fp].get('features') for fp in group_info.get('files', [])
-                )
-                for group_info in dm.groups.values()
-            )
-            export_excel_btn = st.button("📊 Export to Excel", type="primary", disabled=not has_exportable_data)
-            if not has_exportable_data:
-                st.warning("No groups with data available for Excel export. Please add files to groups and analyze them first.")
-            if export_excel_btn and has_exportable_data:
+            if st.button("📊 Export to Excel", type="primary"):
                 try:
                     import io
                     
@@ -2019,10 +1849,6 @@ with tab5:
                     
                 except Exception as e:
                     st.error(f"Error creating Excel export: {e}")
-                    st.success("Excel export prepared for download!")
-                    
-                except Exception as e:
-                    st.error(f"Error creating Excel export: {e}")
             
             # CSV export for individual groups
             st.markdown("### Export Individual Groups")
@@ -2043,7 +1869,8 @@ with tab5:
                                 primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
                                 kinetic_interp = interpret_kinetics(
                                     primary_rate,
-                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * st.session_state.settings.get('default_pixel_size', 1.0),
+                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * 
+                                                   st.session_state.settings.get('default_pixel_size', 1.0),
                                     gfp_d=25.0,
                                     gfp_mw=27.0
                                 )
