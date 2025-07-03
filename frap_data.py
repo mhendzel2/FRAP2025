@@ -60,11 +60,14 @@ class FRAPData:
                 'features': None
             }
             
-            # Perform the fits
-            fits = FRAPAnalysisCore.fit_all_models(
+            # Get post-bleach data with interpolated starting point for consistent fitting
+            t_post, i_post, _ = FRAPAnalysisCore.get_post_bleach_data(
                 file_data['time'],
                 file_data['intensity']
             )
+            
+            # Perform the fits using the same post-bleach data that plots use
+            fits = FRAPAnalysisCore.fit_all_models(t_post, i_post)
             file_data['fits'] = fits
             
             # Select best fit (using AIC by default)

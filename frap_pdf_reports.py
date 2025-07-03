@@ -18,6 +18,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from scipy import stats
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
+from frap_core_corrected import FRAPAnalysisCore
 
 def create_statistical_plots(combined_df, param='mobile_fraction'):
     """Create statistical visualization plots for PDF report"""

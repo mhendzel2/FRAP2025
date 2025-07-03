@@ -14,6 +14,74 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from sklearn.cluster import AgglomerativeClustering
 
+# ---------------------------------------------------------------------- #
+#  PUBLIC HELPER – post‑bleach extraction with half‑frame interpolation  #
+# ---------------------------------------------------------------------- #
+def get_post_bleach_data(time: np.ndarray,
+                         intensity: np.ndarray,
+                         *,
+                         interp_fraction: float = 0.5
+                         ) -> tuple[np.ndarray, np.ndarray, int]:
+    """
+    Return **t_post**, **i_post** and the index of the first bleach frame (i_min).
+
+    • The first post‑bleach time point is placed *half‑way* between the last
+      pre‑bleach frame and the first measured post‑bleach frame, in accordance
+      with Axelrod 1976 recommendations.
+
+    Parameters
+    ----------
+    time, intensity : 1‑D arrays (already normalised)
+    interp_fraction  : float ∈ (0, 1) – 0.5 → mid‑point
+
+    """
+    # locate bleach – minimum intensity
+    i_min = int(np.argmin(intensity))
+    if i_min == 0:                           # guard pathological files
+        raise ValueError("Bleach frame at index 0 – cannot segment pre/post.")
+
+    # linear interpolation between i_min‑1 and i_min
+    t0 = time[i_min-1] + interp_fraction * (time[i_min] - time[i_min-1])
+    i0 = intensity[i_min-1] + interp_fraction * (intensity[i_min] - intensity[i_min-1])
+
+    t_post = np.concatenate([[t0], time[i_min:]])
+    i_post = np.concatenate([[i0], intensity[i_min:]])
+
+    return t_post, i_post, i_min
+
+# ----------------------------- DIFFUSION ------------------------------- #
+def diffusion_coefficient(bleach_radius_um: float, k: float) -> float:
+    """
+    Corrected 2‑D diffusion coefficient:
+
+        D = (w² × k) / 4
+
+    where **w** is the bleached‑spot radius in µm.  No ln(2) factor.
+    """
+    return (bleach_radius_um**2 * k) / 4.0
+
+def interpret_kinetics(k: float,
+                       bleach_radius_um: float,
+                       gfp_d: float = 25.0,
+                       gfp_rg: float = 2.82,
+                       gfp_mw: float = 27.0) -> dict[str, float]:
+    """
+    Dual interpretation (diffusion / binding) using the *correct* D formula.
+    """
+    if k <= 0 or bleach_radius_um <= 0:
+        return {k: np.nan for k in
+                ("k_off", "diffusion_coefficient", "apparent_mw",
+                 "half_time_diffusion", "half_time_binding")}
+
+    D = diffusion_coefficient(bleach_radius_um, k)
+    return {
+        "k_off": k,
+        "diffusion_coefficient": D,
+        "apparent_mw": gfp_mw * (gfp_d / D)**3,
+        "half_time_diffusion": np.log(2) / k,
+        "half_time_binding": np.log(2) / k,
+    }
+
 # Handle optional imports with fallbacks
 try:
     import xlrd
