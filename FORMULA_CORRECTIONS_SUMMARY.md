@@ -41,7 +41,7 @@ For 2D diffusion in FRAP recovery:
 ## Files Corrected
 
 ### 1. Core Analysis Module
-**File**: `frap_core_corrected.py`
+**File**: `frap_core_corrected.py_corrected.py`
 - ✅ `compute_diffusion_coefficient()` - Removed erroneous ln(2) factor
 - ✅ `interpret_kinetics()` - Corrected diffusion calculation
 - ✅ `compute_kinetic_details()` - All components use corrected formula

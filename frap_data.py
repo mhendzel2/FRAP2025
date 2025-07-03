@@ -7,7 +7,7 @@ import os
 import glob
 import pandas as pd
 import numpy as np
-from frap_core import FRAPAnalysisCore
+from frap_core_corrected.py import FRAPAnalysisCore
 import logging
 
 logger = logging.getLogger(__name__)
