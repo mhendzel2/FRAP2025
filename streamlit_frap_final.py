@@ -1,3 +1,6 @@
+Of course. Here is the full, corrected code for `streamlit_frap_final.py` with the two required patches applied.
+
+```python
 """
 FRAP Analysis App - Final Verified Version
 A comprehensive FRAP analysis application with supervised outlier removal, sequential group plots,
@@ -322,8 +325,7 @@ The kinetic rates can be interpreted in two ways:
     report_str += """
 ### Detailed Results Table
 
-**Legend:** 
-- ✅ Included in population analysis
+**Legend:** - ✅ Included in population analysis
 - ❌ Excluded as outlier
 
 | File | Status | Mobile (%) | Rate (k) | k_off (1/s) | App. D (μm²/s) | App. MW (kDa) | Model | R² |
@@ -481,13 +483,23 @@ class FRAPDataManager:
             
             processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
-                time,intensity = processed_df['time'].values,processed_df['normalized'].values
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                # PATCH 1: Use mid-point corrected data for fitting
+                time_raw = processed_df['time'].values
+                int_raw = processed_df['normalized'].values
+                t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(time_raw, int_raw)
+                
+                fits = CoreFRAPAnalysis.fit_all_models(t_post, i_post)
+                best_fit = CoreFRAPAnalysis.select_best_fit(fits, st.session_state.settings['default_criterion'])
                 params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                self.files[file_path]={
-                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
-                    'fits':fits,'best_fit':best_fit,'features':params
+                
+                self.files[file_path] = {
+                    'name': file_name,
+                    'data': processed_df,
+                    'time': t_post,
+                    'intensity': i_post,
+                    'fits': fits,
+                    'best_fit': best_fit,
+                    'features': params
                 }
                 logger.info(f"Loaded: {file_name}")
                 return True
@@ -597,22 +609,28 @@ with st.sidebar:
                     st.info("No files in this group yet.")
                     files_to_remove = []
             
-            # Action buttons
+            # PATCH 2: Action buttons with server-side guard
             button_col1, button_col2 = st.columns(2)
             with button_col1:
-                if st.button("Add Selected Files", disabled=len(selected_files) == 0, key=f"btn_add_{selected_group_name}"):
-                    group['files'].extend(selected_files)
-                    dm.update_group_analysis(selected_group_name)
-                    st.success(f"Added {len(selected_files)} files to {selected_group_name}")
-                    st.rerun()
+                if st.button("Add Selected Files", key=f"btn_add_{selected_group_name}"):
+                    if selected_files:
+                        group['files'].extend(selected_files)
+                        dm.update_group_analysis(selected_group_name)
+                        st.success(f"Added {len(selected_files)} files to {selected_group_name}")
+                        st.rerun()
+                    else:
+                        st.warning("Please select one or more files to add.")
             
             with button_col2:
-                if st.button("Remove Selected Files", disabled=len(files_to_remove) == 0, key=f"btn_rm_{selected_group_name}"):
-                    for file_path in files_to_remove:
-                        group['files'].remove(file_path)
-                    dm.update_group_analysis(selected_group_name)
-                    st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
-                    st.rerun()
+                if st.button("Remove Selected Files", key=f"btn_rm_{selected_group_name}"):
+                    if files_to_remove:
+                        for file_path in files_to_remove:
+                            group['files'].remove(file_path)
+                        dm.update_group_analysis(selected_group_name)
+                        st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
+                        st.rerun()
+                    else:
+                        st.warning("Please select one or more files to remove.")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
 
@@ -625,7 +643,7 @@ with tab1:
             st.subheader(f"Results for: {file_data['name']}")
             if file_data['best_fit']:
                 best_fit,params=file_data['best_fit'],file_data['features']
-                t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
+                t_fit,intensity_fit = file_data['time'], file_data['intensity']
                 
                 # Enhanced metrics display
                 st.markdown("### Kinetic Analysis Results")
@@ -1327,7 +1345,7 @@ with tab2:
                                             if file_path:
                                                 file_data = dm.files[file_path]
                                                 t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
-                                                    file_data['time'], file_data['intensity']
+                                                    file_data['data']['time'], file_data['data']['normalized']
                                                 )
                                                 
                                                 # Plot original data
@@ -1869,8 +1887,7 @@ with tab5:
                                 primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
                                 kinetic_interp = interpret_kinetics(
                                     primary_rate,
-                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * 
-                                                   st.session_state.settings.get('default_pixel_size', 1.0),
+                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * st.session_state.settings.get('default_pixel_size', 1.0),
                                     gfp_d=25.0,
                                     gfp_mw=27.0
                                 )
@@ -2069,3 +2086,4 @@ with tab6:
             st.session_state.selected_group_name=None
             st.success("All data cleared successfully.")
             st.rerun()
+```
