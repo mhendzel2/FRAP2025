@@ -11,7 +11,6 @@ import pandas as pd
 import numpy as np
 import os
 import io
-from math import log
 from scipy.optimize import curve_fit
 from scipy.ndimage import minimum_position
 import plotly.graph_objects as go
@@ -143,8 +142,16 @@ def fit_psf(image_data: np.ndarray) -> Dict[str, float]:
         }
     except Exception as e:
         logger.error(f"PSF fitting failed: {e}")
-        return {'sigma_x': 2.0, 'sigma_y': 2.0}
-
+        logger.error(f"PSF fitting failed: {e}")
+        return {
+            'sigma_x': 2.0,
+            'sigma_y': 2.0,
+            'amplitude': 1.0,
+            'center_x': 0.0,
+            'center_y': 0.0,
+            'theta': 0.0,
+            'offset': 0.0
+        }
 def track_bleach_center(image_stack: np.ndarray, bleach_frame_index: int, 
                        search_radius: int = 5) -> List[Tuple[int, int]]:
     """
@@ -2079,9 +2086,8 @@ with tab6:
     
     st.markdown("### Data Management")
     if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-        if st.button("Clear All Data",type="secondary"):
-            st.session_state.data_manager=FRAPDataManager()
-            st.session_state.selected_group_name=None
+        if st.button("Clear All Data", type="secondary"):
+            st.session_state.data_manager = FRAPDataManager()
+            st.session_state.selected_group_name = None
             st.success("All data cleared successfully.")
             st.rerun()
-```
