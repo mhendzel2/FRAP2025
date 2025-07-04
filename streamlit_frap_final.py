@@ -21,7 +21,11 @@ from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
-
+import zipfile
+import io
+import os
+import tempfile
+import shutil
 # --- Page and Logging Configuration ---
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
