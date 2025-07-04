@@ -161,8 +161,12 @@ class FRAPAnalysisCore:
             if file_extension == '.csv':
                 df = pd.read_csv(file_path)
             elif file_extension == '.xls':
+                if not XLRD_AVAILABLE:
+                    raise ImportError("The 'xlrd' package is required to read .xls files. Please install it using 'pip install xlrd'.")
                 df = pd.read_excel(file_path, engine='xlrd')
             elif file_extension == '.xlsx':
+                if not OPENPYXL_AVAILABLE:
+                    raise ImportError("The 'openpyxl' package is required to read .xlsx files. Please install it using 'pip install openpyxl'.")
                 df = pd.read_excel(file_path, engine='openpyxl')
             else:
                 raise ValueError(f"Unsupported file format: {file_extension}")
