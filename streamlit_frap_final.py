@@ -22,8 +22,6 @@ from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 import zipfile
-import io
-import os
 import tempfile
 import shutil
 # --- Page and Logging Configuration ---
@@ -514,6 +512,91 @@ class FRAPDataManager:
                 features_list.append(ff)
         group['features_df'] = pd.DataFrame(features_list) if features_list else pd.DataFrame()
 
+    def add_file_to_group(self, group_name, file_path):
+        """
+        Adds a file to an existing group.
+        """
+        if group_name in self.groups and file_path in self.files:
+            if file_path not in self.groups[group_name]['files']:
+                self.groups[group_name]['files'].append(file_path)
+                return True
+        return False
+
+    def load_groups_from_zip_archive(self, zip_file):
+        """
+        Loads files from a ZIP archive containing subfolders, where each subfolder
+        is treated as a new group.
+        """
+        try:
+            # Create a temporary directory to extract the files
+            with tempfile.TemporaryDirectory() as temp_dir:
+                with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
+                    z.extractall(temp_dir)
+
+                # Walk through the extracted directory to find subfolders (groups)
+                for root, dirs, _ in os.walk(temp_dir):
+                    # We are interested in the directories at the first level
+                    if root == temp_dir:
+                        for group_name in dirs:
+                            if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                                continue
+                            self.create_group(group_name)
+                            group_path = os.path.join(root, group_name)
+                            
+                            # Now find the files in this group's subfolder
+                            for file_in_group in os.listdir(group_path):
+                                file_path_in_temp = os.path.join(group_path, file_in_group)
+                                # Ignore subdirectories and hidden files
+                                if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
+                                    with open(file_path_in_temp, 'rb') as f_content:
+                                        file_content = f_content.read()
+                                    
+                                    file_name = os.path.basename(file_in_group)
+                                    tp = f"data/{file_name}_{hash(file_content)}"
+                                    
+                                    if tp not in self.files:
+                                        # Copy the file to the data directory to be loaded
+                                        shutil.copy(file_path_in_temp, tp)
+                                        if self.load_file(tp, file_name):
+                                            self.add_file_to_group(group_name, tp)
+                            self.update_group_analysis(group_name)
+            return True
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+            return False
+
+    def load_zip_archive_and_create_group(self, zip_file, group_name):
+        """
+        Loads files from a ZIP archive, creates a new group, and adds the files to it.
+        """
+        try:
+            self.create_group(group_name)
+            with zipfile.ZipFile(io.BytesIO(zip_file.read())) as z:
+                file_list = z.namelist()
+                for file_in_zip in file_list:
+                    # Ignore directories and hidden files (like __MACOSX)
+                    if not file_in_zip.endswith('/') and '__MACOSX' not in file_in_zip:
+                        file_content = z.read(file_in_zip)
+                        file_name = os.path.basename(file_in_zip)
+
+                        # Create a temporary file to use with the existing load_file logic
+                        tp = f"data/{file_name}_{hash(file_content)}"
+                        if tp not in self.files:
+                             with open(tp, "wb") as f:
+                                 f.write(file_content)
+                             if self.load_file(tp, file_name):
+                                 self.add_file_to_group(group_name, tp)
+
+            self.update_group_analysis(group_name)
+            st.session_state.selected_group_name = group_name
+            return True
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive for group {group_name}: {e}")
+            # Clean up group if creation failed
+            if group_name in self.groups:
+                del self.groups[group_name]
+            return False
+
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
@@ -521,15 +604,35 @@ dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_
 
 with st.sidebar:
     st.header("Data Management")
-    uploaded_files=st.file_uploader("Upload FRAP files",type=['xls','xlsx','csv'],accept_multiple_files=True)
+    
+    # --- New ZIP Uploader for Groups ---
+    st.subheader("Group Upload (from ZIP with subfolders)")
+    st.markdown("Drag and drop a ZIP file containing subfolders. Each subfolder will be treated as a new group, and the files within will be added to it.")
+    uploaded_zip = st.file_uploader("Upload a .zip file with group subfolders", type=['zip'], key="zip_uploader")
+
+    if uploaded_zip:
+        if st.button(f"Create Groups from '{uploaded_zip.name}'"):
+            with st.spinner(f"Processing groups from '{uploaded_zip.name}'..."):
+                if 'data_manager' in st.session_state:
+                    success = dm.load_groups_from_zip_archive(uploaded_zip)
+                    if success:
+                        st.success(f"Successfully created groups from the ZIP archive.")
+                        st.rerun()
+                    else:
+                        st.error("Failed to process ZIP archive with subfolders.")
+
+    # --- Existing Single File Uploader ---
+    st.subheader("Single File Upload")
+    uploaded_files = st.file_uploader("Upload FRAP files", type=['xls', 'xlsx', 'csv'], accept_multiple_files=True, key="single_file_uploader")
     if uploaded_files:
+        # ... keep the existing single file upload logic here ...
         new_files_loaded = False
         for uf in uploaded_files:
             tp=f"data/{uf.name}_{hash(uf.getvalue())}"
             if tp not in dm.files:
-                with open(tp,"wb") as f: 
+                with open(tp,"wb") as f:
                     f.write(uf.getbuffer())
-                if dm.load_file(tp,uf.name): 
+                if dm.load_file(tp,uf.name):
                     st.success(f"✅ Successfully loaded: {uf.name}")
                     new_files_loaded = True
                 else:
@@ -539,7 +642,7 @@ with st.sidebar:
             st.info("📂 Files have been processed and are ready for analysis. Use the 'Add Selected Files' section below to assign them to groups.")
             if st.button("Refresh Interface", type="primary"):
                 st.rerun()
-    
+
     st.header("Group Setup")
     with st.form("new_group_form",clear_on_submit=True):
         new_group_name=st.text_input("Enter New Group Name")
