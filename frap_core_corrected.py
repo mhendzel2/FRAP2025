@@ -946,10 +946,30 @@ class FRAPAnalysisCore:
             Dictionary containing features for clustering
         """
         if best_fit is None:
+            logging.warning("extract_clustering_features: best_fit is None")
+            return None
+        
+        # Validate best_fit structure
+        if not isinstance(best_fit, dict):
+            logging.error(f"extract_clustering_features: best_fit is not a dict, got {type(best_fit)}")
+            return None
+            
+        if 'model' not in best_fit or 'params' not in best_fit:
+            logging.error(f"extract_clustering_features: best_fit missing required keys. Available keys: {list(best_fit.keys())}")
             return None
             
         model = best_fit['model']
         params = best_fit['params']
+        
+        # Validate params
+        if params is None:
+            logging.error("extract_clustering_features: params is None")
+            return None
+            
+        if not isinstance(params, (list, tuple, np.ndarray)) or len(params) == 0:
+            logging.error(f"extract_clustering_features: invalid params type or empty. Got {type(params)} with length {len(params) if hasattr(params, '__len__') else 'unknown'}")
+            return None
+        
         features = {}
         
         # Default bleach spot radius in μm (will be replaced with user input in real application)
@@ -960,112 +980,231 @@ class FRAPAnalysisCore:
         Rg_GFP = 2.82  # nm
         MW_GFP = 27.0  # kDa
         
-        if model == 'single':
-            A, k, C = params
-            features['amplitude'] = A
-            features['rate_constant'] = k
-            features['mobile_fraction'] = A / (1.0 - C) if C < 1.0 else np.nan
-            features['half_time'] = np.log(2) / k if k > 0 else np.nan
-            
-            # Calculate diffusion coefficient using CORRECTED formula - D = w²k/4
-            diffusion_coef = (default_spot_radius**2 * k) / 4.0  # CORRECTED: removed ln(2)
-            features['diffusion_coefficient'] = diffusion_coef
-            
-            # Calculate radius of gyration using GFP as reference
-            features['radius_of_gyration'] = Rg_GFP * (D_GFP / diffusion_coef) if diffusion_coef > 0 else np.nan
-            
-            # Estimate molecular weight (scales with Rg^3 for globular proteins)
-            features['molecular_weight_estimate'] = MW_GFP * (features['radius_of_gyration'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration']) else np.nan
-            
-        elif model == 'double':
-            A1, k1, A2, k2, C = params
-            total_amp = A1 + A2
-            
-            # Sort components by rate constant (fast to slow)
-            components = sorted([(k1, A1), (k2, A2)], reverse=True)
-            sorted_rates = [comp[0] for comp in components]
-            sorted_amps = [comp[1] for comp in components]
-            
-            features['amplitude_1'] = sorted_amps[0]
-            features['rate_constant_1'] = sorted_rates[0]
-            features['amplitude_2'] = sorted_amps[1]
-            features['rate_constant_2'] = sorted_rates[1]
-            
-            # Calculate proportions
-            features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 else np.nan
-            features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 else np.nan
-            
-            # Mobile fraction
-            features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 else np.nan
-            
-            # Weighted average half-time
-            if total_amp > 0:
-                features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
-                                         sorted_amps[1] * np.log(2) / sorted_rates[1]) / total_amp if sorted_rates[0] > 0 and sorted_rates[1] > 0 else np.nan
-            else:
-                features['half_time'] = np.nan
+        try:
+            if model == 'single':
+                if len(params) < 3:
+                    logging.error(f"extract_clustering_features: single model requires 3 parameters, got {len(params)}")
+                    return None
+                    
+                A, k, C = params[:3]  # Take only first 3 parameters for safety
                 
-            # Calculate diffusion coefficients for both components using CORRECTED formula
-            features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0  # CORRECTED
-            features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0  # CORRECTED
-            
-            # Calculate radii of gyration
-            features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / features['diffusion_coefficient_1']) if features['diffusion_coefficient_1'] > 0 else np.nan
-            features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / features['diffusion_coefficient_2']) if features['diffusion_coefficient_2'] > 0 else np.nan
-            
-            # Estimate molecular weights
-            features['molecular_weight_estimate_1'] = MW_GFP * (features['radius_of_gyration_1'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration_1']) else np.nan
-            features['molecular_weight_estimate_2'] = MW_GFP * (features['radius_of_gyration_2'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration_2']) else np.nan
-            
-        elif model == 'triple':
-            A1, k1, A2, k2, A3, k3, C = params
-            total_amp = A1 + A2 + A3
-            
-            # Sort components by rate constant (fast to slow)
-            components = sorted([(k1, A1), (k2, A2), (k3, A3)], reverse=True)
-            sorted_rates = [comp[0] for comp in components]
-            sorted_amps = [comp[1] for comp in components]
-            
-            features['amplitude_1'] = sorted_amps[0]
-            features['rate_constant_1'] = sorted_rates[0]
-            features['amplitude_2'] = sorted_amps[1]
-            features['rate_constant_2'] = sorted_rates[1]
-            features['amplitude_3'] = sorted_amps[2]
-            features['rate_constant_3'] = sorted_rates[2]
-            
-            # Calculate proportions
-            features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 else np.nan
-            features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 else np.nan
-            features['proportion_3'] = sorted_amps[2] / total_amp if total_amp > 0 else np.nan
-            
-            # Mobile fraction
-            features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 else np.nan
-            
-            # Weighted average half-time
-            if total_amp > 0:
-                features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
-                                         sorted_amps[1] * np.log(2) / sorted_rates[1] + 
-                                         sorted_amps[2] * np.log(2) / sorted_rates[2]) / total_amp if sorted_rates[0] > 0 and sorted_rates[1] > 0 and sorted_rates[2] > 0 else np.nan
-            else:
-                features['half_time'] = np.nan
+                # Validate individual parameters
+                if not np.isfinite(A) or not np.isfinite(k) or not np.isfinite(C):
+                    logging.warning(f"extract_clustering_features: non-finite parameters detected - A:{A}, k:{k}, C:{C}")
+                    # Replace invalid values with NaN
+                    A = A if np.isfinite(A) else np.nan
+                    k = k if np.isfinite(k) else np.nan
+                    C = C if np.isfinite(C) else np.nan
                 
-            # Calculate diffusion coefficients for all components using CORRECTED formula
-            features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0  # CORRECTED
-            features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0  # CORRECTED
-            features['diffusion_coefficient_3'] = (default_spot_radius**2 * sorted_rates[2]) / 4.0  # CORRECTED
-            
-            # Calculate radii of gyration
-            features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / features['diffusion_coefficient_1']) if features['diffusion_coefficient_1'] > 0 else np.nan
-            features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / features['diffusion_coefficient_2']) if features['diffusion_coefficient_2'] > 0 else np.nan
-            features['radius_of_gyration_3'] = Rg_GFP * (D_GFP / features['diffusion_coefficient_3']) if features['diffusion_coefficient_3'] > 0 else np.nan
-            
-            # Estimate molecular weights
-            features['molecular_weight_estimate_1'] = MW_GFP * (features['radius_of_gyration_1'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration_1']) else np.nan
-            features['molecular_weight_estimate_2'] = MW_GFP * (features['radius_of_gyration_2'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration_2']) else np.nan
-            features['molecular_weight_estimate_3'] = MW_GFP * (features['radius_of_gyration_3'] / Rg_GFP)**3 if not np.isnan(features['radius_of_gyration_3']) else np.nan
-        else:
+                features['amplitude'] = A
+                features['rate_constant'] = k
+                features['mobile_fraction'] = A / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(A) else np.nan
+                features['half_time'] = np.log(2) / k if k > 0 and np.isfinite(k) else np.nan
+                
+                # Calculate diffusion coefficient using CORRECTED formula - D = w²k/4
+                if k > 0 and np.isfinite(k):
+                    diffusion_coef = (default_spot_radius**2 * k) / 4.0  # CORRECTED: removed ln(2)
+                else:
+                    diffusion_coef = np.nan
+                    
+                features['diffusion_coefficient'] = diffusion_coef
+                
+                # Calculate radius of gyration using GFP as reference
+                features['radius_of_gyration'] = Rg_GFP * (D_GFP / diffusion_coef) if diffusion_coef > 0 and np.isfinite(diffusion_coef) else np.nan
+                
+                # Estimate molecular weight (scales with Rg^3 for globular proteins)
+                rg = features['radius_of_gyration']
+                features['molecular_weight_estimate'] = MW_GFP * (rg / Rg_GFP)**3 if not np.isnan(rg) and rg > 0 else np.nan
+                
+            elif model == 'double':
+                if len(params) < 5:
+                    logging.error(f"extract_clustering_features: double model requires 5 parameters, got {len(params)}")
+                    return None
+                    
+                A1, k1, A2, k2, C = params[:5]  # Take only first 5 parameters for safety
+                
+                # Validate parameters
+                if not all(np.isfinite([A1, k1, A2, k2, C])):
+                    logging.warning(f"extract_clustering_features: non-finite parameters detected in double model")
+                    # Replace invalid values with NaN but continue processing
+                    A1 = A1 if np.isfinite(A1) else np.nan
+                    k1 = k1 if np.isfinite(k1) else np.nan
+                    A2 = A2 if np.isfinite(A2) else np.nan
+                    k2 = k2 if np.isfinite(k2) else np.nan
+                    C = C if np.isfinite(C) else np.nan
+                
+                total_amp = A1 + A2 if np.isfinite(A1) and np.isfinite(A2) else np.nan
+                
+                # Sort components by rate constant (fast to slow) - handle NaN values
+                components = []
+                if np.isfinite(k1) and np.isfinite(A1):
+                    components.append((k1, A1))
+                if np.isfinite(k2) and np.isfinite(A2):
+                    components.append((k2, A2))
+                
+                if len(components) == 0:
+                    logging.error("extract_clustering_features: no valid components in double model")
+                    return None
+                
+                # Sort by rate constant (fast to slow)
+                components.sort(reverse=True, key=lambda x: x[0])
+                
+                # Fill in missing components with NaN
+                while len(components) < 2:
+                    components.append((np.nan, np.nan))
+                
+                sorted_rates = [comp[0] for comp in components]
+                sorted_amps = [comp[1] for comp in components]
+                
+                features['amplitude_1'] = sorted_amps[0]
+                features['rate_constant_1'] = sorted_rates[0]
+                features['amplitude_2'] = sorted_amps[1]
+                features['rate_constant_2'] = sorted_rates[1]
+                
+                # Calculate proportions
+                features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[0]) else np.nan
+                features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[1]) else np.nan
+                
+                # Mobile fraction
+                features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(total_amp) else np.nan
+                
+                # Weighted average half-time
+                if total_amp > 0 and np.isfinite(total_amp):
+                    if all(rate > 0 and np.isfinite(rate) for rate in sorted_rates) and all(np.isfinite(amp) for amp in sorted_amps):
+                        features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
+                                                 sorted_amps[1] * np.log(2) / sorted_rates[1]) / total_amp
+                    else:
+                        features['half_time'] = np.nan
+                else:
+                    features['half_time'] = np.nan
+                    
+                # Calculate diffusion coefficients for both components using CORRECTED formula
+                features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0 if sorted_rates[0] > 0 and np.isfinite(sorted_rates[0]) else np.nan
+                features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0 if sorted_rates[1] > 0 and np.isfinite(sorted_rates[1]) else np.nan
+                
+                # Calculate radii of gyration
+                dc1 = features['diffusion_coefficient_1']
+                dc2 = features['diffusion_coefficient_2']
+                features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / dc1) if dc1 > 0 and np.isfinite(dc1) else np.nan
+                features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / dc2) if dc2 > 0 and np.isfinite(dc2) else np.nan
+                
+                # Estimate molecular weights
+                rg1 = features['radius_of_gyration_1']
+                rg2 = features['radius_of_gyration_2']
+                features['molecular_weight_estimate_1'] = MW_GFP * (rg1 / Rg_GFP)**3 if not np.isnan(rg1) and rg1 > 0 else np.nan
+                features['molecular_weight_estimate_2'] = MW_GFP * (rg2 / Rg_GFP)**3 if not np.isnan(rg2) and rg2 > 0 else np.nan
+                
+            elif model == 'triple':
+                if len(params) < 7:
+                    logging.error(f"extract_clustering_features: triple model requires 7 parameters, got {len(params)}")
+                    return None
+                    
+                A1, k1, A2, k2, A3, k3, C = params[:7]  # Take only first 7 parameters for safety
+                
+                # Validate parameters
+                if not all(np.isfinite([A1, k1, A2, k2, A3, k3, C])):
+                    logging.warning(f"extract_clustering_features: non-finite parameters detected in triple model")
+                    # Replace invalid values with NaN but continue processing
+                    params_list = [A1, k1, A2, k2, A3, k3, C]
+                    params_list = [p if np.isfinite(p) else np.nan for p in params_list]
+                    A1, k1, A2, k2, A3, k3, C = params_list
+                
+                total_amp = A1 + A2 + A3 if all(np.isfinite([A1, A2, A3])) else np.nan
+                
+                # Sort components by rate constant (fast to slow) - handle NaN values
+                components = []
+                if np.isfinite(k1) and np.isfinite(A1):
+                    components.append((k1, A1))
+                if np.isfinite(k2) and np.isfinite(A2):
+                    components.append((k2, A2))
+                if np.isfinite(k3) and np.isfinite(A3):
+                    components.append((k3, A3))
+                
+                if len(components) == 0:
+                    logging.error("extract_clustering_features: no valid components in triple model")
+                    return None
+                
+                # Sort by rate constant (fast to slow)
+                components.sort(reverse=True, key=lambda x: x[0])
+                
+                # Fill in missing components with NaN
+                while len(components) < 3:
+                    components.append((np.nan, np.nan))
+                
+                sorted_rates = [comp[0] for comp in components]
+                sorted_amps = [comp[1] for comp in components]
+                
+                features['amplitude_1'] = sorted_amps[0]
+                features['rate_constant_1'] = sorted_rates[0]
+                features['amplitude_2'] = sorted_amps[1]
+                features['rate_constant_2'] = sorted_rates[1]
+                features['amplitude_3'] = sorted_amps[2]
+                features['rate_constant_3'] = sorted_rates[2]
+                
+                # Calculate proportions
+                features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[0]) else np.nan
+                features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[1]) else np.nan
+                features['proportion_3'] = sorted_amps[2] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[2]) else np.nan
+                
+                # Mobile fraction
+                features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(total_amp) else np.nan
+                
+                # Weighted average half-time
+                if total_amp > 0 and np.isfinite(total_amp):
+                    if all(rate > 0 and np.isfinite(rate) for rate in sorted_rates) and all(np.isfinite(amp) for amp in sorted_amps):
+                        features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
+                                                 sorted_amps[1] * np.log(2) / sorted_rates[1] + 
+                                                 sorted_amps[2] * np.log(2) / sorted_rates[2]) / total_amp
+                    else:
+                        features['half_time'] = np.nan
+                else:
+                    features['half_time'] = np.nan
+                    
+                # Calculate diffusion coefficients for all components using CORRECTED formula
+                features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0 if sorted_rates[0] > 0 and np.isfinite(sorted_rates[0]) else np.nan
+                features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0 if sorted_rates[1] > 0 and np.isfinite(sorted_rates[1]) else np.nan
+                features['diffusion_coefficient_3'] = (default_spot_radius**2 * sorted_rates[2]) / 4.0 if sorted_rates[2] > 0 and np.isfinite(sorted_rates[2]) else np.nan
+                
+                # Calculate radii of gyration
+                dc1 = features['diffusion_coefficient_1']
+                dc2 = features['diffusion_coefficient_2']
+                dc3 = features['diffusion_coefficient_3']
+                features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / dc1) if dc1 > 0 and np.isfinite(dc1) else np.nan
+                features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / dc2) if dc2 > 0 and np.isfinite(dc2) else np.nan
+                features['radius_of_gyration_3'] = Rg_GFP * (D_GFP / dc3) if dc3 > 0 and np.isfinite(dc3) else np.nan
+                
+                # Estimate molecular weights
+                rg1 = features['radius_of_gyration_1']
+                rg2 = features['radius_of_gyration_2']
+                rg3 = features['radius_of_gyration_3']
+                features['molecular_weight_estimate_1'] = MW_GFP * (rg1 / Rg_GFP)**3 if not np.isnan(rg1) and rg1 > 0 else np.nan
+                features['molecular_weight_estimate_2'] = MW_GFP * (rg2 / Rg_GFP)**3 if not np.isnan(rg2) and rg2 > 0 else np.nan
+                features['molecular_weight_estimate_3'] = MW_GFP * (rg3 / Rg_GFP)**3 if not np.isnan(rg3) and rg3 > 0 else np.nan
+            else:
+                logging.error(f"extract_clustering_features: unknown model type: {model}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"extract_clustering_features: error processing {model} model: {e}")
             return None
             
+        # Add model information to features
+        features['model'] = model
+        features['immobile_fraction'] = 1.0 - features.get('mobile_fraction', 0) if np.isfinite(features.get('mobile_fraction', np.nan)) else np.nan
+        
+        # Add available rate constant names for easier access
+        rate_constants = []
+        for key in features:
+            if 'rate_constant' in key and np.isfinite(features[key]):
+                rate_constants.append(features[key])
+        
+        if rate_constants:
+            features['rate_constant_fast'] = max(rate_constants)
+            features['rate_constant_slow'] = min(rate_constants)
+            if len(rate_constants) >= 2:
+                rate_constants.sort(reverse=True)
+                features['rate_constant_medium'] = rate_constants[1] if len(rate_constants) >= 3 else np.nan
+        
         return features
 
     @staticmethod
