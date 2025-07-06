@@ -430,7 +430,13 @@ def plot_all_curves(group_files_data):
     fig = go.Figure()
     for file_data in group_files_data.values():
         fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='lines', name=file_data['name']))
-    fig.update_layout(title="All Individual Recovery Curves", xaxis_title="Time (s)", yaxis_title="Normalized Intensity", legend_title="File")
+    fig.update_layout(
+        title="All Individual Recovery Curves", 
+        xaxis_title="Time (s)", 
+        yaxis_title="Normalized Intensity", 
+        yaxis=dict(range=[0, None]),  # Start y-axis from zero
+        legend_title="File"
+    )
     return fig
 
 def plot_average_curve(group_files_data):
@@ -451,7 +457,12 @@ def plot_average_curve(group_files_data):
         go.Scatter(x=np.concatenate([common_time, common_time[::-1]]), y=np.concatenate([upper_bound, lower_bound[::-1]]), fill='toself', fillcolor='rgba(220,20,60,0.2)', line=dict(color='rgba(255,255,255,0)'), hoverinfo="none", name='Std. Dev.'),
         go.Scatter(x=common_time, y=mean_intensity, mode='lines', name='Average Recovery', line=dict(color='crimson', width=3))
     ])
-    fig.update_layout(title="Average FRAP Recovery Curve", xaxis_title="Time (s)", yaxis_title="Normalized Intensity")
+    fig.update_layout(
+        title="Average FRAP Recovery Curve", 
+        xaxis_title="Time (s)", 
+        yaxis_title="Normalized Intensity",
+        yaxis=dict(range=[0, None])  # Start y-axis from zero
+    )
     return fig
 
 # --- Core Analysis and Data Logic ---
@@ -891,13 +902,174 @@ with tab1:
                 with col8:
                     st.metric("Red. χ²",f"{best_fit.get('red_chi2',0):.3f}")
                 
-                # Main recovery curve plot
-                fig=go.Figure([
-                    go.Scatter(x=file_data['time'],y=file_data['intensity'],mode='markers',name='Data',marker_color='blue',marker_size=6),
-                    go.Scatter(x=t_fit,y=best_fit['fitted_values'],mode='lines',name=f"Fit: {best_fit['model'].title()}",line=dict(color='red',width=3))
-                ])
-                fig.update_layout(title='FRAP Recovery Curve',xaxis_title='Time (s)',yaxis_title='Normalized Intensity',height=450)
-                st.plotly_chart(fig,use_container_width=True)
+                # Main recovery curve plot with proper FRAP visualization
+                fig = go.Figure()
+                
+                # Get the bleach frame index and interpolated bleach time
+                bleach_idx = np.argmin(file_data['intensity'])
+                
+                # Calculate the interpolated bleach time (same as in get_post_bleach_data)
+                if bleach_idx > 0:
+                    interpolated_bleach_time = (file_data['time'][bleach_idx-1] + file_data['time'][bleach_idx]) / 2.0
+                else:
+                    interpolated_bleach_time = file_data['time'][bleach_idx]
+                
+                # Pre-bleach data (shown but not fitted)
+                pre_bleach_time = file_data['time'][:bleach_idx]
+                pre_bleach_intensity = file_data['intensity'][:bleach_idx]
+                
+                # Add pre-bleach data (gray markers)
+                if len(pre_bleach_time) > 0:
+                    fig.add_trace(go.Scatter(
+                        x=pre_bleach_time, 
+                        y=pre_bleach_intensity,
+                        mode='markers',
+                        name='Pre-bleach (not fitted)',
+                        marker=dict(color='lightgray', size=6, opacity=0.7),
+                        showlegend=True
+                    ))
+                
+                # Convert fitted timepoints back to original time scale for plotting
+                # t_fit starts from 0, so we add the interpolated bleach time
+                t_fit_original_scale = t_fit + interpolated_bleach_time
+                
+                # Add post-bleach data (blue markers) - use the actual fitted data points
+                fig.add_trace(go.Scatter(
+                    x=t_fit_original_scale,
+                    y=intensity_fit,
+                    mode='markers',
+                    name='Post-bleach (fitted)',
+                    marker=dict(color='blue', size=6),
+                    showlegend=True
+                ))
+                
+                # Add the fitted curve starting from the interpolated point
+                # Convert fitted curve timepoints to original scale
+                fig.add_trace(go.Scatter(
+                    x=t_fit_original_scale,
+                    y=best_fit['fitted_values'],
+                    mode='lines',
+                    name=f"Fit: {best_fit['model'].title()}",
+                    line=dict(color='red', width=3),
+                    showlegend=True
+                ))
+                
+                # Add a vertical line at the interpolated bleach time
+                # Use the interpolated bleach time we calculated above
+                bleach_time = interpolated_bleach_time
+                min_intensity = 0  # Start y-axis from zero
+                max_intensity = max(np.max(file_data['intensity']), np.max(intensity_fit))
+                
+                fig.add_shape(
+                    type="line",
+                    x0=bleach_time, y0=min_intensity,
+                    x1=bleach_time, y1=max_intensity,
+                    line=dict(color="orange", width=2, dash="dash"),
+                )
+                
+                # Add annotation for bleach event
+                fig.add_annotation(
+                    x=bleach_time,
+                    y=max_intensity * 0.9,
+                    text="Bleach Event",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowcolor="orange",
+                    font=dict(color="orange")
+                )
+                
+                # Update layout with proper scaling
+                fig.update_layout(
+                    title='FRAP Recovery Curve',
+                    xaxis_title='Time (s)',
+                    yaxis_title='Normalized Intensity',
+                    height=450,
+                    yaxis=dict(range=[0, max_intensity * 1.05]),  # Start from 0, add 5% headroom
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    )
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Add explanation text
+                st.markdown("""
+                **Plot Explanation:**
+                - **Gray points**: Pre-bleach data (shown for context, not included in fitting)
+                - **Blue points**: Post-bleach data starting from interpolated bleach point (used for curve fitting)
+                - **Red curve**: Fitted exponential recovery model aligned with post-bleach timepoints
+                - **Orange dashed line**: Interpolated bleach event (midpoint between last pre-bleach and first post-bleach frames)
+                - **Y-axis**: Starts at zero for proper scaling
+                """)
+                
+                # Component-wise recovery analysis for multi-component fits
+                if best_fit['model'] in ['double', 'triple']:
+                    st.markdown("### Component-wise Recovery Analysis")
+                    
+                    comp_fig = go.Figure()
+                    
+                    # Add original data
+                    comp_fig.add_trace(go.Scatter(
+                        x=t_fit, y=intensity_fit, mode='markers', name='Data', 
+                        marker=dict(color='blue', size=4)
+                    ))
+                    
+                    # Add total fit
+                    comp_fig.add_trace(go.Scatter(
+                        x=t_fit, y=best_fit['fitted_values'], mode='lines', name='Total Fit',
+                        line=dict(color='red', width=3)
+                    ))
+                    
+                    # Calculate and plot individual components
+                    model_func = best_fit['func']
+                    params = best_fit['params']
+                    
+                    if best_fit['model'] == 'double':
+                        A1, k1, A2, k2, C = params
+                        comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                        comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+                        
+                        comp_fig.add_trace(go.Scatter(
+                            x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                            line=dict(dash='dot', color='green')
+                        ))
+                        comp_fig.add_trace(go.Scatter(
+                            x=t_fit, y=comp2, mode='lines', name=f'Slow (k={k2:.4f})',
+                            line=dict(dash='dot', color='purple')
+                        ))
+                        
+                    elif best_fit['model'] == 'triple':
+                        A1, k1, A2, k2, A3, k3, C = params
+                        comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                        comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+                        comp3 = A3 * (1 - np.exp(-k3 * t_fit)) + C
+                        
+                        comp_fig.add_trace(go.Scatter(
+                            x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                            line=dict(dash='dot', color='green')
+                        ))
+                        comp_fig.add_trace(go.Scatter(
+                            x=t_fit, y=comp2, mode='lines', name=f'Medium (k={k2:.4f})',
+                            line=dict(dash='dot', color='blue')
+                        ))
+                        comp_fig.add_trace(go.Scatter(
+                            x=t_fit, y=comp3, mode='lines', name=f'Slow (k={k3:.4f})',
+                            line=dict(dash='dot', color='purple')
+                        ))
+                    
+                    comp_fig.update_layout(
+                        title="Component-wise Recovery Analysis",
+                        xaxis_title="Time (s)", 
+                        yaxis_title="Normalized Intensity", 
+                        height=400,
+                        yaxis=dict(range=[0, np.max(intensity_fit) * 1.05])
+                    )
+                    st.plotly_chart(comp_fig, use_container_width=True)
                 
                 # Residuals analysis
                 st.markdown("### Residuals Analysis")
@@ -926,60 +1098,6 @@ with tab1:
                                          showarrow=False,bgcolor="white",bordercolor="gray",borderwidth=1)]
                     )
                     st.plotly_chart(res_fig,use_container_width=True)
-                
-                # Component-wise analysis for multi-component models
-                if best_fit['model'] in ['double','triple']:
-                    st.markdown("### Component Analysis")
-                    st.markdown("Individual kinetic components contributing to overall recovery.")
-                    
-                    comp_fig=go.Figure()
-                    fit_params=best_fit['params']
-                    C=fit_params[-1]  # Offset
-                    
-                    # Plot total fit
-                    comp_fig.add_trace(go.Scatter(
-                        x=t_fit,y=best_fit['fitted_values'],mode='lines',
-                        name="Total Fit",line=dict(color='red',width=3)
-                    ))
-                    
-                    if best_fit['model']=='double':
-                        A1,k1,A2,k2=fit_params[0],fit_params[1],fit_params[2],fit_params[3]
-                        comp1=A1*(1-np.exp(-k1*t_fit))+C
-                        comp2=A2*(1-np.exp(-k2*t_fit))+C
-                        
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit,y=comp1,mode='lines',name=f'Fast (k={k1:.4f})',
-                            line=dict(dash='dot',color='blue')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit,y=comp2,mode='lines',name=f'Slow (k={k2:.4f})',
-                            line=dict(dash='dot',color='green')
-                        ))
-                        
-                    elif best_fit['model']=='triple':
-                        A1,k1,A2,k2,A3,k3=fit_params[0],fit_params[1],fit_params[2],fit_params[3],fit_params[4],fit_params[5]
-                        comp1=A1*(1-np.exp(-k1*t_fit))+C
-                        comp2=A2*(1-np.exp(-k2*t_fit))+C
-                        comp3=A3*(1-np.exp(-k3*t_fit))+C
-                        
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit,y=comp1,mode='lines',name=f'Fast (k={k1:.4f})',
-                            line=dict(dash='dot',color='blue')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit,y=comp2,mode='lines',name=f'Medium (k={k2:.4f})',
-                            line=dict(dash='dot',color='green')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit,y=comp3,mode='lines',name=f'Slow (k={k3:.4f})',
-                            line=dict(dash='dot',color='purple')
-                        ))
-                    
-                    comp_fig.update_layout(
-                        title="Component-wise Recovery Analysis",
-                        xaxis_title="Time (s)",yaxis_title="Normalized Intensity",height=400
-                    )
-                    st.plotly_chart(comp_fig,use_container_width=True)
                 
                 # Biophysical parameters
                 st.markdown("### Biophysical Interpretation")
