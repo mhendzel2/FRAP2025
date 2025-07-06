@@ -742,6 +742,372 @@ class FRAPDataManager:
                 del self.groups[group_name]
             return False
 
+    def should_skip_file(self, filename: str) -> tuple[bool, str]:
+        """
+        Check if a file should be skipped during ZIP processing.
+        
+        Returns:
+            tuple: (should_skip: bool, reason: str)
+        """
+        # Extract just the filename without path
+        basename = os.path.basename(filename)
+        
+        # Skip temporary files created by Excel/Office
+        if basename.startswith('~$'):
+            return True, "Excel temporary file (starts with '~$')"
+        
+        # Skip hidden files and system files
+        if basename.startswith('.'):
+            return True, "Hidden file (starts with '.')"
+        
+        # Skip macOS system files
+        if '__MACOSX' in filename or '.DS_Store' in basename:
+            return True, "macOS system file"
+        
+        # Skip Windows system files
+        if basename.lower() in ['thumbs.db', 'desktop.ini']:
+            return True, "Windows system file"
+        
+        # Check file extension
+        file_ext = os.path.splitext(basename)[1].lower()
+        if file_ext not in ['.xls', '.xlsx', '.csv']:
+            return True, f"Unsupported file type ({file_ext})"
+        
+        # Skip files that are too short (likely corrupt)
+        if len(basename) < 3:
+            return True, "Filename too short"
+        
+        return False, ""
+
+# --- Session State Initialization ---
+if 'settings' not in st.session_state:
+    st.session_state.settings = {
+        'default_criterion': 'aic', 'default_bleach_radius': 1.0, 'default_pixel_size': 0.3,
+        'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
+        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
+    }
+if "data_manager" not in st.session_state:
+    st.session_state.data_manager = None
+if 'selected_group_name' not in st.session_state:
+    st.session_state.selected_group_name = None
+
+# --- Plotting Helper Functions ---
+def plot_all_curves(group_files_data):
+    fig = go.Figure()
+    for file_data in group_files_data.values():
+        fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='lines', name=file_data['name']))
+    fig.update_layout(
+        title="All Individual Recovery Curves", 
+        xaxis_title="Time (s)", 
+        yaxis_title="Normalized Intensity", 
+        yaxis=dict(range=[0, None]),  # Start y-axis from zero
+        legend_title="File"
+    )
+    return fig
+
+def plot_average_curve(group_files_data):
+    if not group_files_data:
+        return go.Figure()
+    all_times = np.concatenate([d['time'] for d in group_files_data.values() if d['time'] is not None])
+    if all_times.size == 0:
+        return go.Figure().update_layout(title="Not enough data to generate average curve.")
+    common_time = np.linspace(all_times.min(), all_times.max(), num=200)
+    interpolated_intensities = [np.interp(common_time, fd['time'], fd['intensity'], left=np.nan, right=np.nan) for fd in group_files_data.values()]
+    if not interpolated_intensities:
+        return go.Figure().update_layout(title="Not enough valid data for averaging.")
+    intensities_array = np.array(interpolated_intensities)
+    mean_intensity = np.nanmean(intensities_array, axis=0)
+    std_intensity = np.nanstd(intensities_array, axis=0)
+    upper_bound, lower_bound = mean_intensity + std_intensity, mean_intensity - std_intensity
+    fig = go.Figure([
+        go.Scatter(x=np.concatenate([common_time, common_time[::-1]]), y=np.concatenate([upper_bound, lower_bound[::-1]]), fill='toself', fillcolor='rgba(220,20,60,0.2)', line=dict(color='rgba(255,255,255,0)'), hoverinfo="none", name='Std. Dev.'),
+        go.Scatter(x=common_time, y=mean_intensity, mode='lines', name='Average Recovery', line=dict(color='crimson', width=3))
+    ])
+    fig.update_layout(
+        title="Average FRAP Recovery Curve", 
+        xaxis_title="Time (s)", 
+        yaxis_title="Normalized Intensity",
+        yaxis=dict(range=[0, None])  # Start y-axis from zero
+    )
+    return fig
+
+# --- Core Analysis and Data Logic ---
+
+class FRAPDataManager:
+    def __init__(self): 
+        self.files,self.groups = {},{}
+    
+    def load_file(self,file_path,file_name):
+        try:
+            # Extract original extension before the hash suffix
+            original_path = file_path
+            if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
+                # Find the original extension and create a temporary file with correct extension
+                import tempfile
+                import shutil
+                if '.xlsx_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.xlsx')
+                elif '.xls_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.xls')
+                elif '.csv_' in file_path:
+                    temp_path = tempfile.mktemp(suffix='.csv')
+                else:
+                    temp_path = file_path
+                
+                if temp_path != file_path:
+                    shutil.copy2(file_path, temp_path)
+                    file_path = temp_path
+            
+            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
+            if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
+                time,intensity = processed_df['time'].values,processed_df['normalized'].values
+                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
+                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                self.files[file_path]={
+                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
+                    'fits':fits,'best_fit':best_fit,'features':params
+                }
+                logger.info(f"Loaded: {file_name}")
+                return True
+        except Exception as e: 
+            st.error(f"Error loading {file_name}: {e}")
+            return False
+    
+    def create_group(self,name):
+        if name not in self.groups: 
+            self.groups[name]={'name':name,'files':[],'features_df':None}
+    
+    def update_group_analysis(self,name,excluded_files=None):
+        if name not in self.groups: return
+        group=self.groups[name]
+        features_list=[]
+        for fp in group['files']:
+            if fp not in (excluded_files or []) and fp in self.files and self.files[fp]['features']:
+                ff=self.files[fp]['features'].copy()
+                ff.update({'file_path':fp,'file_name':self.files[fp]['name']})
+                features_list.append(ff)
+        group['features_df'] = pd.DataFrame(features_list) if features_list else pd.DataFrame()
+
+    def add_file_to_group(self, group_name, file_path):
+        """
+        Adds a file to an existing group.
+        """
+        if group_name in self.groups and file_path in self.files:
+            if file_path not in self.groups[group_name]['files']:
+                self.groups[group_name]['files'].append(file_path)
+                return True
+        return False
+
+    def load_groups_from_zip_archive(self, zip_file):
+        """
+        Loads files from a ZIP archive containing subfolders, where each subfolder
+        is treated as a new group. Gracefully handles unreadable files.
+        """
+        success_count = 0
+        error_count = 0
+        error_details = []
+        
+        try:
+            # Create a temporary directory to extract the files
+            with tempfile.TemporaryDirectory() as temp_dir:
+                with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
+                    z.extractall(temp_dir)
+
+                # Walk through the extracted directory to find subfolders (groups)
+                for root, dirs, _ in os.walk(temp_dir):
+                    # We are interested in the directories at the first level
+                    if root == temp_dir:
+                        for group_name in dirs:
+                            if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                                continue
+                            
+                            self.create_group(group_name)
+                            group_path = os.path.join(root, group_name)
+                            group_success_count = 0
+                            
+                            # Now find the files in this group's subfolder
+                            for file_in_group in os.listdir(group_path):
+                                file_path_in_temp = os.path.join(group_path, file_in_group)
+                                
+                                # Ignore subdirectories and hidden files
+                                if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
+                                    try:
+                                        # Check if file has valid extension
+                                        file_ext = os.path.splitext(file_in_group)[1].lower()
+                                        if file_ext not in ['.xls', '.xlsx', '.csv']:
+                                            logger.warning(f"Skipping unsupported file type: {file_in_group}")
+                                            continue
+                                        
+                                        with open(file_path_in_temp, 'rb') as f_content:
+                                            file_content = f_content.read()
+                                        
+                                        # Skip empty files
+                                        if len(file_content) == 0:
+                                            logger.warning(f"Skipping empty file: {file_in_group}")
+                                            continue
+                                        
+                                        file_name = os.path.basename(file_in_group)
+                                        tp = f"data/{file_name}_{hash(file_content)}"
+                                        
+                                        if tp not in self.files:
+                                            # Copy the file to the data directory to be loaded
+                                            shutil.copy(file_path_in_temp, tp)
+                                            
+                                            # Attempt to load the file
+                                            if self.load_file(tp, file_name):
+                                                self.add_file_to_group(group_name, tp)
+                                                success_count += 1
+                                                group_success_count += 1
+                                            else:
+                                                error_count += 1
+                                                error_msg = f"Failed to load file: {file_in_group} in group {group_name}"
+                                                error_details.append(error_msg)
+                                                logger.error(error_msg)
+                                                # Clean up failed file
+                                                if os.path.exists(tp):
+                                                    os.remove(tp)
+                                        else:
+                                            # File already exists, just add to group
+                                            self.add_file_to_group(group_name, tp)
+                                            group_success_count += 1
+                                            
+                                    except Exception as e:
+                                        error_count += 1
+                                        error_msg = f"Error processing file {file_in_group} in group {group_name}: {str(e)}"
+                                        error_details.append(error_msg)
+                                        logger.error(error_msg)
+                                        continue
+                            
+                            # Update group analysis only if we have successfully loaded files
+                            if group_success_count > 0:
+                                self.update_group_analysis(group_name)
+                            else:
+                                # Remove empty group
+                                logger.warning(f"Removing empty group: {group_name}")
+                                if group_name in self.groups:
+                                    del self.groups[group_name]
+            
+            # Report results
+            if success_count > 0:
+                logger.info(f"Successfully processed {success_count} files from ZIP archive")
+                if error_count > 0:
+                    logger.warning(f"{error_count} files could not be processed and were skipped")
+                    # Display error details in Streamlit
+                    if hasattr(st, 'warning'):
+                        st.warning(f"Successfully loaded {success_count} files. "
+                                 f"{error_count} files were skipped due to errors.")
+                        if error_details:
+                            with st.expander("⚠️ View Skipped Files Details"):
+                                for error in error_details[:10]:  # Show first 10 errors
+                                    st.text(f"• {error}")
+                                if len(error_details) > 10:
+                                    st.text(f"... and {len(error_details) - 10} more errors")
+                return True
+            else:
+                logger.error("No files could be processed from ZIP archive")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+            return False
+
+    def load_zip_archive_and_create_group(self, zip_file, group_name):
+        """
+        Loads files from a ZIP archive, creates a new group, and adds the files to it.
+        Gracefully handles unreadable files.
+        """
+        success_count = 0
+        error_count = 0
+        error_details = []
+        
+        try:
+            self.create_group(group_name)
+            with zipfile.ZipFile(io.BytesIO(zip_file.read())) as z:
+                file_list = z.namelist()
+                for file_in_zip in file_list:
+                    # Ignore directories and hidden files (like __MACOSX)
+                    if not file_in_zip.endswith('/') and '__MACOSX' not in file_in_zip:
+                        try:
+                            # Check if file has valid extension
+                            file_ext = os.path.splitext(file_in_zip)[1].lower()
+                            if file_ext not in ['.xls', '.xlsx', '.csv']:
+                                logger.warning(f"Skipping unsupported file type: {file_in_zip}")
+                                continue
+                            
+                            file_content = z.read(file_in_zip)
+                            
+                            # Skip empty files
+                            if len(file_content) == 0:
+                                logger.warning(f"Skipping empty file: {file_in_zip}")
+                                continue
+                            
+                            file_name = os.path.basename(file_in_zip)
+
+                            # Create a temporary file to use with the existing load_file logic
+                            tp = f"data/{file_name}_{hash(file_content)}"
+                            if tp not in self.files:
+                                with open(tp, "wb") as f:
+                                    f.write(file_content)
+                                
+                                # Attempt to load the file
+                                if self.load_file(tp, file_name):
+                                    self.add_file_to_group(group_name, tp)
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                                    error_msg = f"Failed to load file: {file_in_zip}"
+                                    error_details.append(error_msg)
+                                    logger.error(error_msg)
+                                    # Clean up failed file
+                                    if os.path.exists(tp):
+                                        os.remove(tp)
+                            else:
+                                # File already exists, just add to group
+                                self.add_file_to_group(group_name, tp)
+                                success_count += 1
+                                
+                        except Exception as e:
+                            error_count += 1
+                            error_msg = f"Error processing file {file_in_zip}: {str(e)}"
+                            error_details.append(error_msg)
+                            logger.error(error_msg)
+                            continue
+
+            # Update group analysis only if we have successfully loaded files
+            if success_count > 0:
+                self.update_group_analysis(group_name)
+                st.session_state.selected_group_name = group_name
+                
+                # Report results
+                logger.info(f"Successfully processed {success_count} files for group {group_name}")
+                if error_count > 0:
+                    logger.warning(f"{error_count} files could not be processed and were skipped")
+                    # Display error details in Streamlit
+                    if hasattr(st, 'warning'):
+                        st.warning(f"Successfully loaded {success_count} files to group '{group_name}'. "
+                                 f"{error_count} files were skipped due to errors.")
+                        if error_details:
+                            with st.expander("⚠️ View Skipped Files Details"):
+                                for error in error_details[:10]:  # Show first 10 errors
+                                    st.text(f"• {error}")
+                                if len(error_details) > 10:
+                                    st.text(f"... and {len(error_details) - 10} more errors")
+                return True
+            else:
+                # No files could be loaded, remove the empty group
+                logger.error(f"No files could be processed for group {group_name}")
+                if group_name in self.groups:
+                    del self.groups[group_name]
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive for group {group_name}: {e}")
+            # Clean up group if creation failed
+            if group_name in self.groups:
+                del self.groups[group_name]
+            return False
+
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
