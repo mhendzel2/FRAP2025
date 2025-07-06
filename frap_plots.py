@@ -257,14 +257,35 @@ class FRAPPlots:
             # Convert post-bleach time back to original scale for plotting
             t_post_plot = t_post_fit + interpolated_bleach_time
 
-            # 2. Plot post-bleach data (blue markers)
-            fig.add_trace(go.Scatter(
-                x=t_post_plot, 
-                y=i_post_fit,
-                mode='markers',
-                name='Post-bleach (fitted)',
-                marker=dict(size=8, color='#4f46e5')
-            ))
+            # 2. Plot post-bleach data, highlighting the interpolated first point.
+            # Plot the rest of the post-bleach data points as standard blue dots.
+            if len(t_post_plot) > 1:
+                fig.add_trace(go.Scatter(
+                    x=t_post_plot[1:],
+                    y=i_post_fit[1:],
+                    mode='markers',
+                    name='Post-bleach Data',
+                    marker=dict(
+                        size=8,
+                        color='#4f46e5'  # Standard blue color
+                    )
+                ))
+
+            # Plot the interpolated point with a distinct, highlighted marker.
+            # This point is plotted last to appear on top.
+            if len(t_post_plot) > 0:
+                fig.add_trace(go.Scatter(
+                    x=[t_post_plot[0]],
+                    y=[i_post_fit[0]],
+                    mode='markers',
+                    name='Interpolated Start',
+                    marker=dict(
+                        symbol='diamond',
+                        color='#10b981',  # A distinct green for highlighting
+                        size=12,
+                        line=dict(color='black', width=1)
+                    )
+                ))
             
             # Plot each fit
             colors = ['#ef4444', '#ec4899', '#f97316', '#8b5cf6']
