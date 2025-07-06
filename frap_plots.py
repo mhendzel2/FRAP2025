@@ -207,7 +207,7 @@ class FRAPPlots:
     @staticmethod
     def plot_fit_curves(time, intensity, fits, height=500, highlight_model=None):
         """
-        Plot FRAP data with fitted curves
+        Plot FRAP data with fitted curves, incorporating visualization fixes.
         
         Parameters:
         -----------
@@ -228,68 +228,96 @@ class FRAPPlots:
             Plotly figure with fit curves
         """
         try:
-            # Get post-bleach data for fitting
             from frap_core_corrected import FRAPAnalysisCore
-            t_post, i_post, i_min = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            
+            # Get post-bleach data for fitting
+            t_post_fit, i_post_fit, bleach_idx = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            
+            # Calculate interpolated bleach time for plotting on original time scale
+            if bleach_idx > 0:
+                interpolated_bleach_time = (time[bleach_idx-1] + time[bleach_idx]) / 2.0
+            else:
+                interpolated_bleach_time = time[bleach_idx]
             
             # Create figure
             fig = go.Figure()
             
-            # Plot original data
+            # 1. Plot pre-bleach data (gray markers)
+            pre_bleach_time = time[:bleach_idx]
+            pre_bleach_intensity = intensity[:bleach_idx]
+            if len(pre_bleach_time) > 0:
+                fig.add_trace(go.Scatter(
+                    x=pre_bleach_time, 
+                    y=pre_bleach_intensity,
+                    mode='markers',
+                    name='Pre-bleach (not fitted)',
+                    marker=dict(color='lightgray', size=6, opacity=0.7)
+                ))
+
+            # Convert post-bleach time back to original scale for plotting
+            t_post_plot = t_post_fit + interpolated_bleach_time
+
+            # 2. Plot post-bleach data (blue markers)
             fig.add_trace(go.Scatter(
-                x=time, 
-                y=intensity,
+                x=t_post_plot, 
+                y=i_post_fit,
                 mode='markers',
-                name='Data',
+                name='Post-bleach (fitted)',
                 marker=dict(size=8, color='#4f46e5')
             ))
             
-            # Plot extrapolated starting value (connecting pre-bleach and post-bleach)
-            if i_min > 0:
-                # Connect the last pre-bleach point to the first post-bleach point
-                fig.add_trace(go.Scatter(
-                    x=[time[i_min-1], time[i_min]],
-                    y=[intensity[i_min-1], intensity[i_min]],
-                    mode='lines',
-                    line=dict(color='#94a3b8', width=2, dash='dash'),
-                    name='Bleach event'
-                ))
-            
             # Plot each fit
-            colors = ['#4f46e5', '#8b5cf6', '#ec4899', '#f97316']
+            colors = ['#ef4444', '#ec4899', '#f97316', '#8b5cf6']
             for i, fit in enumerate(fits):
                 # Generate smooth curve for plotting
-                t_smooth = np.linspace(min(t_post), max(t_post), 100)
-                y_smooth = fit['func'](t_smooth, *fit['params'])
+                t_smooth_fit = np.linspace(min(t_post_fit), max(t_post_fit), 200)
+                y_smooth = fit['func'](t_smooth_fit, *fit['params'])
+                
+                # Convert smooth time to original scale for plotting
+                t_smooth_plot = t_smooth_fit + interpolated_bleach_time
+                
+                # Highlight the selected model
+                is_highlighted = highlight_model and fit['model'] == highlight_model
+                line_width = 4 if is_highlighted else 2.5
+                opacity = 1.0 if is_highlighted else 0.8
                 
                 # Add model curve
                 fig.add_trace(go.Scatter(
-                    x=t_smooth,
+                    x=t_smooth_plot,
                     y=y_smooth,
                     mode='lines',
-                    name=f"{fit['model']} component fit<br>R² = {fit['r2']:.4f}, AIC = {fit['aic']:.2f}",
-                    line=dict(color=colors[i % len(colors)], width=3)
+                    name=f"{fit['model']} fit (R²={fit['r2']:.4f})",
+                    line=dict(color=colors[i % len(colors)], width=line_width, dash='solid'),
+                    opacity=opacity
                 ))
             
-            # Add a vertical line at t=0 (bleach point)
-            fig.add_vline(x=0, line_width=1, line_dash="dash", line_color="gray")
-            
-            # Add a horizontal line at y=1 (pre-bleach level)
-            fig.add_hline(y=1, line_width=1, line_dash="dash", line_color="gray")
+            # Add a vertical line at the interpolated bleach time
+            max_intensity_val = np.max(intensity) * 1.05
+            fig.add_shape(
+                type="line",
+                x0=interpolated_bleach_time, y0=0,
+                x1=interpolated_bleach_time, y1=max_intensity_val,
+                line=dict(color="orange", width=2, dash="dash"),
+            )
+            fig.add_annotation(
+                x=interpolated_bleach_time, y=max_intensity_val * 0.9,
+                text="Bleach Event", showarrow=True, arrowhead=1, ax=20, ay=-30
+            )
             
             fig.update_layout(
                 title="FRAP Recovery Curves with Model Fits",
-                xaxis_title="Time",
+                xaxis_title="Time (s)",
                 yaxis_title="Normalized Intensity",
                 height=height,
+                yaxis=dict(range=[0, max_intensity_val]), # Force y-axis to start at 0
                 legend=dict(
-                    orientation="v",
-                    yanchor="top",
-                    y=1,
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
                     xanchor="right",
-                    x=1.15
+                    x=1
                 ),
-                margin=dict(l=10, r=120, t=50, b=10),
+                margin=dict(l=10, r=10, t=50, b=10),
             )
             
             return fig
