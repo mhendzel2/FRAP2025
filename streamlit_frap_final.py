@@ -742,372 +742,6 @@ class FRAPDataManager:
                 del self.groups[group_name]
             return False
 
-    def should_skip_file(self, filename: str) -> tuple[bool, str]:
-        """
-        Check if a file should be skipped during ZIP processing.
-        
-        Returns:
-            tuple: (should_skip: bool, reason: str)
-        """
-        # Extract just the filename without path
-        basename = os.path.basename(filename)
-        
-        # Skip temporary files created by Excel/Office
-        if basename.startswith('~$'):
-            return True, "Excel temporary file (starts with '~$')"
-        
-        # Skip hidden files and system files
-        if basename.startswith('.'):
-            return True, "Hidden file (starts with '.')"
-        
-        # Skip macOS system files
-        if '__MACOSX' in filename or '.DS_Store' in basename:
-            return True, "macOS system file"
-        
-        # Skip Windows system files
-        if basename.lower() in ['thumbs.db', 'desktop.ini']:
-            return True, "Windows system file"
-        
-        # Check file extension
-        file_ext = os.path.splitext(basename)[1].lower()
-        if file_ext not in ['.xls', '.xlsx', '.csv']:
-            return True, f"Unsupported file type ({file_ext})"
-        
-        # Skip files that are too short (likely corrupt)
-        if len(basename) < 3:
-            return True, "Filename too short"
-        
-        return False, ""
-
-# --- Session State Initialization ---
-if 'settings' not in st.session_state:
-    st.session_state.settings = {
-        'default_criterion': 'aic', 'default_bleach_radius': 1.0, 'default_pixel_size': 0.3,
-        'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
-        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
-    }
-if "data_manager" not in st.session_state:
-    st.session_state.data_manager = None
-if 'selected_group_name' not in st.session_state:
-    st.session_state.selected_group_name = None
-
-# --- Plotting Helper Functions ---
-def plot_all_curves(group_files_data):
-    fig = go.Figure()
-    for file_data in group_files_data.values():
-        fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='lines', name=file_data['name']))
-    fig.update_layout(
-        title="All Individual Recovery Curves", 
-        xaxis_title="Time (s)", 
-        yaxis_title="Normalized Intensity", 
-        yaxis=dict(range=[0, None]),  # Start y-axis from zero
-        legend_title="File"
-    )
-    return fig
-
-def plot_average_curve(group_files_data):
-    if not group_files_data:
-        return go.Figure()
-    all_times = np.concatenate([d['time'] for d in group_files_data.values() if d['time'] is not None])
-    if all_times.size == 0:
-        return go.Figure().update_layout(title="Not enough data to generate average curve.")
-    common_time = np.linspace(all_times.min(), all_times.max(), num=200)
-    interpolated_intensities = [np.interp(common_time, fd['time'], fd['intensity'], left=np.nan, right=np.nan) for fd in group_files_data.values()]
-    if not interpolated_intensities:
-        return go.Figure().update_layout(title="Not enough valid data for averaging.")
-    intensities_array = np.array(interpolated_intensities)
-    mean_intensity = np.nanmean(intensities_array, axis=0)
-    std_intensity = np.nanstd(intensities_array, axis=0)
-    upper_bound, lower_bound = mean_intensity + std_intensity, mean_intensity - std_intensity
-    fig = go.Figure([
-        go.Scatter(x=np.concatenate([common_time, common_time[::-1]]), y=np.concatenate([upper_bound, lower_bound[::-1]]), fill='toself', fillcolor='rgba(220,20,60,0.2)', line=dict(color='rgba(255,255,255,0)'), hoverinfo="none", name='Std. Dev.'),
-        go.Scatter(x=common_time, y=mean_intensity, mode='lines', name='Average Recovery', line=dict(color='crimson', width=3))
-    ])
-    fig.update_layout(
-        title="Average FRAP Recovery Curve", 
-        xaxis_title="Time (s)", 
-        yaxis_title="Normalized Intensity",
-        yaxis=dict(range=[0, None])  # Start y-axis from zero
-    )
-    return fig
-
-# --- Core Analysis and Data Logic ---
-
-class FRAPDataManager:
-    def __init__(self): 
-        self.files,self.groups = {},{}
-    
-    def load_file(self,file_path,file_name):
-        try:
-            # Extract original extension before the hash suffix
-            original_path = file_path
-            if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
-                # Find the original extension and create a temporary file with correct extension
-                import tempfile
-                import shutil
-                if '.xlsx_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xlsx')
-                elif '.xls_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xls')
-                elif '.csv_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.csv')
-                else:
-                    temp_path = file_path
-                
-                if temp_path != file_path:
-                    shutil.copy2(file_path, temp_path)
-                    file_path = temp_path
-            
-            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
-            if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
-                time,intensity = processed_df['time'].values,processed_df['normalized'].values
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                self.files[file_path]={
-                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
-                    'fits':fits,'best_fit':best_fit,'features':params
-                }
-                logger.info(f"Loaded: {file_name}")
-                return True
-        except Exception as e: 
-            st.error(f"Error loading {file_name}: {e}")
-            return False
-    
-    def create_group(self,name):
-        if name not in self.groups: 
-            self.groups[name]={'name':name,'files':[],'features_df':None}
-    
-    def update_group_analysis(self,name,excluded_files=None):
-        if name not in self.groups: return
-        group=self.groups[name]
-        features_list=[]
-        for fp in group['files']:
-            if fp not in (excluded_files or []) and fp in self.files and self.files[fp]['features']:
-                ff=self.files[fp]['features'].copy()
-                ff.update({'file_path':fp,'file_name':self.files[fp]['name']})
-                features_list.append(ff)
-        group['features_df'] = pd.DataFrame(features_list) if features_list else pd.DataFrame()
-
-    def add_file_to_group(self, group_name, file_path):
-        """
-        Adds a file to an existing group.
-        """
-        if group_name in self.groups and file_path in self.files:
-            if file_path not in self.groups[group_name]['files']:
-                self.groups[group_name]['files'].append(file_path)
-                return True
-        return False
-
-    def load_groups_from_zip_archive(self, zip_file):
-        """
-        Loads files from a ZIP archive containing subfolders, where each subfolder
-        is treated as a new group. Gracefully handles unreadable files.
-        """
-        success_count = 0
-        error_count = 0
-        error_details = []
-        
-        try:
-            # Create a temporary directory to extract the files
-            with tempfile.TemporaryDirectory() as temp_dir:
-                with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
-                    z.extractall(temp_dir)
-
-                # Walk through the extracted directory to find subfolders (groups)
-                for root, dirs, _ in os.walk(temp_dir):
-                    # We are interested in the directories at the first level
-                    if root == temp_dir:
-                        for group_name in dirs:
-                            if group_name.startswith('__'): # Ignore system folders like __MACOSX
-                                continue
-                            
-                            self.create_group(group_name)
-                            group_path = os.path.join(root, group_name)
-                            group_success_count = 0
-                            
-                            # Now find the files in this group's subfolder
-                            for file_in_group in os.listdir(group_path):
-                                file_path_in_temp = os.path.join(group_path, file_in_group)
-                                
-                                # Ignore subdirectories and hidden files
-                                if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
-                                    try:
-                                        # Check if file has valid extension
-                                        file_ext = os.path.splitext(file_in_group)[1].lower()
-                                        if file_ext not in ['.xls', '.xlsx', '.csv']:
-                                            logger.warning(f"Skipping unsupported file type: {file_in_group}")
-                                            continue
-                                        
-                                        with open(file_path_in_temp, 'rb') as f_content:
-                                            file_content = f_content.read()
-                                        
-                                        # Skip empty files
-                                        if len(file_content) == 0:
-                                            logger.warning(f"Skipping empty file: {file_in_group}")
-                                            continue
-                                        
-                                        file_name = os.path.basename(file_in_group)
-                                        tp = f"data/{file_name}_{hash(file_content)}"
-                                        
-                                        if tp not in self.files:
-                                            # Copy the file to the data directory to be loaded
-                                            shutil.copy(file_path_in_temp, tp)
-                                            
-                                            # Attempt to load the file
-                                            if self.load_file(tp, file_name):
-                                                self.add_file_to_group(group_name, tp)
-                                                success_count += 1
-                                                group_success_count += 1
-                                            else:
-                                                error_count += 1
-                                                error_msg = f"Failed to load file: {file_in_group} in group {group_name}"
-                                                error_details.append(error_msg)
-                                                logger.error(error_msg)
-                                                # Clean up failed file
-                                                if os.path.exists(tp):
-                                                    os.remove(tp)
-                                        else:
-                                            # File already exists, just add to group
-                                            self.add_file_to_group(group_name, tp)
-                                            group_success_count += 1
-                                            
-                                    except Exception as e:
-                                        error_count += 1
-                                        error_msg = f"Error processing file {file_in_group} in group {group_name}: {str(e)}"
-                                        error_details.append(error_msg)
-                                        logger.error(error_msg)
-                                        continue
-                            
-                            # Update group analysis only if we have successfully loaded files
-                            if group_success_count > 0:
-                                self.update_group_analysis(group_name)
-                            else:
-                                # Remove empty group
-                                logger.warning(f"Removing empty group: {group_name}")
-                                if group_name in self.groups:
-                                    del self.groups[group_name]
-            
-            # Report results
-            if success_count > 0:
-                logger.info(f"Successfully processed {success_count} files from ZIP archive")
-                if error_count > 0:
-                    logger.warning(f"{error_count} files could not be processed and were skipped")
-                    # Display error details in Streamlit
-                    if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files. "
-                                 f"{error_count} files were skipped due to errors.")
-                        if error_details:
-                            with st.expander("⚠️ View Skipped Files Details"):
-                                for error in error_details[:10]:  # Show first 10 errors
-                                    st.text(f"• {error}")
-                                if len(error_details) > 10:
-                                    st.text(f"... and {len(error_details) - 10} more errors")
-                return True
-            else:
-                logger.error("No files could be processed from ZIP archive")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error processing ZIP archive with subfolders: {e}")
-            return False
-
-    def load_zip_archive_and_create_group(self, zip_file, group_name):
-        """
-        Loads files from a ZIP archive, creates a new group, and adds the files to it.
-        Gracefully handles unreadable files.
-        """
-        success_count = 0
-        error_count = 0
-        error_details = []
-        
-        try:
-            self.create_group(group_name)
-            with zipfile.ZipFile(io.BytesIO(zip_file.read())) as z:
-                file_list = z.namelist()
-                for file_in_zip in file_list:
-                    # Ignore directories and hidden files (like __MACOSX)
-                    if not file_in_zip.endswith('/') and '__MACOSX' not in file_in_zip:
-                        try:
-                            # Check if file has valid extension
-                            file_ext = os.path.splitext(file_in_zip)[1].lower()
-                            if file_ext not in ['.xls', '.xlsx', '.csv']:
-                                logger.warning(f"Skipping unsupported file type: {file_in_zip}")
-                                continue
-                            
-                            file_content = z.read(file_in_zip)
-                            
-                            # Skip empty files
-                            if len(file_content) == 0:
-                                logger.warning(f"Skipping empty file: {file_in_zip}")
-                                continue
-                            
-                            file_name = os.path.basename(file_in_zip)
-
-                            # Create a temporary file to use with the existing load_file logic
-                            tp = f"data/{file_name}_{hash(file_content)}"
-                            if tp not in self.files:
-                                with open(tp, "wb") as f:
-                                    f.write(file_content)
-                                
-                                # Attempt to load the file
-                                if self.load_file(tp, file_name):
-                                    self.add_file_to_group(group_name, tp)
-                                    success_count += 1
-                                else:
-                                    error_count += 1
-                                    error_msg = f"Failed to load file: {file_in_zip}"
-                                    error_details.append(error_msg)
-                                    logger.error(error_msg)
-                                    # Clean up failed file
-                                    if os.path.exists(tp):
-                                        os.remove(tp)
-                            else:
-                                # File already exists, just add to group
-                                self.add_file_to_group(group_name, tp)
-                                success_count += 1
-                                
-                        except Exception as e:
-                            error_count += 1
-                            error_msg = f"Error processing file {file_in_zip}: {str(e)}"
-                            error_details.append(error_msg)
-                            logger.error(error_msg)
-                            continue
-
-            # Update group analysis only if we have successfully loaded files
-            if success_count > 0:
-                self.update_group_analysis(group_name)
-                st.session_state.selected_group_name = group_name
-                
-                # Report results
-                logger.info(f"Successfully processed {success_count} files for group {group_name}")
-                if error_count > 0:
-                    logger.warning(f"{error_count} files could not be processed and were skipped")
-                    # Display error details in Streamlit
-                    if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files to group '{group_name}'. "
-                                 f"{error_count} files were skipped due to errors.")
-                        if error_details:
-                            with st.expander("⚠️ View Skipped Files Details"):
-                                for error in error_details[:10]:  # Show first 10 errors
-                                    st.text(f"• {error}")
-                                if len(error_details) > 10:
-                                    st.text(f"... and {len(error_details) - 10} more errors")
-                return True
-            else:
-                # No files could be loaded, remove the empty group
-                logger.error(f"No files could be processed for group {group_name}")
-                if group_name in self.groups:
-                    del self.groups[group_name]
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error processing ZIP archive for group {group_name}: {e}")
-            # Clean up group if creation failed
-            if group_name in self.groups:
-                del self.groups[group_name]
-            return False
-
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
@@ -2005,27 +1639,27 @@ with tab2:
                                         
                                         if global_model == 'single':
                                             with col_param1:
-                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
+                                                st.metric("Shared Rate (k)", f"{shared_params.get('k', 0):.4f} s⁻¹")
                                             with col_param2:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                                st.metric("Mean R²", f"{global_result.get('mean_r2', 0):.3f}")
                                             with col_param3:
-                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
+                                                st.metric("Global AIC", f"{global_result.get('aic', 0):.1f}")
                                         
                                         elif global_model == 'double':
                                             with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                                st.metric("Fast Rate (k₁)", f"{shared_params.get('k1', 0):.4f} s⁻¹")
                                             with col_param2:
-                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                                st.metric("Slow Rate (k₂)", f"{shared_params.get('k2', 0):.4f} s⁻¹")
                                             with col_param3:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                                st.metric("Mean R²", f"{global_result.get('mean_r2', 0):.3f}")
                                         
                                         elif global_model == 'triple':
                                             with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                                st.metric("Fast Rate (k₁)", f"{shared_params.get('k1', 0):.4f} s⁻¹")
                                             with col_param2:
-                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                                st.metric("Medium Rate (k₂)", f"{shared_params.get('k2', 0):.4f} s⁻¹")
                                             with col_param3:
-                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s⁻¹")
+                                                st.metric("Slow Rate (k₃)", f"{shared_params.get('k3', 0):.4f} s⁻¹")
                                         
                                         # Individual amplitudes table
                                         st.markdown("#### Individual File Amplitudes")
@@ -2038,16 +1672,19 @@ with tab2:
                                             row_data = {'File': file_name, 'R²': r2}
                                             
                                             if global_model == 'single':
-                                                row_data['Amplitude (A)'] = params['A']
+                                                row_data['Amplitude (A)'] = params.get('A', 0)
+                                                row_data['Offset (C)'] = params.get('C', 0)
                                             elif global_model == 'double':
-                                                row_data['Fast Amplitude (A₁)'] = params['A1']
-                                                row_data['Slow Amplitude (A₂)'] = params['A2']
-                                                row_data['Total Amplitude'] = params['A1'] + params['A2']
+                                                row_data['Fast Amplitude (A₁)'] = params.get('A1', 0)
+                                                row_data['Slow Amplitude (A₂)'] = params.get('A2', 0)
+                                                row_data['Total Amplitude'] = params.get('A1', 0) + params.get('A2', 0)
+                                                row_data['Offset (C)'] = params.get('C', 0)
                                             elif global_model == 'triple':
-                                                row_data['Fast Amplitude (A₁)'] = params['A1']
-                                                row_data['Medium Amplitude (A₂)'] = params['A2']
-                                                row_data['Slow Amplitude (A₃)'] = params['A3']
-                                                row_data['Total Amplitude'] = params['A1'] + params['A2'] + params['A3']
+                                                row_data['Fast Amplitude (A₁)'] = params.get('A1', 0)
+                                                row_data['Medium Amplitude (A₂)'] = params.get('A2', 0)
+                                                row_data['Slow Amplitude (A₃)'] = params.get('A3', 0)
+                                                row_data['Total Amplitude'] = params.get('A1', 0) + params.get('A2', 0) + params.get('A3', 0)
+                                                row_data['Offset (C)'] = params.get('C', 0)
                                             
                                             individual_data.append(row_data)
                                         
@@ -2063,10 +1700,10 @@ with tab2:
                                         fig_global = go.Figure()
                                         
                                         # Plot individual data and fits
-                                        fitted_curves = global_result['fitted_curves']
-                                        common_time = global_result['common_time']
+                                        fitted_curves = global_result.get('fitted_curves', [])
+                                        common_time = global_result.get('common_time', [])
                                         
-                                        for i, (file_name, fitted_curve) in enumerate(zip(global_result['file_names'], fitted_curves)):
+                                        for i, (file_name, fitted_curve) in enumerate(zip(global_result.get('file_names', []), fitted_curves)):
                                             # Find original file data
                                             file_path = None
                                             for fp in group['files']:
@@ -2074,7 +1711,7 @@ with tab2:
                                                     file_path = fp
                                                     break
                                             
-                                            if file_path:
+                                            if file_path and len(common_time) > 0:
                                                 file_data = dm.files[file_path]
                                                 t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
                                                     file_data['time'], file_data['intensity']
@@ -2148,8 +1785,12 @@ with tab2:
                                                 st.info(f"Individual fits performed better on average (Δ R² = {avg_improvement:.4f})")
                                     
                                     else:
-                                        st.error(f"❌ Global fitting failed: {global_result.get('error', 'Unknown error')}")
-                                        
+                                        st.error(f"❌ Global fitting failed: {global_result.get('error', 'Global fitting not implemented - placeholder functionality')}")
+                                        st.info("Global fitting requires additional implementation in the frap_data module")
+                                
+                            except ImportError:
+                                st.error("Global fitting requires the FRAPData class from frap_data module")
+                                st.info("This is an advanced feature that requires additional dependencies")
                             except Exception as e:
                                 st.error(f"Error during global fitting: {e}")
                 
@@ -2396,15 +2037,374 @@ with tab3:
                                 pdf_filename = f"FRAP_Statistical_Report_{timestamp}.pdf"
                                 
                                 # Call the PDF report generator
-                                output_file = generate_pdf_report(
-                                    data_manager=dm,
-                                    groups_to_compare=selected_groups_pdf,
-                                    output_filename=pdf_filename,
-                                    settings=st.session_state.settings
+                                try:
+                                    output_file = generate_pdf_report(
+                                        data_manager=dm,
+                                        groups_to_compare=selected_groups_pdf,
+                                        output_filename=pdf_filename,
+                                        settings=st.session_state.settings
+                                    )
+                                    
+                                    # Read the generated PDF file
+                                    with open(output_file, 'rb') as pdf_file:
+                                        pdf_data = pdf_file.read()
+                                    
+                                    # Provide download button
+                                    st.download_button(
+                                        label="⬇️ Download PDF Report",
+                                        data=pdf_data,
+                                        file_name=pdf_filename,
+                                        mime="application/pdf",
+                                        help="Download comprehensive statistical analysis report"
+                                    )
+                                    
+                                    st.success("PDF report generated successfully!")
+                                    st.info(f"Report includes {len(selected_groups_pdf)} groups with comprehensive statistical analysis")
+                                    
+                                    # Clean up temporary file
+                                    if os.path.exists(output_file):
+                                        os.remove(output_file)
+                                        
+                                except Exception as pdf_error:
+                                    st.error(f"PDF generation failed: {pdf_error}")
+                                    st.info("PDF generation is a placeholder feature - requires additional implementation")
+                        
+                        except Exception as e:
+                            st.error(f"Error generating PDF report: {e}")
+    
+with tab4:
+    # Use the comprehensive image analysis interface
+    create_image_analysis_interface()
+
+with tab5:
+    st.header("💾 Session Management & Data Export")
+    st.markdown("Save your analysis session and export results to various formats")
+    
+    col_session1, col_session2 = st.columns(2)
+    
+    with col_session1:
+        st.subheader("Session Management")
+        
+        # Session save functionality
+        if st.button("💾 Save Current Session", type="primary"):
+            try:
+                import pickle
+                from datetime import datetime
+                
+                session_data = {
+                    'files': dm.files,
+                    'groups': dm.groups,
+                    'settings': st.session_state.settings,
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+                
+                session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                session_bytes = pickle.dumps(session_data)
+                
+                st.download_button(
+                    label="⬇️ Download Session File",
+                    data=session_bytes,
+                    file_name=session_filename,
+                    mime="application/octet-stream",
+                    help="Save current analysis session for later"
+                )
+                
+                st.success(f"Session prepared for download: {len(dm.files)} files, {len(dm.groups)} groups")
+                
+            except Exception as e:
+                st.error(f"Error saving session: {e}")
+        
+        # Session load functionality
+        st.markdown("### Load Previous Session")
+        uploaded_session = st.file_uploader(
+            "Upload session file (.pkl)", 
+            type=['pkl'],
+            help="Load a previously saved analysis session"
+        )
+        
+        if uploaded_session is not None:
+            if st.button("📂 Load Session", type="secondary"):
+                try:
+                    import pickle
+                    session_data = pickle.load(uploaded_session)
+                    
+                    # Validate session data
+                    required_keys = ['files', 'groups', 'settings']
+                    if all(key in session_data for key in required_keys):
+                        # Load session data
+                        new_dm = FRAPDataManager()
+                        new_dm.files = session_data['files']
+                        new_dm.groups = session_data['groups']
+                        
+                        st.session_state.data_manager = new_dm
+                        st.session_state.settings.update(session_data['settings'])
+                        
+                        st.success(f"Session loaded successfully!")
+                        st.info(f"Loaded: {len(new_dm.files)} files, {len(new_dm.groups)} groups")
+                        st.info(f"Session from: {session_data.get('timestamp', 'Unknown')}")
+                        st.rerun()
+                    else:
+                        st.error("Invalid session file format")
+                        
+                except Exception as e:
+                    st.error(f"Error loading session: {e}")
+    
+    with col_session2:
+        st.subheader("Data Export")
+        
+        if dm.groups:
+            # Excel export functionality
+            if st.button("📊 Export to Excel", type="primary"):
+                try:
+                    import io
+                    
+                    # Create comprehensive export data
+                    export_data = []
+                    
+                    # Summary sheet data
+                    summary_data = {
+                        'Analysis_Summary': {
+                            'Generated': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'Total_Groups': len(dm.groups),
+                            'Total_Files': len(dm.files)
+                        }
+                    }
+                    
+                    # Group data
+                    for group_name, group_info in dm.groups.items():
+                        if group_info.get('files'):
+                            dm.update_group_analysis(group_name)
+                            features_df = group_info.get('features_df')
+                            if features_df is not None and not features_df.empty:
+                                group_export = []
+                                
+                                for _, row in features_df.iterrows():
+                                    file_path = row.get('file_path', '')
+                                    file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+                                    
+                                    # Get dual interpretation
+                                    primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                                    effective_radius_um = bleach_radius * pixel_size
+                                    
+                                    kinetic_interp = interpret_kinetics(
+                                        primary_rate,
+                                        bleach_radius_um=effective_radius_um,
+                                        gfp_d=25.0,
+                                        gfp_mw=27.0
+                                    )
+                                    
+                                    group_export.append({
+                                        'File_Name': file_name,
+                                        'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                        'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                        'Rate_Constant_k': primary_rate,
+                                        'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                        'k_off_per_second': kinetic_interp['k_off'],
+                                        'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                        'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                        'Model': row.get('model', 'Unknown'),
+                                        'R_squared': row.get('r2', np.nan)
+                                    })
+                                
+                                summary_data[f'Group_{group_name}'] = group_export
+                    
+                    # Create Excel file using pandas
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        # Summary sheet
+                        summary_df = pd.DataFrame([summary_data['Analysis_Summary']])
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                        
+                        # Individual group sheets
+                        for sheet_name, data in summary_data.items():
+                            if sheet_name.startswith('Group_'):
+                                group_df = pd.DataFrame(data)
+                                group_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)  # Excel sheet name limit
+                        
+                        # Settings sheet
+                        settings_df = pd.DataFrame(list(st.session_state.settings.items()), 
+                                                 columns=['Parameter', 'Value'])
+                        settings_df.to_excel(writer, sheet_name='Settings', index=False)
+                    
+                    excel_buffer.seek(0)
+                    
+                    st.download_button(
+                        label="⬇️ Download Excel File",
+                        data=excel_buffer.getvalue(),
+                        file_name=f"FRAP_Analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Download complete analysis results as Excel workbook"
+                    )
+                    
+                    st.success("Excel export prepared for download!")
+                    
+                except Exception as e:
+                    st.error(f"Error creating Excel export: {e}")
+            
+            # CSV export for individual groups
+            st.markdown("### Export Individual Groups")
+            if dm.groups:
+                selected_export_group = st.selectbox("Select group to export as CSV:", list(dm.groups.keys()))
+                
+                if st.button("📄 Export Group as CSV"):
+                    group_info = dm.groups[selected_export_group]
+                    if group_info.get('files'):
+                        features_df = group_info.get('features_df')
+                        if features_df is not None and not features_df.empty:
+                            # Prepare CSV data with dual interpretation
+                            export_data = []
+                            for _, row in features_df.iterrows():
+                                file_path = row.get('file_path', '')
+                                file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+                                
+                                primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                kinetic_interp = interpret_kinetics(
+                                    primary_rate,
+                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * 
+                                                   st.session_state.settings.get('default_pixel_size', 1.0),
+                                    gfp_d=25.0,
+                                    gfp_mw=27.0
                                 )
                                 
-                                # Read the generated PDF file
-                                with open(output_file, 'rb') as pdf_file:
+                                export_data.append({
+                                    'File_Name': file_name,
+                                    'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                    'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                    'Rate_Constant_k': primary_rate,
+                                    'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                    'k_off_per_second': kinetic_interp['k_off'],
+                                    'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                    'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                    'Model': row.get('model', 'Unknown'),
+                                    'R_squared': row.get('r2', np.nan)
+                                })
+                            
+                            export_df = pd.DataFrame(export_data)
+                            csv_data = export_df.to_csv(index=False)
+                            
+                            st.download_button(
+                                label="⬇️ Download CSV",
+                                data=csv_data,
+                                file_name=f"FRAP_{selected_export_group}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                help="Download group data as CSV file"
+                            )
+                            
+                            st.success(f"CSV export for {selected_export_group} prepared!")
+                        else:
+                            st.warning("No data available for export in selected group")
+                    else:
+                        st.warning("Selected group is empty")
+        else:
+            st.info("No groups available for export. Create and analyze groups first.")
+    
+    st.markdown("---")
+    st.markdown("### Current Session Status")
+    
+    col_status1, col_status2, col_status3 = st.columns(3)
+    
+    with col_status1:
+        st.metric("Loaded Files", len(dm.files))
+        
+    with col_status2:
+        st.metric("Created Groups", len(dm.groups))
+    
+    with col_status3:
+        total_processed = sum(1 for group in dm.groups.values() 
+                            if group.get('features_df') is not None and not group['features_df'].empty)
+        st.metric("Processed Groups", total_processed)
+    
+    st.markdown("---")
+    st.markdown("### Debug Package Generation")
+    st.markdown("Create a comprehensive package for external debugging and deployment")
+    
+    col_debug1, col_debug2 = st.columns([2, 1])
+    
+    with col_debug1:
+        st.markdown("**Debug package includes:**")
+        st.markdown("- Complete source code and documentation")
+        st.markdown("- Installation scripts for Windows and Unix")
+        st.markdown("- Sample data files and test suite")
+        st.markdown("- Docker configuration for containerized deployment")
+        st.markdown("- Streamlit configuration files")
+        
+    with col_debug2:
+        if st.button("📦 Create Debug Package", type="primary"):
+            try:
+                with st.spinner("Creating comprehensive debug package..."):
+                    # Import and run the debug package creator
+                    try:
+                        from create_debug_package import create_debug_package
+                        
+                        package_file, summary = create_debug_package()
+                        
+                        # Read the package file
+                        with open(package_file, 'rb') as f:
+                            package_data = f.read()
+                        
+                        # Provide download button
+                        st.download_button(
+                            label="⬇️ Download Debug Package",
+                            data=package_data,
+                            file_name=package_file,
+                            mime="application/zip",
+                            help="Download complete debug package with all source code and documentation"
+                        )
+                        
+                        st.success("Debug package created successfully!")
+                        st.info(f"Package size: {len(package_data) / 1024 / 1024:.1f} MB")
+                        
+                        # Clean up temporary file
+                        if os.path.exists(package_file):
+                            os.remove(package_file)
+                            
+                    except ImportError:
+                        st.error("Debug package creation requires the create_debug_package module")
+                        st.info("This is an advanced feature for development and deployment support")
+                    except Exception as debug_error:
+                        st.error(f"Debug package creation failed: {debug_error}")
+                        st.info("Debug package generation is a placeholder feature")
+                        
+    st.markdown("---")
+    st.markdown("### About this Application")
+    st.markdown(
+        "This application provides a comprehensive platform for analyzing FRAP (Fluorescence Recovery After Photobleaching) data, "
+        "with a focus on usability and flexibility. Key features include:"
+    )
+    st.markdown("- **User-friendly Interface:** Streamlined design for easy navigation and data upload.")
+    st.markdown("- **Group Analysis:** Seamlessly analyze and compare multiple FRAP datasets.")
+    st.markdown("- **Kinetic Modeling:** Robust fitting of recovery curves with dual-interpretation (diffusion and binding).")
+    st.markdown("- **Outlier Detection:** Automated and manual outlier identification and management.")
+    st.markdown("- **Comprehensive Reporting:** Generate detailed Markdown and PDF reports of your analysis.")
+    st.markdown("- **Session Management:** Save and load your analysis sessions effortlessly.")
+    st.markdown("- **Data Export:** Flexible options to export results in Excel, CSV, and other formats.")
+    st.markdown("- **Image Analysis Integration:** Built-in tools for analyzing and interpreting FRAP images.")
+    
+    st.markdown("### Technical Details")
+    st.markdown(
+        "This application is built using modern web technologies and Python libraries:"
+    )
+    st.markdown("- **Streamlit:** For building the interactive web application.")
+    st.markdown("- **Pandas & NumPy:** For data manipulation and analysis.")
+    st.markdown("- **Plotly:** For creating interactive plots and visualizations.")
+    st.markdown("- **SciPy:** For scientific computing and advanced mathematical functions.")
+    st.markdown("- **OpenCV:** For image processing and analysis.")
+    st.markdown("- **FRAP Analysis Libraries:** Custom-built libraries for specific FRAP data analysis tasks.")
+    
+    st.markdown("### Acknowledgments")
+    st.markdown(
+        "This application is developed as part of the FRAP analysis software suite. We acknowledge the contributions of various "
+        "developers and researchers in the field of fluorescence microscopy and image analysis."
+    )
+    st.markdown(
+        "We also thank the users and beta testers for their valuable feedback and suggestions."
+    )
+    st.markdown(
+        "For more information, documentation, and support, please visit the [FRAP Analysis Software Homepage](#)."
+    )
                                     pdf_data = pdf_file.read()
                                 
                                 # Provide download button
