@@ -943,24 +943,6 @@ with tab1:
                     showlegend=True
                 ))
                 
-                # Ensure we capture the true minimum point for proper visualization
-                min_intensity_value = np.min(file_data['intensity'])
-                min_intensity_idx = np.argmin(file_data['intensity'])
-                min_intensity_time = file_data['time'][min_intensity_idx]
-
-                # Highlight the actual minimum intensity point
-                fig.add_trace(go.Scatter(
-                    x=[min_intensity_time],
-                    y=[min_intensity_value],
-                    mode='markers',
-                    name='Minimum Intensity',
-                    marker=dict(color='orange', size=10, symbol='x'),
-                    showlegend=True
-                ))
-
-                # ENHANCEMENT: Extrapolate to true initial post-bleach intensity
-                extrapolated_intensity = extrapolate_initial_intensity(t_fit, best_fit['fitted_values'], interpolated_bleach_time, best_fit)
-
                 # Add the fitted curve starting from the interpolated point
                 # Convert fitted curve timepoints to original scale
                 fig.add_trace(go.Scatter(
@@ -1677,354 +1659,6 @@ with tab2:
                                             with col_param2:
                                                 st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
                                             with col_param3:
-                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s
-                            help="Average diffusion coefficient across all components"
-                        )
-                    
-                    with col_interp2:
-                        st.metric(
-                            "Avg. Apparent MW", 
-                            f"{avg_mw:.1f} kDa" if not np.isnan(avg_mw) else "N/A",
-                            help="Average molecular weight estimate"
-                        )
-                    
-                    with col_interp3:
-                        st.metric(
-                            "Avg. k_off", 
-                            f"{avg_koff:.4f} s⁻¹" if not np.isnan(avg_koff) else "N/A",
-                            help="Average dissociation rate constant"
-                        )
-                
-                st.markdown("---")
-                st.markdown("### Step 3: Individual Curve Analysis")
-                
-                # Enhanced plot of all individual curves with outliers highlighted
-                st.markdown("#### All Individual Curves (Outliers Highlighted)")
-                fig_indiv = go.Figure()
-                
-                group_files_data = {path: dm.files[path] for path in group['files']}
-                
-                for path, file_data in group_files_data.items():
-                    is_outlier = path in excluded_paths
-                    line_color = "rgba(255, 0, 0, 0.7)" if is_outlier else "rgba(100, 100, 100, 0.4)"
-                    line_width = 2 if is_outlier else 1
-                    
-                    fig_indiv.add_trace(go.Scatter(
-                        x=file_data['time'],
-                        y=file_data['intensity'],
-                        mode='lines',
-                        name=file_data['name'],
-                        line=dict(color=line_color, width=line_width),
-                        legendgroup="outlier" if is_outlier else "included",
-                        showlegend=False,
-                        hovertemplate=f"<b>{file_data['name']}</b><br>" +
-                                    f"Status: {'Outlier' if is_outlier else 'Included'}<br>" +
-                                    "Time: %{x:.2f}s<br>" +
-                                    "Intensity: %{y:.3f}<extra></extra>"
-                    ))
-                
-                # Add legend entries manually
-                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
-                                             line=dict(color="rgba(100, 100, 100, 0.8)", width=2),
-                                             name="Included", showlegend=True))
-                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
-                                             line=dict(color="rgba(255, 0, 0, 0.8)", width=2),
-                                             name="Outliers", showlegend=True))
-                
-                fig_indiv.update_layout(
-                    title="All Individual Recovery Curves in Group",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Normalized Intensity",
-                    legend_title="File Status",
-                    height=500
-                )
-                st.plotly_chart(fig_indiv, use_container_width=True)
-                
-                # Detailed table of individual kinetics
-                st.markdown("#### Kinetic Parameters for Each File")
-                
-                all_features_df = group.get('features_df')
-                if all_features_df is not None and not all_features_df.empty:
-                    # Create a complete dataframe with all files (before filtering)
-                    all_files_data = []
-                    for path in group['files']:
-                        file_data = dm.files[path]
-                        features = file_data.get('features', {})
-                        
-                        # Get dual interpretation for each file
-                        bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
-                        pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
-                        effective_radius_um = bleach_radius * pixel_size
-                        
-                        # For the primary rate constant (usually fast component)
-                        primary_rate = features.get('rate_constant_fast', features.get('rate_constant', 0))
-                        kinetic_interp = interpret_kinetics(
-                            primary_rate,
-                            bleach_radius_um=effective_radius_um,
-                            gfp_d=25.0,
-                            gfp_mw=27.0
-                        )
-                        
-                        all_files_data.append({
-                            'File Name': file_data['name'],
-                            'Status': 'Outlier' if path in excluded_paths else 'Included',
-                            'Mobile (%)': features.get('mobile_fraction', np.nan),
-                            'Immobile (%)': features.get('immobile_fraction', np.nan),
-                            'Primary Rate (k)': primary_rate,
-                            'Half-time (s)': features.get('half_time_fast', features.get('half_time', np.nan)),
-                            'k_off (1/s)': kinetic_interp['k_off'],
-                            'App. D (μm²/s)': kinetic_interp['diffusion_coefficient'],
-                            'App. MW (kDa)': kinetic_interp['apparent_mw'],
-                            'Model': features.get('model', 'Unknown'),
-                            'R²': features.get('r2', np.nan)
-                        })
-                    
-                    detailed_df = pd.DataFrame(all_files_data)
-                    
-                    # Style the dataframe with outliers highlighted
-                    def highlight_outliers(row):
-                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
-                    
-                    with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
-                        st.dataframe(
-                            detailed_df.style.apply(highlight_outliers, axis=1).format({
-                                'Mobile (%)': '{:.1f}',
-                                'Immobile (%)': '{:.1f}',
-                                'Primary Rate (k)': '{:.4f}',
-                                'Half-time (s)': '{:.2f}',
-                                'k_off (1/s)': '{:.4f}',
-                                'App. D (μm²/s)': '{:.3f}',
-                                'App. MW (kDa)': '{:.1f}',
-                                'R²': '{:.3f}'
-                            }, na_rep="-"),
-                            use_container_width=True
-                        )
-                        
-                        # Summary statistics
-                        included_data = detailed_df[detailed_df['Status'] == 'Included']
-                        st.markdown("##### Summary Statistics (Included Files Only)")
-                        summary_cols = ['Mobile (%)', 'Primary Rate (k)', 'App. D (μm²/s)', 'App. MW (kDa)']
-                        summary_stats = included_data[summary_cols].describe()
-                        st.dataframe(summary_stats.round(3))
-                
-                st.markdown("---")
-                st.markdown("### Step 4: Generate Comprehensive Report")
-                
-                col_report1, col_report2 = st.columns([3, 1])
-                
-                with col_report1:
-                    st.markdown("Generate a detailed analysis report including:")
-                    st.markdown("- Executive summary with outlier analysis")
-                    st.markdown("- Dual-interpretation kinetics results")
-                    st.markdown("- Individual file details with quality assessment")
-                    st.markdown("- Experimental recommendations")
-                
-                with col_report2:
-                    if st.button("📄 Generate Report", type="primary"):
-                        try:
-                            # Generate comprehensive report
-                            report_content = generate_markdown_report(
-                                group_name=selected_group_name,
-                                settings=st.session_state.settings,
-                                summary_df=summary_df,
-                                detailed_df=detailed_df,
-                                excluded_count=len(excluded_paths),
-                                total_count=len(group['files'])
-                            )
-                            
-                            # Provide download button
-                            st.download_button(
-                                label="⬇️ Download Report",
-                                data=report_content,
-                                file_name=f"FRAP_Report_{selected_group_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
-                                mime="text/markdown",
-                                help="Download comprehensive analysis report as Markdown file"
-                            )
-                            
-                            st.success("Report generated successfully! Click Download Report to save.")
-                            
-                        except Exception as e:
-                            st.error(f"Error generating report: {e}")
-                
-                st.markdown("---")
-                st.markdown("### Step 5: Parameter Distribution Analysis")
-                
-                # Parameter distribution visualization
-                numeric_cols = [col for col in filtered_df.select_dtypes(include=[np.number]).columns 
-                               if col not in ['file_path'] and not filtered_df[col].isna().all()]
-                
-                if numeric_cols:
-                    selected_param = st.selectbox(
-                        "Select parameter for distribution analysis:",
-                        numeric_cols,
-                        index=numeric_cols.index('mobile_fraction') if 'mobile_fraction' in numeric_cols else 0
-                    )
-                    
-                    if selected_param:
-                        # Create parameter distribution plot
-                        param_data = filtered_df.dropna(subset=[selected_param])
-                        
-                        if len(param_data) > 0:
-                            # Create combined histogram and box plot
-                            from plotly.subplots import make_subplots
-                            
-                            fig = make_subplots(
-                                rows=2, cols=1,
-                                row_heights=[0.8, 0.2],
-                                subplot_titles=[f"Distribution of {selected_param.replace('_', ' ').title()}", "Box Plot"],
-                                vertical_spacing=0.1
-                            )
-                            
-                            # Histogram
-                            fig.add_trace(
-                                go.Histogram(
-                                    x=param_data[selected_param],
-                                    nbinsx=min(20, len(param_data)//2 + 1),
-                                    name="Distribution",
-                                    marker_color="teal",
-                                    opacity=0.7
-                                ),
-                                row=1, col=1
-                            )
-                            
-                            # Box plot
-                            fig.add_trace(
-                                go.Box(
-                                    x=param_data[selected_param],
-                                    name="Statistics",
-                                    marker_color="orange",
-                                    boxpoints="all",
-                                    jitter=0.3,
-                                    pointpos=-1.8
-                                ),
-                                row=2, col=1
-                            )
-                            
-                            # Add statistics
-                            mean_val = param_data[selected_param].mean()
-                            std_val = param_data[selected_param].std()
-                            median_val = param_data[selected_param].median()
-                            cv_val = (std_val / mean_val) * 100 if mean_val != 0 else 0
-                            
-                            fig.add_annotation(
-                                x=0.02, y=0.98,
-                                xref="paper", yref="paper",
-                                text=f"Mean: {mean_val:.4f}<br>Std: {std_val:.4f}<br>Median: {median_val:.4f}<br>CV: {cv_val:.1f}%<br>N: {len(param_data)}",
-                                showarrow=False,
-                                bgcolor="white",
-                                bordercolor="gray",
-                                borderwidth=1
-                            )
-                            
-                            fig.update_layout(
-                                height=500,
-                                showlegend=False
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Parameter statistics table
-                            stats_data = {
-                                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Median', 'CV (%)'],
-                                'Value': [
-                                    len(param_data),
-                                    f"{mean_val:.4f}",
-                                    f"{std_val:.4f}", 
-                                    f"{param_data[selected_param].min():.4f}",
-                                    f"{param_data[selected_param].max():.4f}",
-                                    f"{median_val:.4f}",
-                                    f"{cv_val:.1f}"
-                                ]
-                            }
-                            
-                            stats_df = pd.DataFrame(stats_data)
-                            st.dataframe(stats_df, use_container_width=True)
-                        else:
-                            st.warning("No valid data for selected parameter")
-                
-                st.markdown("---")
-                st.markdown("### Step 6: Global Simultaneous Fitting")
-                st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
-                
-                with st.expander("🌐 Global Simultaneous Fit", expanded=False):
-                    st.markdown("""
-                    **Global fitting** constrains kinetic rate constants to be identical across all traces 
-                    while allowing individual amplitudes and offsets. This approach:
-                    - Increases statistical power by pooling data
-                    - Provides more robust parameter estimates
-                    - Enables direct comparison of amplitudes between conditions
-                    """)
-                    
-                    col_global1, col_global2 = st.columns(2)
-                    
-                    with col_global1:
-                        global_model = st.selectbox(
-                            "Select model for global fitting:",
-                            ["single", "double", "triple"],
-                            format_func=lambda x: f"{x.title()}-component exponential",
-                            help="Choose the kinetic model for global fitting"
-                        )
-                        
-                        include_outliers_global = st.checkbox(
-                            "Include outliers in global fit",
-                            value=False,
-                            help="Whether to include previously excluded outliers in global fitting"
-                        )
-                    
-                    with col_global2:
-                        if st.button("🚀 Run Global Fit", type="primary"):
-                            try:
-                                with st.spinner(f"Performing global {global_model}-component fitting..."):
-                                    # Determine which files to exclude
-                                    files_to_exclude = [] if include_outliers_global else excluded_paths
-                                    
-                                    # Import the FRAPData class and perform global fitting
-                                    from frap_data import FRAPData
-                                    
-                                    # Create a temporary FRAPData instance with current data
-                                    temp_dm = FRAPData()
-                                    temp_dm.files = dm.files
-                                    temp_dm.groups = dm.groups
-                                    
-                                    # Perform global fitting
-                                    global_result = temp_dm.fit_group_models(
-                                        selected_group_name, 
-                                        model=global_model,
-                                        excluded_files=files_to_exclude
-                                    )
-                                    
-                                    if global_result.get('success', False):
-                                        st.success("✅ Global fitting completed successfully!")
-                                        
-                                        # Display global fit results
-                                        st.markdown("#### Global Fit Results")
-                                        
-                                        # Shared parameters
-                                        shared_params = global_result['shared_params']
-                                        col_param1, col_param2, col_param3 = st.columns(3)
-                                        
-                                        if global_model == 'single':
-                                            with col_param1:
-                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
-                                            with col_param3:
-                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
-                                        
-                                        elif global_model == 'double':
-                                            with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
-                                            with col_param3:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
-                                        
-                                        elif global_model == 'triple':
-                                            with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
-                                            with col_param3:
                                                 st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s⁻¹")
                                         
                                         # Individual amplitudes table
@@ -2360,6 +1994,7 @@ with tab3:
                             else:
                                 effect_size = "Large"
                             
+
                             st.info(f"Effect size: {effect_size}")
             
             st.markdown("### Summary Statistics Table")
@@ -2454,6 +2089,371 @@ with tab5:
                     'timestamp': datetime.now().isoformat(),
                     'version': '1.0'
                 }
+                
+                session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                session_bytes = pickle.dumps(session_data)
+                
+                st.download_button(
+                    label="⬇️ Download Session File",
+                    data=session_bytes,
+                    file_name=session_filename,
+                    mime="application/octet-stream",
+                    help="Save current analysis session for later"
+                )
+                
+                st.success(f"Session prepared for download: {len(dm.files)} files, {len(dm.groups)} groups")
+                
+            except Exception as e:
+                st.error(f"Error saving session: {e}")
+        
+        # Session load functionality
+        st.markdown("### Load Previous Session")
+        uploaded_session = st.file_uploader(
+            "Upload session file (.pkl)", 
+            type=['pkl'],
+            help="Load a previously saved analysis session"
+        )
+        
+        if uploaded_session is not None:
+            if st.button("📂 Load Session", type="secondary"):
+                try:
+                    import pickle
+                    session_data = pickle.load(uploaded_session)
+                    
+                    # Validate session data
+                    required_keys = ['files', 'groups', 'settings']
+                    if all(key in session_data for key in required_keys):
+                        # Load session data
+                        new_dm = FRAPDataManager()
+                        new_dm.files = session_data['files']
+                        new_dm.groups = session_data['groups']
+                        
+                        st.session_state.data_manager = new_dm
+                        st.session_state.settings.update(session_data['settings'])
+                        
+                        st.success(f"Session loaded successfully!")
+                        st.info(f"Loaded: {len(new_dm.files)} files, {len(new_dm.groups)} groups")
+                        st.info(f"Session from: {session_data.get('timestamp', 'Unknown')}")
+                        st.rerun()
+                    else:
+                        st.error("Invalid session file format")
+                        
+                except Exception as e:
+                    st.error(f"Error loading session: {e}")
+    
+    with col_session2:
+        st.subheader("Data Export")
+        
+        if dm.groups:
+            # Excel export functionality
+            if st.button("📊 Export to Excel", type="primary"):
+                try:
+                    import io
+                    
+                    # Create comprehensive export data
+                    export_data = []
+                    
+                    # Summary sheet data
+                    summary_data = {
+                        'Analysis_Summary': {
+                            'Generated': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'Total_Groups': len(dm.groups),
+                            'Total_Files': len(dm.files)
+                        }
+                    }
+                    
+                    # Group data
+                    for group_name, group_info in dm.groups.items():
+                        if group_info.get('files'):
+                            dm.update_group_analysis(group_name)
+                            features_df = group_info.get('features_df')
+                            if features_df is not None and not features_df.empty:
+                                group_export = []
+                                
+                                for _, row in features_df.iterrows():
+                                    file_path = row.get('file_path', '')
+                                    file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+                                    
+                                    # Get dual interpretation
+                                    primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                                    effective_radius_um = bleach_radius * pixel_size
+                                    
+                                    kinetic_interp = interpret_kinetics(
+                                        primary_rate,
+                                        bleach_radius_um=effective_radius_um,
+                                        gfp_d=25.0,
+                                        gfp_mw=27.0
+                                    )
+                                    
+                                    group_export.append({
+                                        'File_Name': file_name,
+                                        'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                        'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                        'Rate_Constant_k': primary_rate,
+                                        'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                        'k_off_per_second': kinetic_interp['k_off'],
+                                        'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                        'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                        'Model': row.get('model', 'Unknown'),
+                                        'R²': row.get('r2', np.nan)
+                                    })
+                                
+                                summary_data[f'Group_{group_name}'] = group_export
+                    
+                    # Create Excel file using pandas
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        # Summary sheet
+                        summary_df = pd.DataFrame([summary_data['Analysis_Summary']])
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                        
+                        # Individual group sheets
+                        for sheet_name, data in summary_data.items():
+                            if sheet_name.startswith('Group_'):
+                                group_df = pd.DataFrame(data)
+                                group_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)  # Excel sheet name limit
+                        
+                        # Settings sheet
+                        settings_df = pd.DataFrame(list(st.session_state.settings.items()), 
+                                                 columns=['Parameter', 'Value'])
+                        settings_df.to_excel(writer, sheet_name='Settings', index=False)
+                    
+                    excel_buffer.seek(0)
+                    
+                    st.download_button(
+                        label="⬇️ Download Excel File",
+                        data=excel_buffer.getvalue(),
+                        file_name=f"FRAP_Analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Download complete analysis results as Excel workbook"
+                    )
+                    
+                    st.success("Excel export prepared for download!")
+                    
+                except Exception as e:
+                    st.error(f"Error creating Excel export: {e}")
+            
+            # CSV export for individual groups
+            st.markdown("### Export Individual Groups")
+            if dm.groups:
+                selected_export_group = st.selectbox("Select group to export as CSV:", list(dm.groups.keys()))
+                
+                if st.button("📄 Export Group as CSV"):
+                    group_info = dm.groups[selected_export_group]
+                    if group_info.get('files'):
+                        features_df = group_info.get('features_df')
+                        if features_df is not None and not features_df.empty:
+                            # Prepare CSV data with dual interpretation
+                            export_data = []
+                            for _, row in features_df.iterrows():
+                                file_path = row.get('file_path', '')
+                                file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+                                
+                                primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                kinetic_interp = interpret_kinetics(
+                                    primary_rate,
+                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) * 
+                                                   st.session_state.settings.get('default_pixel_size', 1.0),
+                                    gfp_d=25.0,
+                                    gfp_mw=27.0
+                                )
+                                
+                                export_data.append({
+                                    'File_Name': file_name,
+                                    'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                    'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                    'Rate_Constant_k': primary_rate,
+                                    'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                    'k_off_per_second': kinetic_interp['k_off'],
+                                    'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                    'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                    'Model': row.get('model', 'Unknown'),
+                                    'R_squared': row.get('r2', np.nan)
+                                })
+                            
+                            export_df = pd.DataFrame(export_data)
+                            csv_data = export_df.to_csv(index=False)
+                            
+                            st.download_button(
+                                label="⬇️ Download CSV",
+                                data=csv_data,
+                                file_name=f"FRAP_{selected_export_group}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                help="Download group data as CSV file"
+                            )
+                            
+                            st.success(f"CSV export for {selected_export_group} prepared!")
+                        else:
+                            st.warning("No data available for export in selected group")
+                    else:
+                        st.warning("Selected group is empty")
+        else:
+            st.info("No groups available for export. Create and analyze groups first.")
+    
+    st.markdown("---")
+    st.markdown("### Current Session Status")
+    
+    col_status1, col_status2, col_status3 = st.columns(3)
+    
+    with col_status1:
+        st.metric("Loaded Files", len(dm.files))
+        
+    with col_status2:
+        st.metric("Created Groups", len(dm.groups))
+    
+    with col_status3:
+        total_processed = sum(1 for group in dm.groups.values() 
+                            if group.get('features_df') is not None and not group['features_df'].empty)
+        st.metric("Processed Groups", total_processed)
+    
+    st.markdown("---")
+    st.markdown("### Debug Package Generation")
+    st.markdown("Create a comprehensive package for external debugging and deployment")
+    
+    col_debug1, col_debug2 = st.columns([2, 1])
+    
+    with col_debug1:
+        st.markdown("**Debug package includes:**")
+        st.markdown("- Complete source code and documentation")
+        st.markdown("- Installation scripts for Windows and Unix")
+        st.markdown("- Sample data files and test suite")
+        st.markdown("- Docker configuration for containerized deployment")
+        st.markdown("- Streamlit configuration files")
+        
+    with col_debug2:
+        if st.button("📦 Create Debug Package", type="primary"):
+            try:
+                with st.spinner("Creating comprehensive debug package..."):
+                    # Import and run the debug package creator
+                    from create_debug_package import create_debug_package
+                    
+                    package_file, summary = create_debug_package()
+                    
+                    # Read the package file
+                    with open(package_file, 'rb') as f:
+                        package_data = f.read()
+                    
+                    # Provide download button
+                    st.download_button(
+                        label="⬇️ Download Debug Package",
+                        data=package_data,
+                        file_name=package_file,
+                        mime="application/zip",
+                        help="Download complete debug package with all source code and documentation"
+                    )
+                    
+                    st.success("Debug package created successfully!")
+                    st.info(f"Package size: {len(package_data) / 1024 / 1024:.1f} MB")
+                    
+                    # Clean up temporary file
+                    os.remove(package_file)
+                    
+            except Exception as e:
+                st.error(f"Error creating debug package: {e}")
+                st.error("Please contact support for assistance")
+
+with tab6:
+    st.subheader("Application Settings")
+    st.markdown("### General Settings")
+    col_gen1,col_gen2=st.columns(2)
+    with col_gen1:
+        default_criterion=st.selectbox(
+            "Default Model Selection Criterion",['aic','r2'],
+            index=['aic','r2'].index(st.session_state.settings['default_criterion']),
+            format_func=lambda x:{'aic':'Akaike Information Criterion (AIC)','r2':'R-squared'}[x]
+        )
+        decimal_places=st.number_input("Decimal Places in Results",value=st.session_state.settings['decimal_places'],min_value=0,max_value=6,step=1)
+    with col_gen2:
+        default_gfp_diffusion=st.number_input("Default GFP Diffusion (μm²/s)",value=st.session_state.settings['default_gfp_diffusion'],min_value=1.0,step=1.0)
+        default_gfp_rg=st.number_input("Default GFP Radius of Gyration (nm)",value=st.session_state.settings['default_gfp_rg'],min_value=0.1,step=0.01)
+    
+    st.markdown("### Experimental Parameters")
+    st.markdown("Configure physical parameters for dual-interpretation kinetics analysis:")
+    
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        default_bleach_radius=st.number_input("Bleach Radius (pixels)",value=st.session_state.settings['default_bleach_radius'],min_value=0.1,step=0.1,help="Radius of photobleached region")
+        default_pixel_size=st.number_input("Pixel Size (μm/pixel)",value=st.session_state.settings['default_pixel_size'],min_value=0.01,step=0.01,help="Physical size of camera pixel")
+        default_target_mw=st.number_input("Target Protein MW (kDa)",value=st.session_state.settings['default_target_mw'],min_value=1.0,step=1.0,help="Expected molecular weight for comparison")
+    with col_exp2:
+        default_scaling_alpha=st.number_input("Scaling Factor (α)",value=st.session_state.settings['default_scaling_alpha'],min_value=0.1,step=0.1,help="Correction factor for diffusion calculations")
+        effective_bleach_size = default_bleach_radius * default_pixel_size
+        st.metric("Effective Bleach Size", f"{effective_bleach_size:.2f} μm", help="Physical size of bleach spot")
+        
+        # Reference protein parameters
+        st.markdown("**Reference Protein (GFP):**")
+        st.text(f"D = {st.session_state.settings['default_gfp_diffusion']:.1f} μm²/s")
+        st.text(f"MW = 27 kDa")
+    
+    st.markdown("### Advanced Curve Fitting Options")
+    col_fit1, col_fit2 = st.columns(2)
+    
+    with col_fit1:
+        fitting_method = st.selectbox(
+            "Curve Fitting Method",
+            ["least_squares", "robust", "bayesian"],
+            index=0,
+            format_func=lambda x: {
+                "least_squares": "Standard Least Squares",
+                "robust": "Robust Fitting (outlier resistant)",
+                "bayesian": "Bayesian MCMC (full uncertainty)"
+            }[x],
+            help="Choose fitting algorithm for kinetic analysis"
+        )
+        
+        max_iterations = st.number_input(
+            "Max Fitting Iterations",
+            value=2000,
+            min_value=100,
+            max_value=10000,
+            step=100,
+            help="Maximum iterations for curve fitting convergence"
+        )
+        
+    with col_fit2:
+        parameter_bounds = st.checkbox(
+            "Use Parameter Bounds",
+            value=True,
+            help="Constrain parameters to physically reasonable ranges"
+        )
+        
+        confidence_intervals = st.checkbox(
+            "Calculate Confidence Intervals",
+            value=False,
+            help="Estimate parameter uncertainties (slower fitting)"
+        )
+        
+        bootstrap_samples = st.number_input(
+            "Bootstrap Samples",
+            value=1000,
+            min_value=100,
+            max_value=5000,
+            step=100,
+            disabled=not confidence_intervals,
+            help="Number of bootstrap samples for uncertainty estimation"
+        )
+    
+    if st.button("Apply Settings",type="primary"):
+        st.session_state.settings.update({
+            'default_criterion':default_criterion,'default_gfp_diffusion':default_gfp_diffusion,'default_gfp_rg':default_gfp_rg,
+            'default_bleach_radius':default_bleach_radius,'default_pixel_size':default_pixel_size,
+            'default_scaling_alpha':default_scaling_alpha,'default_target_mw':default_target_mw,'decimal_places':decimal_places,
+            'fitting_method': fitting_method, 'max_iterations': max_iterations,
+            'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
+            'bootstrap_samples': bootstrap_samples
+        })
+        st.success("Settings applied successfully.")
+        st.rerun()
+    
+    st.markdown("### Data Management")
+    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
+        if st.button("Clear All Data",type="secondary"):
+            st.session_state.data_manager=FRAPDataManager()
+            st.session_state.selected_group_name=None
+            st.success("All data cleared successfully.")
+            st.rerun()
                 
                 session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
                 session_bytes = pickle.dumps(session_data)
