@@ -742,372 +742,6 @@ class FRAPDataManager:
                 del self.groups[group_name]
             return False
 
-    def should_skip_file(self, filename: str) -> tuple[bool, str]:
-        """
-        Check if a file should be skipped during ZIP processing.
-        
-        Returns:
-            tuple: (should_skip: bool, reason: str)
-        """
-        # Extract just the filename without path
-        basename = os.path.basename(filename)
-        
-        # Skip temporary files created by Excel/Office
-        if basename.startswith('~$'):
-            return True, "Excel temporary file (starts with '~$')"
-        
-        # Skip hidden files and system files
-        if basename.startswith('.'):
-            return True, "Hidden file (starts with '.')"
-        
-        # Skip macOS system files
-        if '__MACOSX' in filename or '.DS_Store' in basename:
-            return True, "macOS system file"
-        
-        # Skip Windows system files
-        if basename.lower() in ['thumbs.db', 'desktop.ini']:
-            return True, "Windows system file"
-        
-        # Check file extension
-        file_ext = os.path.splitext(basename)[1].lower()
-        if file_ext not in ['.xls', '.xlsx', '.csv']:
-            return True, f"Unsupported file type ({file_ext})"
-        
-        # Skip files that are too short (likely corrupt)
-        if len(basename) < 3:
-            return True, "Filename too short"
-        
-        return False, ""
-
-# --- Session State Initialization ---
-if 'settings' not in st.session_state:
-    st.session_state.settings = {
-        'default_criterion': 'aic', 'default_bleach_radius': 1.0, 'default_pixel_size': 0.3,
-        'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
-        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
-    }
-if "data_manager" not in st.session_state:
-    st.session_state.data_manager = None
-if 'selected_group_name' not in st.session_state:
-    st.session_state.selected_group_name = None
-
-# --- Plotting Helper Functions ---
-def plot_all_curves(group_files_data):
-    fig = go.Figure()
-    for file_data in group_files_data.values():
-        fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='lines', name=file_data['name']))
-    fig.update_layout(
-        title="All Individual Recovery Curves", 
-        xaxis_title="Time (s)", 
-        yaxis_title="Normalized Intensity", 
-        yaxis=dict(range=[0, None]),  # Start y-axis from zero
-        legend_title="File"
-    )
-    return fig
-
-def plot_average_curve(group_files_data):
-    if not group_files_data:
-        return go.Figure()
-    all_times = np.concatenate([d['time'] for d in group_files_data.values() if d['time'] is not None])
-    if all_times.size == 0:
-        return go.Figure().update_layout(title="Not enough data to generate average curve.")
-    common_time = np.linspace(all_times.min(), all_times.max(), num=200)
-    interpolated_intensities = [np.interp(common_time, fd['time'], fd['intensity'], left=np.nan, right=np.nan) for fd in group_files_data.values()]
-    if not interpolated_intensities:
-        return go.Figure().update_layout(title="Not enough valid data for averaging.")
-    intensities_array = np.array(interpolated_intensities)
-    mean_intensity = np.nanmean(intensities_array, axis=0)
-    std_intensity = np.nanstd(intensities_array, axis=0)
-    upper_bound, lower_bound = mean_intensity + std_intensity, mean_intensity - std_intensity
-    fig = go.Figure([
-        go.Scatter(x=np.concatenate([common_time, common_time[::-1]]), y=np.concatenate([upper_bound, lower_bound[::-1]]), fill='toself', fillcolor='rgba(220,20,60,0.2)', line=dict(color='rgba(255,255,255,0)'), hoverinfo="none", name='Std. Dev.'),
-        go.Scatter(x=common_time, y=mean_intensity, mode='lines', name='Average Recovery', line=dict(color='crimson', width=3))
-    ])
-    fig.update_layout(
-        title="Average FRAP Recovery Curve", 
-        xaxis_title="Time (s)", 
-        yaxis_title="Normalized Intensity",
-        yaxis=dict(range=[0, None])  # Start y-axis from zero
-    )
-    return fig
-
-# --- Core Analysis and Data Logic ---
-
-class FRAPDataManager:
-    def __init__(self): 
-        self.files,self.groups = {},{}
-    
-    def load_file(self,file_path,file_name):
-        try:
-            # Extract original extension before the hash suffix
-            original_path = file_path
-            if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
-                # Find the original extension and create a temporary file with correct extension
-                import tempfile
-                import shutil
-                if '.xlsx_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xlsx')
-                elif '.xls_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xls')
-                elif '.csv_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.csv')
-                else:
-                    temp_path = file_path
-                
-                if temp_path != file_path:
-                    shutil.copy2(file_path, temp_path)
-                    file_path = temp_path
-            
-            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
-            if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
-                time,intensity = processed_df['time'].values,processed_df['normalized'].values
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                self.files[file_path]={
-                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
-                    'fits':fits,'best_fit':best_fit,'features':params
-                }
-                logger.info(f"Loaded: {file_name}")
-                return True
-        except Exception as e: 
-            st.error(f"Error loading {file_name}: {e}")
-            return False
-    
-    def create_group(self,name):
-        if name not in self.groups: 
-            self.groups[name]={'name':name,'files':[],'features_df':None}
-    
-    def update_group_analysis(self,name,excluded_files=None):
-        if name not in self.groups: return
-        group=self.groups[name]
-        features_list=[]
-        for fp in group['files']:
-            if fp not in (excluded_files or []) and fp in self.files and self.files[fp]['features']:
-                ff=self.files[fp]['features'].copy()
-                ff.update({'file_path':fp,'file_name':self.files[fp]['name']})
-                features_list.append(ff)
-        group['features_df'] = pd.DataFrame(features_list) if features_list else pd.DataFrame()
-
-    def add_file_to_group(self, group_name, file_path):
-        """
-        Adds a file to an existing group.
-        """
-        if group_name in self.groups and file_path in self.files:
-            if file_path not in self.groups[group_name]['files']:
-                self.groups[group_name]['files'].append(file_path)
-                return True
-        return False
-
-    def load_groups_from_zip_archive(self, zip_file):
-        """
-        Loads files from a ZIP archive containing subfolders, where each subfolder
-        is treated as a new group. Gracefully handles unreadable files.
-        """
-        success_count = 0
-        error_count = 0
-        error_details = []
-        
-        try:
-            # Create a temporary directory to extract the files
-            with tempfile.TemporaryDirectory() as temp_dir:
-                with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
-                    z.extractall(temp_dir)
-
-                # Walk through the extracted directory to find subfolders (groups)
-                for root, dirs, _ in os.walk(temp_dir):
-                    # We are interested in the directories at the first level
-                    if root == temp_dir:
-                        for group_name in dirs:
-                            if group_name.startswith('__'): # Ignore system folders like __MACOSX
-                                continue
-                            
-                            self.create_group(group_name)
-                            group_path = os.path.join(root, group_name)
-                            group_success_count = 0
-                            
-                            # Now find the files in this group's subfolder
-                            for file_in_group in os.listdir(group_path):
-                                file_path_in_temp = os.path.join(group_path, file_in_group)
-                                
-                                # Ignore subdirectories and hidden files
-                                if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
-                                    try:
-                                        # Check if file has valid extension
-                                        file_ext = os.path.splitext(file_in_group)[1].lower()
-                                        if file_ext not in ['.xls', '.xlsx', '.csv']:
-                                            logger.warning(f"Skipping unsupported file type: {file_in_group}")
-                                            continue
-                                        
-                                        with open(file_path_in_temp, 'rb') as f_content:
-                                            file_content = f_content.read()
-                                        
-                                        # Skip empty files
-                                        if len(file_content) == 0:
-                                            logger.warning(f"Skipping empty file: {file_in_group}")
-                                            continue
-                                        
-                                        file_name = os.path.basename(file_in_group)
-                                        tp = f"data/{file_name}_{hash(file_content)}"
-                                        
-                                        if tp not in self.files:
-                                            # Copy the file to the data directory to be loaded
-                                            shutil.copy(file_path_in_temp, tp)
-                                            
-                                            # Attempt to load the file
-                                            if self.load_file(tp, file_name):
-                                                self.add_file_to_group(group_name, tp)
-                                                success_count += 1
-                                                group_success_count += 1
-                                            else:
-                                                error_count += 1
-                                                error_msg = f"Failed to load file: {file_in_group} in group {group_name}"
-                                                error_details.append(error_msg)
-                                                logger.error(error_msg)
-                                                # Clean up failed file
-                                                if os.path.exists(tp):
-                                                    os.remove(tp)
-                                        else:
-                                            # File already exists, just add to group
-                                            self.add_file_to_group(group_name, tp)
-                                            group_success_count += 1
-                                            
-                                    except Exception as e:
-                                        error_count += 1
-                                        error_msg = f"Error processing file {file_in_group} in group {group_name}: {str(e)}"
-                                        error_details.append(error_msg)
-                                        logger.error(error_msg)
-                                        continue
-                            
-                            # Update group analysis only if we have successfully loaded files
-                            if group_success_count > 0:
-                                self.update_group_analysis(group_name)
-                            else:
-                                # Remove empty group
-                                logger.warning(f"Removing empty group: {group_name}")
-                                if group_name in self.groups:
-                                    del self.groups[group_name]
-            
-            # Report results
-            if success_count > 0:
-                logger.info(f"Successfully processed {success_count} files from ZIP archive")
-                if error_count > 0:
-                    logger.warning(f"{error_count} files could not be processed and were skipped")
-                    # Display error details in Streamlit
-                    if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files. "
-                                 f"{error_count} files were skipped due to errors.")
-                        if error_details:
-                            with st.expander("⚠️ View Skipped Files Details"):
-                                for error in error_details[:10]:  # Show first 10 errors
-                                    st.text(f"• {error}")
-                                if len(error_details) > 10:
-                                    st.text(f"... and {len(error_details) - 10} more errors")
-                return True
-            else:
-                logger.error("No files could be processed from ZIP archive")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error processing ZIP archive with subfolders: {e}")
-            return False
-
-    def load_zip_archive_and_create_group(self, zip_file, group_name):
-        """
-        Loads files from a ZIP archive, creates a new group, and adds the files to it.
-        Gracefully handles unreadable files.
-        """
-        success_count = 0
-        error_count = 0
-        error_details = []
-        
-        try:
-            self.create_group(group_name)
-            with zipfile.ZipFile(io.BytesIO(zip_file.read())) as z:
-                file_list = z.namelist()
-                for file_in_zip in file_list:
-                    # Ignore directories and hidden files (like __MACOSX)
-                    if not file_in_zip.endswith('/') and '__MACOSX' not in file_in_zip:
-                        try:
-                            # Check if file has valid extension
-                            file_ext = os.path.splitext(file_in_zip)[1].lower()
-                            if file_ext not in ['.xls', '.xlsx', '.csv']:
-                                logger.warning(f"Skipping unsupported file type: {file_in_zip}")
-                                continue
-                            
-                            file_content = z.read(file_in_zip)
-                            
-                            # Skip empty files
-                            if len(file_content) == 0:
-                                logger.warning(f"Skipping empty file: {file_in_zip}")
-                                continue
-                            
-                            file_name = os.path.basename(file_in_zip)
-
-                            # Create a temporary file to use with the existing load_file logic
-                            tp = f"data/{file_name}_{hash(file_content)}"
-                            if tp not in self.files:
-                                with open(tp, "wb") as f:
-                                    f.write(file_content)
-                                
-                                # Attempt to load the file
-                                if self.load_file(tp, file_name):
-                                    self.add_file_to_group(group_name, tp)
-                                    success_count += 1
-                                else:
-                                    error_count += 1
-                                    error_msg = f"Failed to load file: {file_in_zip}"
-                                    error_details.append(error_msg)
-                                    logger.error(error_msg)
-                                    # Clean up failed file
-                                    if os.path.exists(tp):
-                                        os.remove(tp)
-                            else:
-                                # File already exists, just add to group
-                                self.add_file_to_group(group_name, tp)
-                                success_count += 1
-                                
-                        except Exception as e:
-                            error_count += 1
-                            error_msg = f"Error processing file {file_in_zip}: {str(e)}"
-                            error_details.append(error_msg)
-                            logger.error(error_msg)
-                            continue
-
-            # Update group analysis only if we have successfully loaded files
-            if success_count > 0:
-                self.update_group_analysis(group_name)
-                st.session_state.selected_group_name = group_name
-                
-                # Report results
-                logger.info(f"Successfully processed {success_count} files for group {group_name}")
-                if error_count > 0:
-                    logger.warning(f"{error_count} files could not be processed and were skipped")
-                    # Display error details in Streamlit
-                    if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files to group '{group_name}'. "
-                                 f"{error_count} files were skipped due to errors.")
-                        if error_details:
-                            with st.expander("⚠️ View Skipped Files Details"):
-                                for error in error_details[:10]:  # Show first 10 errors
-                                    st.text(f"• {error}")
-                                if len(error_details) > 10:
-                                    st.text(f"... and {len(error_details) - 10} more errors")
-                return True
-            else:
-                # No files could be loaded, remove the empty group
-                logger.error(f"No files could be processed for group {group_name}")
-                if group_name in self.groups:
-                    del self.groups[group_name]
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error processing ZIP archive for group {group_name}: {e}")
-            # Clean up group if creation failed
-            if group_name in self.groups:
-                del self.groups[group_name]
-            return False
-
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
@@ -1309,6 +943,24 @@ with tab1:
                     showlegend=True
                 ))
                 
+                # Ensure we capture the true minimum point for proper visualization
+                min_intensity_value = np.min(file_data['intensity'])
+                min_intensity_idx = np.argmin(file_data['intensity'])
+                min_intensity_time = file_data['time'][min_intensity_idx]
+
+                # Highlight the actual minimum intensity point
+                fig.add_trace(go.Scatter(
+                    x=[min_intensity_time],
+                    y=[min_intensity_value],
+                    mode='markers',
+                    name='Minimum Intensity',
+                    marker=dict(color='orange', size=10, symbol='x'),
+                    showlegend=True
+                ))
+
+                # ENHANCEMENT: Extrapolate to true initial post-bleach intensity
+                extrapolated_intensity = extrapolate_initial_intensity(t_fit, best_fit['fitted_values'], interpolated_bleach_time, best_fit)
+
                 # Add the fitted curve starting from the interpolated point
                 # Convert fitted curve timepoints to original scale
                 fig.add_trace(go.Scatter(
@@ -1678,6 +1330,354 @@ with tab2:
                         st.metric(
                             "Avg. Apparent D", 
                             f"{avg_d:.3f} μm²/s" if not np.isnan(avg_d) else "N/A",
+                            help="Average diffusion coefficient across all components"
+                        )
+                    
+                    with col_interp2:
+                        st.metric(
+                            "Avg. Apparent MW", 
+                            f"{avg_mw:.1f} kDa" if not np.isnan(avg_mw) else "N/A",
+                            help="Average molecular weight estimate"
+                        )
+                    
+                    with col_interp3:
+                        st.metric(
+                            "Avg. k_off", 
+                            f"{avg_koff:.4f} s⁻¹" if not np.isnan(avg_koff) else "N/A",
+                            help="Average dissociation rate constant"
+                        )
+                
+                st.markdown("---")
+                st.markdown("### Step 3: Individual Curve Analysis")
+                
+                # Enhanced plot of all individual curves with outliers highlighted
+                st.markdown("#### All Individual Curves (Outliers Highlighted)")
+                fig_indiv = go.Figure()
+                
+                group_files_data = {path: dm.files[path] for path in group['files']}
+                
+                for path, file_data in group_files_data.items():
+                    is_outlier = path in excluded_paths
+                    line_color = "rgba(255, 0, 0, 0.7)" if is_outlier else "rgba(100, 100, 100, 0.4)"
+                    line_width = 2 if is_outlier else 1
+                    
+                    fig_indiv.add_trace(go.Scatter(
+                        x=file_data['time'],
+                        y=file_data['intensity'],
+                        mode='lines',
+                        name=file_data['name'],
+                        line=dict(color=line_color, width=line_width),
+                        legendgroup="outlier" if is_outlier else "included",
+                        showlegend=False,
+                        hovertemplate=f"<b>{file_data['name']}</b><br>" +
+                                    f"Status: {'Outlier' if is_outlier else 'Included'}<br>" +
+                                    "Time: %{x:.2f}s<br>" +
+                                    "Intensity: %{y:.3f}<extra></extra>"
+                    ))
+                
+                # Add legend entries manually
+                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+                                             line=dict(color="rgba(100, 100, 100, 0.8)", width=2),
+                                             name="Included", showlegend=True))
+                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+                                             line=dict(color="rgba(255, 0, 0, 0.8)", width=2),
+                                             name="Outliers", showlegend=True))
+                
+                fig_indiv.update_layout(
+                    title="All Individual Recovery Curves in Group",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Normalized Intensity",
+                    legend_title="File Status",
+                    height=500
+                )
+                st.plotly_chart(fig_indiv, use_container_width=True)
+                
+                # Detailed table of individual kinetics
+                st.markdown("#### Kinetic Parameters for Each File")
+                
+                all_features_df = group.get('features_df')
+                if all_features_df is not None and not all_features_df.empty:
+                    # Create a complete dataframe with all files (before filtering)
+                    all_files_data = []
+                    for path in group['files']:
+                        file_data = dm.files[path]
+                        features = file_data.get('features', {})
+                        
+                        # Get dual interpretation for each file
+                        bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                        pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                        effective_radius_um = bleach_radius * pixel_size
+                        
+                        # For the primary rate constant (usually fast component)
+                        primary_rate = features.get('rate_constant_fast', features.get('rate_constant', 0))
+                        kinetic_interp = interpret_kinetics(
+                            primary_rate,
+                            bleach_radius_um=effective_radius_um,
+                            gfp_d=25.0,
+                            gfp_mw=27.0
+                        )
+                        
+                        all_files_data.append({
+                            'File Name': file_data['name'],
+                            'Status': 'Outlier' if path in excluded_paths else 'Included',
+                            'Mobile (%)': features.get('mobile_fraction', np.nan),
+                            'Immobile (%)': features.get('immobile_fraction', np.nan),
+                            'Primary Rate (k)': primary_rate,
+                            'Half-time (s)': features.get('half_time_fast', features.get('half_time', np.nan)),
+                            'k_off (1/s)': kinetic_interp['k_off'],
+                            'App. D (μm²/s)': kinetic_interp['diffusion_coefficient'],
+                            'App. MW (kDa)': kinetic_interp['apparent_mw'],
+                            'Model': features.get('model', 'Unknown'),
+                            'R²': features.get('r2', np.nan)
+                        })
+                    
+                    detailed_df = pd.DataFrame(all_files_data)
+                    
+                    # Style the dataframe with outliers highlighted
+                    def highlight_outliers(row):
+                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
+                    
+                    with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
+                        st.dataframe(
+                            detailed_df.style.apply(highlight_outliers, axis=1).format({
+                                'Mobile (%)': '{:.1f}',
+                                'Immobile (%)': '{:.1f}',
+                                'Primary Rate (k)': '{:.4f}',
+                                'Half-time (s)': '{:.2f}',
+                                'k_off (1/s)': '{:.4f}',
+                                'Apparent D (μm²/s)': '{:.3f}',
+                                'Apparent MW (kDa)': '{:.1f}',
+                                'R²': '{:.3f}'
+                            }, na_rep="-"),
+                            use_container_width=True
+                        )
+                        
+                        # Summary statistics
+                        included_data = detailed_df[detailed_df['Status'] == 'Included']
+                        st.markdown("##### Summary Statistics (Included Files Only)")
+                        summary_cols = ['Mobile (%)', 'Primary Rate (k)', 'App. D (μm²/s)', 'App. MW (kDa)']
+                        summary_stats = included_data[summary_cols].describe()
+                        st.dataframe(summary_stats.round(3))
+                
+                st.markdown("---")
+                st.markdown("### Step 4: Generate Comprehensive Report")
+                
+                col_report1, col_report2 = st.columns([3, 1])
+                
+                with col_report1:
+                    st.markdown("Generate a detailed analysis report including:")
+                    st.markdown("- Executive summary with outlier analysis")
+                    st.markdown("- Dual-interpretation kinetics results")
+                    st.markdown("- Individual file details with quality assessment")
+                    st.markdown("- Experimental recommendations")
+                
+                with col_report2:
+                    if st.button("📄 Generate Report", type="primary"):
+                        try:
+                            # Generate comprehensive report
+                            report_content = generate_markdown_report(
+                                group_name=selected_group_name,
+                                settings=st.session_state.settings,
+                                summary_df=summary_df,
+                                detailed_df=detailed_df,
+                                excluded_count=len(excluded_paths),
+                                total_count=len(group['files'])
+                            )
+                            
+                            # Provide download button
+                            st.download_button(
+                                label="⬇️ Download Report",
+                                data=report_content,
+                                file_name=f"FRAP_Report_{selected_group_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
+                                mime="text/markdown",
+                                help="Download comprehensive analysis report as Markdown file"
+                            )
+                            
+                            st.success("Report generated successfully! Click Download Report to save.")
+                            
+                        except Exception as e:
+                            st.error(f"Error generating report: {e}")
+                
+                st.markdown("---")
+                st.markdown("### Step 5: Parameter Distribution Analysis")
+                
+                # Parameter distribution visualization
+                numeric_cols = [col for col in filtered_df.select_dtypes(include=[np.number]).columns 
+                               if col not in ['file_path'] and not filtered_df[col].isna().all()]
+                
+                if numeric_cols:
+                    selected_param = st.selectbox(
+                        "Select parameter for distribution analysis:",
+                        numeric_cols,
+                        index=numeric_cols.index('mobile_fraction') if 'mobile_fraction' in numeric_cols else 0
+                    )
+                    
+                    if selected_param:
+                        # Create parameter distribution plot
+                        param_data = filtered_df.dropna(subset=[selected_param])
+                        
+                        if len(param_data) > 0:
+                            # Create combined histogram and box plot
+                            from plotly.subplots import make_subplots
+                            
+                            fig = make_subplots(
+                                rows=2, cols=1,
+                                row_heights=[0.8, 0.2],
+                                subplot_titles=[f"Distribution of {selected_param.replace('_', ' ').title()}", "Box Plot"],
+                                vertical_spacing=0.1
+                            )
+                            
+                            # Histogram
+                            fig.add_trace(
+                                go.Histogram(
+                                    x=param_data[selected_param],
+                                    nbinsx=min(20, len(param_data)//2 + 1),
+                                    name="Distribution",
+                                    marker_color="teal",
+                                    opacity=0.7
+                                ),
+                                row=1, col=1
+                            )
+                            
+                            # Box plot
+                            fig.add_trace(
+                                go.Box(
+                                    x=param_data[selected_param],
+                                    name="Statistics",
+                                    marker_color="orange",
+                                    boxpoints="all",
+                                    jitter=0.3,
+                                    pointpos=-1.8
+                                ),
+                                row=2, col=1
+                            )
+                            
+                            # Add statistics
+                            mean_val = param_data[selected_param].mean()
+                            std_val = param_data[selected_param].std()
+                            median_val = param_data[selected_param].median()
+                            cv_val = (std_val / mean_val) * 100 if mean_val != 0 else 0
+                            
+                            fig.add_annotation(
+                                x=0.02, y=0.98,
+                                xref="paper", yref="paper",
+                                text=f"Mean: {mean_val:.4f}<br>Std: {std_val:.4f}<br>Median: {median_val:.4f}<br>CV: {cv_val:.1f}%<br>N: {len(param_data)}",
+                                showarrow=False,
+                                bgcolor="white",
+                                bordercolor="gray",
+                                borderwidth=1
+                            )
+                            
+                            fig.update_layout(
+                                height=500,
+                                showlegend=False
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Parameter statistics table
+                            stats_data = {
+                                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Median', 'CV (%)'],
+                                'Value': [
+                                    len(param_data),
+                                    f"{mean_val:.4f}",
+                                    f"{std_val:.4f}", 
+                                    f"{param_data[selected_param].min():.4f}",
+                                    f"{param_data[selected_param].max():.4f}",
+                                    f"{median_val:.4f}",
+                                    f"{cv_val:.1f}"
+                                ]
+                            }
+                            
+                            stats_df = pd.DataFrame(stats_data)
+                            st.dataframe(stats_df, use_container_width=True)
+                        else:
+                            st.warning("No valid data for selected parameter")
+                
+                st.markdown("---")
+                st.markdown("### Step 6: Global Simultaneous Fitting")
+                st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
+                
+                with st.expander("🌐 Global Simultaneous Fit", expanded=False):
+                    st.markdown("""
+                    **Global fitting** constrains kinetic rate constants to be identical across all traces 
+                    while allowing individual amplitudes and offsets. This approach:
+                    - Increases statistical power by pooling data
+                    - Provides more robust parameter estimates
+                    - Enables direct comparison of amplitudes between conditions
+                    """)
+                    
+                    col_global1, col_global2 = st.columns(2)
+                    
+                    with col_global1:
+                        global_model = st.selectbox(
+                            "Select model for global fitting:",
+                            ["single", "double", "triple"],
+                            format_func=lambda x: f"{x.title()}-component exponential",
+                            help="Choose the kinetic model for global fitting"
+                        )
+                        
+                        include_outliers_global = st.checkbox(
+                            "Include outliers in global fit",
+                            value=False,
+                            help="Whether to include previously excluded outliers in global fitting"
+                        )
+                    
+                    with col_global2:
+                        if st.button("🚀 Run Global Fit", type="primary"):
+                            try:
+                                with st.spinner(f"Performing global {global_model}-component fitting..."):
+                                    # Determine which files to exclude
+                                    files_to_exclude = [] if include_outliers_global else excluded_paths
+                                    
+                                    # Import the FRAPData class and perform global fitting
+                                    from frap_data import FRAPData
+                                    
+                                    # Create a temporary FRAPData instance with current data
+                                    temp_dm = FRAPData()
+                                    temp_dm.files = dm.files
+                                    temp_dm.groups = dm.groups
+                                    
+                                    # Perform global fitting
+                                    global_result = temp_dm.fit_group_models(
+                                        selected_group_name, 
+                                        model=global_model,
+                                        excluded_files=files_to_exclude
+                                    )
+                                    
+                                    if global_result.get('success', False):
+                                        st.success("✅ Global fitting completed successfully!")
+                                        
+                                        # Display global fit results
+                                        st.markdown("#### Global Fit Results")
+                                        
+                                        # Shared parameters
+                                        shared_params = global_result['shared_params']
+                                        col_param1, col_param2, col_param3 = st.columns(3)
+                                        
+                                        if global_model == 'single':
+                                            with col_param1:
+                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                            with col_param3:
+                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
+                                        
+                                        elif global_model == 'double':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                        
+                                        elif global_model == 'triple':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s
                             help="Average diffusion coefficient across all components"
                         )
                     
