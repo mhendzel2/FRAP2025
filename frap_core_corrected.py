@@ -15,38 +15,68 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import AgglomerativeClustering
 
 # ---------------------------------------------------------------------- #
-#  PUBLIC HELPER – post‑bleach extraction with half‑frame interpolation  #
+#  PUBLIC HELPER – post‑bleach extraction with recovery extrapolation    #
 # ---------------------------------------------------------------------- #
 def get_post_bleach_data(time: np.ndarray,
                          intensity: np.ndarray,
                          *,
-                         interp_fraction: float = 0.5
+                         extrapolation_points: int = 3
                          ) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Return **t_post**, **i_post** and the index of the first bleach frame (i_min).
 
-    • The first post‑bleach time point is placed *half‑way* between the last
-      pre‑bleach frame and the first measured post‑bleach frame, in accordance
-      with Axelrod 1976 recommendations.
+    • The recovery curve is extrapolated back to the photobleach point using the
+      initial recovery trajectory, ensuring proper fitting from the true bleach event.
+    • Uses linear extrapolation of early recovery points back to bleach time.
 
     Parameters
     ----------
     time, intensity : 1‑D arrays (already normalised)
-    interp_fraction  : float ∈ (0, 1) – 0.5 → mid‑point
+    extrapolation_points : int – number of early recovery points to use for extrapolation
 
     """
     # locate bleach – minimum intensity
     i_min = int(np.argmin(intensity))
     if i_min == 0:                           # guard pathological files
         raise ValueError("Bleach frame at index 0 – cannot segment pre/post.")
+    
+    if i_min >= len(time) - 2:  # guard end-of-data bleach
+        raise ValueError("Bleach frame too close to end of data – insufficient recovery data.")
 
-    # linear interpolation between i_min‑1 and i_min
-    t0 = time[i_min-1] + interp_fraction * (time[i_min] - time[i_min-1])
-    i0 = intensity[i_min-1] + interp_fraction * (intensity[i_min] - intensity[i_min-1])
-
-    t_post = np.concatenate([[t0], time[i_min:]])
-    i_post = np.concatenate([[i0], intensity[i_min:]])
-
+    # Get the bleach time point (time of minimum intensity)
+    t_bleach = time[i_min]
+    
+    # Use early recovery points for extrapolation (skip the bleach point itself)
+    start_idx = i_min + 1
+    end_idx = min(i_min + 1 + extrapolation_points, len(time))
+    
+    if end_idx - start_idx < 2:
+        raise ValueError("Insufficient recovery points for extrapolation.")
+    
+    # Extrapolate recovery trajectory back to bleach time
+    t_recovery = time[start_idx:end_idx]
+    i_recovery = intensity[start_idx:end_idx]
+    
+    # Linear regression to find initial recovery trajectory
+    from scipy.stats import linregress
+    slope, intercept, r_value, p_value, std_err = linregress(t_recovery, i_recovery)
+    
+    # Calculate extrapolated intensity at bleach time
+    i_bleach_extrapolated = slope * t_bleach + intercept
+    
+    # Ensure extrapolated value is reasonable (should be close to measured bleach intensity)
+    i_bleach_measured = intensity[i_min]
+    
+    # Use the lower of measured and extrapolated values (more conservative)
+    i_bleach_final = min(i_bleach_extrapolated, i_bleach_measured)
+    
+    # Build corrected vectors starting from extrapolated bleach point
+    t_post = np.concatenate([[t_bleach], time[i_min:]])  # Include bleach time
+    i_post = np.concatenate([[i_bleach_final], intensity[i_min:]])  # Use extrapolated intensity
+    
+    # Reset time to start from zero at bleach event
+    t_post = t_post - t_bleach
+    
     return t_post, i_post, i_min
 
 # ----------------------------- DIFFUSION ------------------------------- #
@@ -101,11 +131,11 @@ class FRAPAnalysisCore:
     @staticmethod
     def get_post_bleach_data(time, intensity):
         """
-        Return post-bleach trace with mid-point start-value correction.
+        Return post-bleach trace with recovery curve extrapolation back to bleach point.
         
-        This method implements mid-point interpolation between the last pre-bleach
-        and first post-bleach frames to remove bias from discrete sampling of
-        instantaneous bleach events.
+        This method implements proper extrapolation of the early recovery trajectory
+        back to the photobleach event to ensure accurate fitting from the true
+        starting point of recovery.
         
         Parameters:
         -----------
@@ -126,17 +156,55 @@ class FRAPAnalysisCore:
         i_min = np.argmin(intensity)
         
         if i_min == 0:
-            raise ValueError("Bleach frame found at first index – cannot interpolate.")
+            raise ValueError("Bleach frame found at first index – cannot extrapolate.")
         
-        # --- Mid-point interpolation correction ---
-        # Linear interpolation half-way between last pre-bleach and first post-bleach
-        t0 = (time[i_min-1] + time[i_min]) / 2.0
-        i0 = (intensity[i_min-1] + intensity[i_min]) / 2.0
-        # --------------------------------------------------------
+        if i_min >= len(time) - 3:
+            raise ValueError("Bleach frame too close to end – insufficient recovery data.")
         
-        # Build corrected vectors
-        t_post = np.hstack((t0, time[i_min:])) - t0          # set bleach to t=0
-        i_post = np.hstack((i0, intensity[i_min:]))
+        # Get bleach time
+        t_bleach = time[i_min]
+        i_bleach_measured = intensity[i_min]
+        
+        # --- Recovery trajectory extrapolation ---
+        # Use the next 3-5 recovery points to extrapolate back to bleach time
+        recovery_start = i_min + 1
+        recovery_end = min(i_min + 5, len(time))  # Use up to 4 recovery points
+        
+        if recovery_end - recovery_start < 2:
+            raise ValueError("Insufficient recovery points for trajectory extrapolation.")
+        
+        # Extract early recovery data
+        t_recovery = time[recovery_start:recovery_end]
+        i_recovery = intensity[recovery_start:recovery_end]
+        
+        # Linear extrapolation of initial recovery slope
+        if len(t_recovery) >= 2:
+            # Use linear regression for robust slope estimation
+            coeffs = np.polyfit(t_recovery, i_recovery, 1)
+            slope, intercept = coeffs[0], coeffs[1]
+            
+            # Extrapolate intensity at bleach time
+            i_bleach_extrapolated = slope * t_bleach + intercept
+            
+            # Use the minimum of measured and extrapolated (more conservative)
+            # This accounts for potential noise in the measured bleach point
+            i_bleach_final = min(i_bleach_extrapolated, i_bleach_measured)
+            
+            # Ensure the extrapolated value is physically reasonable
+            if i_bleach_final < 0:
+                i_bleach_final = max(0, i_bleach_measured * 0.8)  # Fallback to 80% of measured
+                
+        else:
+            # Fallback: use measured bleach intensity
+            i_bleach_final = i_bleach_measured
+        
+        # --- Build corrected post-bleach vectors ---
+        # Start from the extrapolated bleach point
+        t_post = np.concatenate([[t_bleach], time[i_min:]])
+        i_post = np.concatenate([[i_bleach_final], intensity[i_min:]])
+        
+        # Reset time scale to start from zero at bleach event
+        t_post = t_post - t_bleach
         
         return t_post, i_post, i_min
 
@@ -934,6 +1002,7 @@ class FRAPAnalysisCore:
     def extract_clustering_features(best_fit):
         """
         Extract features for clustering from the best fit model with CORRECTED formulas
+        and proper handling of extrapolated recovery curves.
         
         Parameters:
         -----------
@@ -996,9 +1065,16 @@ class FRAPAnalysisCore:
                     k = k if np.isfinite(k) else np.nan
                     C = C if np.isfinite(C) else np.nan
                 
+                # Calculate mobile fraction from extrapolated recovery
+                # Since we now start from the true bleach point, mobile fraction is more accurate
+                total_recovery_potential = 1.0 - C  # Maximum possible recovery
+                features['mobile_fraction'] = (A / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(A) and np.isfinite(C) else np.nan
+                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
+                
+                # Store raw parameters
                 features['amplitude'] = A
                 features['rate_constant'] = k
-                features['mobile_fraction'] = A / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(A) else np.nan
+                features['offset'] = C
                 features['half_time'] = np.log(2) / k if k > 0 and np.isfinite(k) else np.nan
                 
                 # Calculate diffusion coefficient using CORRECTED formula - D = w²k/4
@@ -1006,7 +1082,7 @@ class FRAPAnalysisCore:
                     diffusion_coef = (default_spot_radius**2 * k) / 4.0  # CORRECTED: removed ln(2)
                 else:
                     diffusion_coef = np.nan
-                    
+                
                 features['diffusion_coefficient'] = diffusion_coef
                 
                 # Calculate radius of gyration using GFP as reference
@@ -1015,6 +1091,12 @@ class FRAPAnalysisCore:
                 # Estimate molecular weight (scales with Rg^3 for globular proteins)
                 rg = features['radius_of_gyration']
                 features['molecular_weight_estimate'] = MW_GFP * (rg / Rg_GFP)**3 if not np.isnan(rg) and rg > 0 else np.nan
+                
+                # Add standardized names for consistent access across models
+                features['rate_constant_fast'] = k
+                features['half_time_fast'] = features['half_time']
+                features['proportion_of_mobile_fast'] = 100.0 if np.isfinite(features['mobile_fraction']) else np.nan
+                features['proportion_of_total_fast'] = features['mobile_fraction']
                 
             elif model == 'double':
                 if len(params) < 5:
@@ -1038,9 +1120,9 @@ class FRAPAnalysisCore:
                 # Sort components by rate constant (fast to slow) - handle NaN values
                 components = []
                 if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1))
+                    components.append((k1, A1, 'fast'))
                 if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2))
+                    components.append((k2, A2, 'slow'))
                 
                 if len(components) == 0:
                     logging.error("extract_clustering_features: no valid components in double model")
@@ -1049,50 +1131,40 @@ class FRAPAnalysisCore:
                 # Sort by rate constant (fast to slow)
                 components.sort(reverse=True, key=lambda x: x[0])
                 
-                # Fill in missing components with NaN
+                # Ensure we have exactly 2 components, fill with NaN if needed
                 while len(components) < 2:
-                    components.append((np.nan, np.nan))
+                    components.append((np.nan, np.nan, 'missing'))
                 
-                sorted_rates = [comp[0] for comp in components]
-                sorted_amps = [comp[1] for comp in components]
+                # Extract sorted values
+                k_fast, A_fast, _ = components[0]
+                k_slow, A_slow, _ = components[1]
                 
-                features['amplitude_1'] = sorted_amps[0]
-                features['rate_constant_1'] = sorted_rates[0]
-                features['amplitude_2'] = sorted_amps[1]
-                features['rate_constant_2'] = sorted_rates[1]
+                # Calculate mobile fraction from extrapolated recovery
+                total_recovery_potential = 1.0 - C if np.isfinite(C) else 1.0
+                features['mobile_fraction'] = (total_amp / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(total_amp) else np.nan
+                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
                 
-                # Calculate proportions
-                features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[0]) else np.nan
-                features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[1]) else np.nan
+                # Store component-specific features
+                features['rate_constant_fast'] = k_fast
+                features['rate_constant_slow'] = k_slow
+                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
+                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
                 
-                # Mobile fraction
-                features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(total_amp) else np.nan
-                
-                # Weighted average half-time
+                # Calculate proportions relative to mobile pool and total population
                 if total_amp > 0 and np.isfinite(total_amp):
-                    if all(rate > 0 and np.isfinite(rate) for rate in sorted_rates) and all(np.isfinite(amp) for amp in sorted_amps):
-                        features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
-                                                 sorted_amps[1] * np.log(2) / sorted_rates[1]) / total_amp
-                    else:
-                        features['half_time'] = np.nan
+                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
                 else:
-                    features['half_time'] = np.nan
-                    
-                # Calculate diffusion coefficients for both components using CORRECTED formula
-                features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0 if sorted_rates[0] > 0 and np.isfinite(sorted_rates[0]) else np.nan
-                features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0 if sorted_rates[1] > 0 and np.isfinite(sorted_rates[1]) else np.nan
+                    features['proportion_of_mobile_fast'] = np.nan
+                    features['proportion_of_mobile_slow'] = np.nan
                 
-                # Calculate radii of gyration
-                dc1 = features['diffusion_coefficient_1']
-                dc2 = features['diffusion_coefficient_2']
-                features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / dc1) if dc1 > 0 and np.isfinite(dc1) else np.nan
-                features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / dc2) if dc2 > 0 and np.isfinite(dc2) else np.nan
-                
-                # Estimate molecular weights
-                rg1 = features['radius_of_gyration_1']
-                rg2 = features['radius_of_gyration_2']
-                features['molecular_weight_estimate_1'] = MW_GFP * (rg1 / Rg_GFP)**3 if not np.isnan(rg1) and rg1 > 0 else np.nan
-                features['molecular_weight_estimate_2'] = MW_GFP * (rg2 / Rg_GFP)**3 if not np.isnan(rg2) and rg2 > 0 else np.nan
+                # Proportions relative to total population
+                if total_recovery_potential > 0:
+                    features['proportion_of_total_fast'] = (A_fast / total_recovery_potential * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_total_slow'] = (A_slow / total_recovery_potential * 100.0) if np.isfinite(A_slow) else np.nan
+                else:
+                    features['proportion_of_total_fast'] = np.nan
+                    features['proportion_of_total_slow'] = np.nan
                 
             elif model == 'triple':
                 if len(params) < 7:
@@ -1114,11 +1186,11 @@ class FRAPAnalysisCore:
                 # Sort components by rate constant (fast to slow) - handle NaN values
                 components = []
                 if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1))
+                    components.append((k1, A1, 'fast'))
                 if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2))
+                    components.append((k2, A2, 'medium'))
                 if np.isfinite(k3) and np.isfinite(A3):
-                    components.append((k3, A3))
+                    components.append((k3, A3, 'slow'))
                 
                 if len(components) == 0:
                     logging.error("extract_clustering_features: no valid components in triple model")
@@ -1127,59 +1199,48 @@ class FRAPAnalysisCore:
                 # Sort by rate constant (fast to slow)
                 components.sort(reverse=True, key=lambda x: x[0])
                 
-                # Fill in missing components with NaN
+                # Ensure we have exactly 3 components, fill with NaN if needed
                 while len(components) < 3:
-                    components.append((np.nan, np.nan))
+                    components.append((np.nan, np.nan, 'missing'))
                 
-                sorted_rates = [comp[0] for comp in components]
-                sorted_amps = [comp[1] for comp in components]
+                # Extract sorted values
+                k_fast, A_fast, _ = components[0]
+                k_medium, A_medium, _ = components[1]
+                k_slow, A_slow, _ = components[2]
                 
-                features['amplitude_1'] = sorted_amps[0]
-                features['rate_constant_1'] = sorted_rates[0]
-                features['amplitude_2'] = sorted_amps[1]
-                features['rate_constant_2'] = sorted_rates[1]
-                features['amplitude_3'] = sorted_amps[2]
-                features['rate_constant_3'] = sorted_rates[2]
+                # Calculate mobile fraction from extrapolated recovery
+                total_recovery_potential = 1.0 - C if np.isfinite(C) else 1.0
+                features['mobile_fraction'] = (total_amp / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(total_amp) else np.nan
+                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
                 
-                # Calculate proportions
-                features['proportion_1'] = sorted_amps[0] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[0]) else np.nan
-                features['proportion_2'] = sorted_amps[1] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[1]) else np.nan
-                features['proportion_3'] = sorted_amps[2] / total_amp if total_amp > 0 and np.isfinite(total_amp) and np.isfinite(sorted_amps[2]) else np.nan
+                # Store component-specific features
+                features['rate_constant_fast'] = k_fast
+                features['rate_constant_medium'] = k_medium
+                features['rate_constant_slow'] = k_slow
+                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
+                features['half_time_medium'] = np.log(2) / k_medium if k_medium > 0 and np.isfinite(k_medium) else np.nan
+                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
                 
-                # Mobile fraction
-                features['mobile_fraction'] = total_amp / (1.0 - C) if C < 1.0 and np.isfinite(C) and np.isfinite(total_amp) else np.nan
-                
-                # Weighted average half-time
+                # Calculate proportions relative to mobile pool and total population
                 if total_amp > 0 and np.isfinite(total_amp):
-                    if all(rate > 0 and np.isfinite(rate) for rate in sorted_rates) and all(np.isfinite(amp) for amp in sorted_amps):
-                        features['half_time'] = (sorted_amps[0] * np.log(2) / sorted_rates[0] + 
-                                                 sorted_amps[1] * np.log(2) / sorted_rates[1] + 
-                                                 sorted_amps[2] * np.log(2) / sorted_rates[2]) / total_amp
-                    else:
-                        features['half_time'] = np.nan
+                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_mobile_medium'] = (A_medium / total_amp * 100.0) if np.isfinite(A_medium) else np.nan
+                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
                 else:
-                    features['half_time'] = np.nan
+                    features['proportion_of_mobile_fast'] = np.nan
+                    features['proportion_of_mobile_medium'] = np.nan
+                    features['proportion_of_mobile_slow'] = np.nan
+                
+                # Proportions relative to total population
+                if total_recovery_potential > 0:
+                    features['proportion_of_total_fast'] = (A_fast / total_recovery_potential * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_total_medium'] = (A_medium / total_recovery_potential * 100.0) if np.isfinite(A_medium) else np.nan
+                    features['proportion_of_total_slow'] = (A_slow / total_recovery_potential * 100.0) if np.isfinite(A_slow) else np.nan
+                else:
+                    features['proportion_of_total_fast'] = np.nan
+                    features['proportion_of_total_medium'] = np.nan
+                    features['proportion_of_total_slow'] = np.nan
                     
-                # Calculate diffusion coefficients for all components using CORRECTED formula
-                features['diffusion_coefficient_1'] = (default_spot_radius**2 * sorted_rates[0]) / 4.0 if sorted_rates[0] > 0 and np.isfinite(sorted_rates[0]) else np.nan
-                features['diffusion_coefficient_2'] = (default_spot_radius**2 * sorted_rates[1]) / 4.0 if sorted_rates[1] > 0 and np.isfinite(sorted_rates[1]) else np.nan
-                features['diffusion_coefficient_3'] = (default_spot_radius**2 * sorted_rates[2]) / 4.0 if sorted_rates[2] > 0 and np.isfinite(sorted_rates[2]) else np.nan
-                
-                # Calculate radii of gyration
-                dc1 = features['diffusion_coefficient_1']
-                dc2 = features['diffusion_coefficient_2']
-                dc3 = features['diffusion_coefficient_3']
-                features['radius_of_gyration_1'] = Rg_GFP * (D_GFP / dc1) if dc1 > 0 and np.isfinite(dc1) else np.nan
-                features['radius_of_gyration_2'] = Rg_GFP * (D_GFP / dc2) if dc2 > 0 and np.isfinite(dc2) else np.nan
-                features['radius_of_gyration_3'] = Rg_GFP * (D_GFP / dc3) if dc3 > 0 and np.isfinite(dc3) else np.nan
-                
-                # Estimate molecular weights
-                rg1 = features['radius_of_gyration_1']
-                rg2 = features['radius_of_gyration_2']
-                rg3 = features['radius_of_gyration_3']
-                features['molecular_weight_estimate_1'] = MW_GFP * (rg1 / Rg_GFP)**3 if not np.isnan(rg1) and rg1 > 0 else np.nan
-                features['molecular_weight_estimate_2'] = MW_GFP * (rg2 / Rg_GFP)**3 if not np.isnan(rg2) and rg2 > 0 else np.nan
-                features['molecular_weight_estimate_3'] = MW_GFP * (rg3 / Rg_GFP)**3 if not np.isnan(rg3) and rg3 > 0 else np.nan
             else:
                 logging.error(f"extract_clustering_features: unknown model type: {model}")
                 return None
@@ -1188,22 +1249,21 @@ class FRAPAnalysisCore:
             logging.error(f"extract_clustering_features: error processing {model} model: {e}")
             return None
             
-        # Add model information to features
+        # Add model information and quality metrics to features
         features['model'] = model
-        features['immobile_fraction'] = 1.0 - features.get('mobile_fraction', 0) if np.isfinite(features.get('mobile_fraction', np.nan)) else np.nan
+        features['r2'] = best_fit.get('r2', np.nan)
+        features['aic'] = best_fit.get('aic', np.nan)
+        features['bic'] = best_fit.get('bic', np.nan)
         
         # Add available rate constant names for easier access
         rate_constants = []
         for key in features:
-            if 'rate_constant' in key and np.isfinite(features[key]):
+            if 'rate_constant' in key and key != 'rate_constant' and np.isfinite(features.get(key, np.nan)):
                 rate_constants.append(features[key])
         
         if rate_constants:
-            features['rate_constant_fast'] = max(rate_constants)
-            features['rate_constant_slow'] = min(rate_constants)
-            if len(rate_constants) >= 2:
-                rate_constants.sort(reverse=True)
-                features['rate_constant_medium'] = rate_constants[1] if len(rate_constants) >= 3 else np.nan
+            features['rate_constant_fast'] = max(rate_constants) if 'rate_constant_fast' not in features else features['rate_constant_fast']
+            features['rate_constant_slow'] = min(rate_constants) if 'rate_constant_slow' not in features else features['rate_constant_slow']
         
         return features
 

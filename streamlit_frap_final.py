@@ -2328,109 +2328,6 @@ with tab5:
                 with st.spinner("Creating comprehensive debug package..."):
                     # Import and run the debug package creator
                     from create_debug_package import create_debug_package
-                    
-with tab6:
-    st.subheader("Application Settings")
-    st.markdown("### General Settings")
-    col_gen1,col_gen2=st.columns(2)
-    with col_gen1:
-        default_criterion=st.selectbox(
-            "Default Model Selection Criterion",['aic','r2'],
-            index=['aic','r2'].index(st.session_state.settings['default_criterion']),
-            format_func=lambda x:{'aic':'Akaike Information Criterion (AIC)','r2':'R-squared'}[x]
-        )
-        decimal_places=st.number_input("Decimal Places in Results",value=st.session_state.settings['decimal_places'],min_value=0,max_value=6,step=1)
-    with col_gen2:
-        default_gfp_diffusion=st.number_input("Default GFP Diffusion (μm²/s)",value=st.session_state.settings['default_gfp_diffusion'],min_value=1.0,step=1.0)
-        default_gfp_rg=st.number_input("Default GFP Radius of Gyration (nm)",value=st.session_state.settings['default_gfp_rg'],min_value=0.1,step=0.01)
-    
-    st.markdown("### Experimental Parameters")
-    st.markdown("Configure physical parameters for dual-interpretation kinetics analysis:")
-    
-    col_exp1, col_exp2 = st.columns(2)
-    with col_exp1:
-        default_bleach_radius=st.number_input("Bleach Radius (pixels)",value=st.session_state.settings['default_bleach_radius'],min_value=0.1,step=0.1,help="Radius of photobleached region")
-        default_pixel_size=st.number_input("Pixel Size (μm/pixel)",value=st.session_state.settings['default_pixel_size'],min_value=0.01,step=0.01,help="Physical size of camera pixel")
-        default_target_mw=st.number_input("Target Protein MW (kDa)",value=st.session_state.settings['default_target_mw'],min_value=1.0,step=1.0,help="Expected molecular weight for comparison")
-    with col_exp2:
-        default_scaling_alpha=st.number_input("Scaling Factor (α)",value=st.session_state.settings['default_scaling_alpha'],min_value=0.1,step=0.1,help="Correction factor for diffusion calculations")
-        effective_bleach_size = default_bleach_radius * default_pixel_size
-        st.metric("Effective Bleach Size", f"{effective_bleach_size:.2f} μm", help="Physical size of bleach spot")
-        
-        # Reference protein parameters
-        st.markdown("**Reference Protein (GFP):**")
-        st.text(f"D = {st.session_state.settings['default_gfp_diffusion']:.1f} μm²/s")
-        st.text(f"MW = 27 kDa")
-    
-    st.markdown("### Advanced Curve Fitting Options")
-    col_fit1, col_fit2 = st.columns(2)
-    
-    with col_fit1:
-        fitting_method = st.selectbox(
-            "Curve Fitting Method",
-            ["least_squares", "robust", "bayesian"],
-            index=0,
-            format_func=lambda x: {
-                "least_squares": "Standard Least Squares",
-                "robust": "Robust Fitting (outlier resistant)",
-                "bayesian": "Bayesian MCMC (full uncertainty)"
-            }[x],
-            help="Choose fitting algorithm for kinetic analysis"
-        )
-        
-        max_iterations = st.number_input(
-            "Max Fitting Iterations",
-            value=2000,
-            min_value=100,
-            max_value=10000,
-            step=100,
-            help="Maximum iterations for curve fitting convergence"
-        )
-        
-    with col_fit2:
-        parameter_bounds = st.checkbox(
-            "Use Parameter Bounds",
-            value=True,
-            help="Constrain parameters to physically reasonable ranges"
-        )
-        
-        confidence_intervals = st.checkbox(
-            "Calculate Confidence Intervals",
-            value=False,
-            help="Estimate parameter uncertainties (slower fitting)"
-        )
-        
-        bootstrap_samples = st.number_input(
-            "Bootstrap Samples",
-            value=1000,
-            min_value=100,
-            max_value=5000,
-            step=100,
-            disabled=not confidence_intervals,
-            help="Number of bootstrap samples for uncertainty estimation"
-        )
-    
-    if st.button("Apply Settings",type="primary"):
-        st.session_state.settings.update({
-            'default_criterion':default_criterion,'default_gfp_diffusion':default_gfp_diffusion,'default_gfp_rg':default_gfp_rg,
-            'default_bleach_radius':default_bleach_radius,'default_pixel_size':default_pixel_size,
-            'default_scaling_alpha':default_scaling_alpha,'default_target_mw':default_target_mw,'decimal_places':decimal_places,
-            'fitting_method': fitting_method, 'max_iterations': max_iterations,
-            'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
-            'bootstrap_samples': bootstrap_samples
-        })
-        st.success("Settings applied successfully.")
-        st.rerun()
-    
-    st.markdown("### Data Management")
-    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-        if st.button("Clear All Data",type="secondary"):
-            st.session_state.data_manager=FRAPDataManager()
-            st.session_state.selected_group_name=None
-            st.success("All data cleared successfully.")
-            st.rerun()
-                
-                    
                     package_file, summary = create_debug_package()
                     
                     # Read the package file
@@ -2451,7 +2348,6 @@ with tab6:
                     
                     # Clean up temporary file
                     os.remove(package_file)
-                    
             except Exception as e:
                 st.error(f"Error creating debug package: {e}")
                 st.error("Please contact support for assistance")
@@ -2521,38 +2417,38 @@ with tab6:
             help="Constrain parameters to physically reasonable ranges"
         )
         
-        confidence_intervals = st.checkbox(
-            "Calculate Confidence Intervals",
-            value=False,
-            help="Estimate parameter uncertainties (slower fitting)"
-        )
-        
-        bootstrap_samples = st.number_input(
-            "Bootstrap Samples",
-            value=1000,
-            min_value=100,
-            max_value=5000,
-            step=100,
-            disabled=not confidence_intervals,
-            help="Number of bootstrap samples for uncertainty estimation"
-        )
+    confidence_intervals = st.checkbox(
+        "Calculate Confidence Intervals",
+        value=False,
+        help="Calculate confidence intervals for fitted parameters (computationally intensive)"
+    )
     
-    if st.button("Apply Settings",type="primary"):
-        st.session_state.settings.update({
-            'default_criterion':default_criterion,'default_gfp_diffusion':default_gfp_diffusion,'default_gfp_rg':default_gfp_rg,
-            'default_bleach_radius':default_bleach_radius,'default_pixel_size':default_pixel_size,
-            'default_scaling_alpha':default_scaling_alpha,'default_target_mw':default_target_mw,'decimal_places':decimal_places,
-            'fitting_method': fitting_method, 'max_iterations': max_iterations,
-            'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
-            'bootstrap_samples': bootstrap_samples
-        })
-        st.success("Settings applied successfully.")
+    bootstrap_samples = st.number_input(
+        "Bootstrap Samples for CI",
+        value=1000,
+        min_value=100,
+        max_value=10000,
+        step=100,
+        help="Number of bootstrap samples for confidence interval calculation",
+        disabled=not confidence_intervals
+    )
+
+if st.button("Apply Settings", type="primary"):
+    st.session_state.settings.update({
+        'default_criterion': default_criterion, 'default_gfp_diffusion': default_gfp_diffusion, 'default_gfp_rg': default_gfp_rg,
+        'default_bleach_radius': default_bleach_radius, 'default_pixel_size': default_pixel_size,
+        'default_scaling_alpha': default_scaling_alpha, 'default_target_mw': default_target_mw, 'decimal_places': decimal_places,
+        'fitting_method': fitting_method, 'max_iterations': max_iterations,
+        'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
+        'bootstrap_samples': bootstrap_samples
+    })
+    st.success("Settings applied successfully.")
+    st.rerun()
+
+st.markdown("### Data Management")
+if st.checkbox("I understand that this will DELETE all loaded data and groups."):
+    if st.button("Clear All Data", type="secondary"):
+        st.session_state.data_manager = FRAPDataManager()
+        st.session_state.selected_group_name = None
+        st.success("All data cleared successfully.")
         st.rerun()
-    
-    st.markdown("### Data Management")
-    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-        if st.button("Clear All Data",type="secondary"):
-            st.session_state.data_manager=FRAPDataManager()
-            st.session_state.selected_group_name=None
-            st.success("All data cleared successfully.")
-            st.rerun()
