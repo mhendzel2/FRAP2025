@@ -1624,7 +1624,7 @@ with tab2:
                     if st.button("📄 Generate Report", type="primary"):
                         try:
                             # Generate comprehensive report
-                                                       report_content = generate_markdown_report(
+                            report_content = generate_markdown_report(
                                 group_name=selected_group_name,
                                 settings=st.session_state.settings,
                                 summary_df=summary_df,
