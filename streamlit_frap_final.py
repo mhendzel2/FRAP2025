@@ -491,7 +491,7 @@ def validate_analysis_results(features: dict) -> dict:
             logger.warning(f"Mobile fraction {mobile_fraction:.1f}% is negative, setting to 0%")
             features['mobile_fraction'] = 0.0
         elif mobile_fraction > 100:
-            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% exceeds 100%, capping at 100%")
+            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% exceeds 100% - this indicates a problem with the analysis")
             features['mobile_fraction'] = 100.0
     
     # Ensure immobile fraction = 100% - mobile fraction
@@ -1588,31 +1588,37 @@ with tab2:
                             'Model': features.get('model', 'Unknown'),
                             'R²': features.get('r2', np.nan)
                         })
+                
+                detailed_df = pd.DataFrame(all_files_data)
+                
+                # Style the dataframe with outliers highlighted
+                def highlight_outliers(row):
+                    return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
+                
+                with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
+                    st.dataframe(
+                        detailed_df.style.apply(highlight_outliers, axis=1).format({
+                            'Mobile (%)': '{:.1f}',
+                            'Immobile (%)': '{:.1f}',
+                            'Primary Rate (k)': '{:.4f}',
+                            'Half-time (s)': '{:.2f}',
+                            'k_off (1/s)': '{:.4f}',
+                            'App. D (μm²/s)': '{:.3f}',
+                            'App. MW (kDa)': '{:.1f}',
+                            'R²': '{:.3f}'
+                        }, na_rep="-"),
+                        use_container_width=True
+                    )
                     
-                    detailed_df = pd.DataFrame(all_files_data)
-                    
-                    # Style the dataframe with outliers highlighted
-                    def highlight_outliers(row):
-                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
-                    
-                    with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
-                        st.dataframe(
-                            detailed_df.style.apply(highlight_outliers, axis=1).format({
-                                'Mobile (%)': '{:.1f}',
-                                'Immobile (%)': '{:.1f}',
-                                'Primary Rate (k)': '{:.4f}',
-                                'Half-time (s)': '{:.2f}',
-                                'k_off (1/s)': '{:.4f}',
-                                'Apparent D (μm²/s)': '{:.3f}',
-                                'Apparent MW (kDa)': '{:.1f}',
-                                'R²': '{:.3f}'
-                            }, na_rep="-"),
-                            use_container_width=True
-                        )
-                        
-                        # Summary statistics
-                        included_data = detailed_df[detailed_df['Status'] == 'Included']
-                        st.markdown("##### Summary Statistics (Included Files Only)")
+                    # Summary statistics
+                    included_data = detailed_df[detailed_df['Status'] == 'Included']
+                    st.markdown("##### Summary Statistics (Included Files Only)")
+                
+                # Add the Report Generation UI section
+                st.markdown("---")
+                st.markdown("### Step 4: Report Generation")
+                col_report1, col_report2 = st.columns([2, 1])
+                
                 with col_report1:
                     st.markdown("Generate a detailed analysis report including:")
                     st.markdown("- Executive summary with outlier analysis")
@@ -1788,12 +1794,6 @@ with tab2:
                                     temp_dm.groups = dm.groups
                                     
                                     # Perform global fitting
-                                    global_result = temp_dm.fit_group_models(
-                                        selected_group_name, 
-                                        model=global_model,
-                                        excluded_files=files_to_exclude
-                                    )
-                                    
                                     if global_result.get('success', False):
                                         st.success("✅ Global fitting completed successfully!")
                                         
