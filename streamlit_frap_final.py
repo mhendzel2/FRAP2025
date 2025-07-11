@@ -1234,25 +1234,9 @@ with tab1:
                 st.markdown("### Biophysical Interpretation")
                 
                 # Calculate diffusion coefficient and molecular weight estimates
-                # Safely handle both dictionary and array parameter formats
-                try:
-                    if isinstance(params, dict):
-                        primary_rate = params.get('rate_constant_fast', params.get('rate_constant', 0))
-                    else:
-                        # Handle case where params might be from features dict
-                        primary_rate = file_data.get('features', {}).get('rate_constant_fast', 
-                                     file_data.get('features', {}).get('rate_constant', 0))
-                        # If that fails, try to extract from best_fit
-                        if primary_rate == 0 and best_fit and 'params' in best_fit:
-                            raw_params = best_fit['params']
-                            model = best_fit.get('model', 'single')
-                            if model == 'single' and len(raw_params) >= 2:
-                                primary_rate = raw_params[1]  # k is second parameter
-                            elif model in ['double', 'triple'] and len(raw_params) >= 2:
-                                primary_rate = raw_params[1]  # k1 is second parameter
-                except (AttributeError, KeyError, IndexError):
-                    primary_rate = 0
+                primary_rate=params.get('rate_constant_fast',params.get('rate_constant',0))
                 
+                # More robust validation of rate constant
                 if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
                     bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
                     pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
@@ -1356,34 +1340,22 @@ with tab1:
 
 with tab2:
     st.header("Group Analysis")
-    if dm.groups and st.session_state.selected_group_name:
-        selected_group_name = st.session_state.selected_group_name
+    selected_group_name = st.session_state.get('selected_group_name')
+    if selected_group_name and selected_group_name in dm.groups:
+        st.subheader(f"Analysis for Group: {selected_group_name}")
         group = dm.groups[selected_group_name]
-        
-        if group.get('files'):
-            # Update analysis for the group
+        if not group['files']: 
+            st.warning("This group is empty. Add files from the sidebar.")
+        else:
+            st.markdown("---")
+            st.markdown("### Step 1: Statistical Outlier Removal")
             dm.update_group_analysis(selected_group_name)
-            features_df = group.get('features_df')
+            features_df=group.get('features_df')
+            excluded_paths=[]
             
             if features_df is not None and not features_df.empty:
-                st.markdown("### Step 1: Outlier Detection & Exclusion")
-                
-                # Automatic outlier detection based on half-time
-                auto_outliers = []
-                if 'half_time_fast' in features_df.columns:
-                    half_times = features_df['half_time_fast'].dropna()
-                    if len(half_times) > 3:
-                        Q1 = half_times.quantile(0.25)
-                        Q3 = half_times.quantile(0.75)
-                        IQR = Q3 - Q1
-                        lower_bound = Q1 - 1.5 * IQR
-                        upper_bound = Q3 + 1.5 * IQR
-                        
-                        for _, row in features_df.iterrows():
-                            half_time = row.get('half_time_fast', np.nan)
-                            if np.isfinite(half_time) and (half_time < lower_bound or half_time > upper_bound):
-                                auto_outliers.append(row.get('file_path', ''))
-                
+                # Show automatic outlier detection results
+                auto_outliers = group.get('auto_outliers', [])
                 if auto_outliers:
                     st.info(f"🤖 **Automatic outlier detection** identified {len(auto_outliers)} potential outliers based on half-time analysis")
                     with st.expander("View auto-detected outliers"):
@@ -1413,15 +1385,8 @@ with tab2:
                     help="Auto-detected outliers are pre-selected. You can add or remove files as needed."
                 )
             
-                dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
-                filtered_df=group.get('features_df')
-            else:
-                st.warning("No analysis data available for this group. Please ensure files are properly loaded and analyzed.")
-                filtered_df = None
-        else:
-            st.warning("No files in selected group. Add files using the sidebar.")
-            filtered_df = None
-    else:
+            dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
+            filtered_df=group.get('features_df')
             
             st.markdown("---")
             st.markdown("### Step 2: View Group Results")
@@ -1659,7 +1624,7 @@ with tab2:
                     if st.button("📄 Generate Report", type="primary"):
                         try:
                             # Generate comprehensive report
-                                                       report_content = generate_markdown_report(
+                            report_content = generate_markdown_report(
                                 group_name=selected_group_name,
                                 settings=st.session_state.settings,
                                 summary_df=summary_df,
@@ -2082,37 +2047,40 @@ with tab3:
                     
                     if st.button("Perform t-test"):
                         if group1_name != group2_name:
-                            data1 = combined_df[combined_df['group'] == group1_name][param_to_plot].dropna()
-                            data2 = combined_df[combined_df['group'] == group2_name][param_to_plot].dropna()
-                            
-                            if len(data1) > 1 and len(data2) > 1:
-                                # Perform Shapiro-Wilk test for normality
-                                from scipy import stats
-                                _, p_norm1 = stats.shapiro(data1) if len(data1) <= 5000 else (None, 0.05)
-                                _, p_norm2 = stats.shapiro(data2) if len(data2) <= 5000 else (None, 0.05)
+                            try:
+                                data1 = combined_df[combined_df['group'] == group1_name][param_to_plot].dropna()
+                                data2 = combined_df[combined_df['group'] == group2_name][param_to_plot].dropna()
                                 
-                                # Choose appropriate test
-                                if p_norm1 > 0.05 and p_norm2 > 0.05:
-                                    t_stat, p_value = stats.ttest_ind(data1, data2)
-                                    test_used = "Student's t-test"
+                                if len(data1) > 1 and len(data2) > 1:
+                                    # Perform Shapiro-Wilk test for normality
+                                    from scipy import stats
+                                    _, p_norm1 = stats.shapiro(data1) if len(data1) <= 5000 else (None, 0.05)
+                                    _, p_norm2 = stats.shapiro(data2) if len(data2) <= 5000 else (None, 0.05)
+                                    
+                                    # Choose appropriate test
+                                    if p_norm1 > 0.05 and p_norm2 > 0.05:
+                                        t_stat, p_value = stats.ttest_ind(data1, data2)
+                                        test_used = "Student's t-test"
+                                    else:
+                                        t_stat, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+                                        test_used = "Mann-Whitney U test"
+                                    
+                                    st.success(f"**{test_used} Results:**")
+                                    st.metric("P-value", f"{p_value:.6f}")
+                                    st.metric("Test Statistic", f"{t_stat:.4f}")
+                                    
+                                    if p_value < 0.001:
+                                        st.success("Highly significant difference (p < 0.001)")
+                                    elif p_value < 0.01:
+                                        st.success("Very significant difference (p < 0.01)")
+                                    elif p_value < 0.05:
+                                        st.success("Significant difference (p < 0.05)")
+                                    else:
+                                        st.info("No significant difference (p ≥ 0.05)")
                                 else:
-                                    t_stat, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
-                                    test_used = "Mann-Whitney U test"
-                                
-                                st.success(f"**{test_used} Results:**")
-                                st.metric("P-value", f"{p_value:.6f}")
-                                st.metric("Test Statistic", f"{t_stat:.4f}")
-                                
-                                if p_value < 0.001:
-                                    st.success("Highly significant difference (p < 0.001)")
-                                elif p_value < 0.01:
-                                    st.success("Very significant difference (p < 0.01)")
-                                elif p_value < 0.05:
-                                    st.success("Significant difference (p < 0.05)")
-                                else:
-                                    st.info("No significant difference (p ≥ 0.05)")
-                            else:
-                                st.error("Insufficient data for statistical testing")
+                                    st.error("Insufficient data for statistical testing")
+                            except Exception as e:
+                                st.error(f"Error performing statistical test: {e}")
                         else:
                             st.error("Please select different groups")
                 
