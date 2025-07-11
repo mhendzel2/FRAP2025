@@ -1234,30 +1234,30 @@ with tab1:
                 st.markdown("### Biophysical Interpretation")
                 
                 # Calculate diffusion coefficient and molecular weight estimates
-                primary_rate=params.get('rate_constant_fast',params.get('rate_constant',0))
+                # Handle both dictionary and numpy array cases for params
+                if isinstance(params, dict):
+                    primary_rate = params.get('rate_constant_fast', params.get('rate_constant', 0))
+                else:
+                    # If params is not a dict, try to get rate from best_fit
+                    primary_rate = 0
+                    if best_fit and 'params' in best_fit:
+                        fit_params = best_fit['params']
+                        if isinstance(fit_params, (list, tuple, np.ndarray)) and len(fit_params) > 0:
+                            # For single exponential: [A, k, C]
+                            if best_fit.get('model') == 'single' and len(fit_params) >= 2:
+                                primary_rate = fit_params[1]  # k is the second parameter
+                            # For double exponential: [A1, k1, A2, k2, C]
+                            elif best_fit.get('model') == 'double' and len(fit_params) >= 4:
+                                primary_rate = max(fit_params[1], fit_params[3])  # Use faster rate
+                            # For triple exponential: [A1, k1, A2, k2, A3, k3, C]
+                            elif best_fit.get('model') == 'triple' and len(fit_params) >= 6:
+                                primary_rate = max(fit_params[1], fit_params[3], fit_params[5])  # Use fastest rate
+                        elif isinstance(fit_params, dict):
+                            primary_rate = fit_params.get('rate_constant_fast', fit_params.get('rate_constant', 0))
                 
                 # More robust validation of rate constant
                 if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
-                    bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
-                    pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
-                    effective_radius_um=bleach_radius*pixel_size
-                    
-                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
-                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
-                    
-                    # Binding interpretation: k_off = k
-                    k_off=primary_rate
-                    
-                    # Molecular weight estimation (relative to GFP)
-                    gfp_d=25.0  # μm²/s
-                    gfp_mw=27.0  # kDa
-                    apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
-                    
-                    # Validate calculated values
-                    if diffusion_coeff > 100:
-                        st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
-                    if apparent_mw > 10000:
-                        st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
+                    # 
                     
                     col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
                     with col_bio1:
