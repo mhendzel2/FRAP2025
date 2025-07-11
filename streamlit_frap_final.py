@@ -1234,30 +1234,46 @@ with tab1:
                 st.markdown("### Biophysical Interpretation")
                 
                 # Calculate diffusion coefficient and molecular weight estimates
-                # Handle both dictionary and numpy array cases for params
-                if isinstance(params, dict):
-                    primary_rate = params.get('rate_constant_fast', params.get('rate_constant', 0))
-                else:
-                    # If params is not a dict, try to get rate from best_fit
+                # Safely handle both dictionary and array parameter formats
+                try:
+                    if isinstance(params, dict):
+                        primary_rate = params.get('rate_constant_fast', params.get('rate_constant', 0))
+                    else:
+                        # Handle case where params might be from features dict
+                        primary_rate = file_data.get('features', {}).get('rate_constant_fast', 
+                                     file_data.get('features', {}).get('rate_constant', 0))
+                        # If that fails, try to extract from best_fit
+                        if primary_rate == 0 and best_fit and 'params' in best_fit:
+                            raw_params = best_fit['params']
+                            model = best_fit.get('model', 'single')
+                            if model == 'single' and len(raw_params) >= 2:
+                                primary_rate = raw_params[1]  # k is second parameter
+                            elif model in ['double', 'triple'] and len(raw_params) >= 2:
+                                primary_rate = raw_params[1]  # k1 is second parameter
+                except (AttributeError, KeyError, IndexError):
                     primary_rate = 0
-                    if best_fit and 'params' in best_fit:
-                        fit_params = best_fit['params']
-                        if isinstance(fit_params, (list, tuple, np.ndarray)) and len(fit_params) > 0:
-                            # For single exponential: [A, k, C]
-                            if best_fit.get('model') == 'single' and len(fit_params) >= 2:
-                                primary_rate = fit_params[1]  # k is the second parameter
-                            # For double exponential: [A1, k1, A2, k2, C]
-                            elif best_fit.get('model') == 'double' and len(fit_params) >= 4:
-                                primary_rate = max(fit_params[1], fit_params[3])  # Use faster rate
-                            # For triple exponential: [A1, k1, A2, k2, A3, k3, C]
-                            elif best_fit.get('model') == 'triple' and len(fit_params) >= 6:
-                                primary_rate = max(fit_params[1], fit_params[3], fit_params[5])  # Use fastest rate
-                        elif isinstance(fit_params, dict):
-                            primary_rate = fit_params.get('rate_constant_fast', fit_params.get('rate_constant', 0))
                 
-                # More robust validation of rate constant
                 if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
-                    # 
+                    bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
+                    pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
+                    effective_radius_um=bleach_radius*pixel_size
+                    
+                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
+                    
+                    # Binding interpretation: k_off = k
+                    k_off=primary_rate
+                    
+                    # Molecular weight estimation (relative to GFP)
+                    gfp_d=25.0  # μm²/s
+                    gfp_mw=27.0  # kDa
+                    apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
+                    
+                    # Validate calculated values
+                    if diffusion_coeff > 100:
+                        st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+                    if apparent_mw > 10000:
+                        st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
                     
                     col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
                     with col_bio1:
@@ -1340,22 +1356,34 @@ with tab1:
 
 with tab2:
     st.header("Group Analysis")
-    selected_group_name = st.session_state.get('selected_group_name')
-    if selected_group_name and selected_group_name in dm.groups:
-        st.subheader(f"Analysis for Group: {selected_group_name}")
+    if dm.groups and st.session_state.selected_group_name:
+        selected_group_name = st.session_state.selected_group_name
         group = dm.groups[selected_group_name]
-        if not group['files']: 
-            st.warning("This group is empty. Add files from the sidebar.")
-        else:
-            st.markdown("---")
-            st.markdown("### Step 1: Statistical Outlier Removal")
+        
+        if group.get('files'):
+            # Update analysis for the group
             dm.update_group_analysis(selected_group_name)
-            features_df=group.get('features_df')
-            excluded_paths=[]
+            features_df = group.get('features_df')
             
             if features_df is not None and not features_df.empty:
-                # Show automatic outlier detection results
-                auto_outliers = group.get('auto_outliers', [])
+                st.markdown("### Step 1: Outlier Detection & Exclusion")
+                
+                # Automatic outlier detection based on half-time
+                auto_outliers = []
+                if 'half_time_fast' in features_df.columns:
+                    half_times = features_df['half_time_fast'].dropna()
+                    if len(half_times) > 3:
+                        Q1 = half_times.quantile(0.25)
+                        Q3 = half_times.quantile(0.75)
+                        IQR = Q3 - Q1
+                        lower_bound = Q1 - 1.5 * IQR
+                        upper_bound = Q3 + 1.5 * IQR
+                        
+                        for _, row in features_df.iterrows():
+                            half_time = row.get('half_time_fast', np.nan)
+                            if np.isfinite(half_time) and (half_time < lower_bound or half_time > upper_bound):
+                                auto_outliers.append(row.get('file_path', ''))
+                
                 if auto_outliers:
                     st.info(f"🤖 **Automatic outlier detection** identified {len(auto_outliers)} potential outliers based on half-time analysis")
                     with st.expander("View auto-detected outliers"):
@@ -1385,8 +1413,15 @@ with tab2:
                     help="Auto-detected outliers are pre-selected. You can add or remove files as needed."
                 )
             
-            dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
-            filtered_df=group.get('features_df')
+                dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
+                filtered_df=group.get('features_df')
+            else:
+                st.warning("No analysis data available for this group. Please ensure files are properly loaded and analyzed.")
+                filtered_df = None
+        else:
+            st.warning("No files in selected group. Add files using the sidebar.")
+            filtered_df = None
+    else:
             
             st.markdown("---")
             st.markdown("### Step 2: View Group Results")
@@ -1624,7 +1659,7 @@ with tab2:
                     if st.button("📄 Generate Report", type="primary"):
                         try:
                             # Generate comprehensive report
-                            report_content = generate_markdown_report(
+                                                       report_content = generate_markdown_report(
                                 group_name=selected_group_name,
                                 settings=st.session_state.settings,
                                 summary_df=summary_df,
