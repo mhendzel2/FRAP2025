@@ -467,6 +467,63 @@ def plot_average_curve(group_files_data):
 
 # --- Core Analysis and Data Logic ---
 
+def validate_analysis_results(features: dict) -> dict:
+    """
+    Validate and correct analysis results to ensure they are physically reasonable.
+    
+    Parameters:
+    -----------
+    features : dict
+        Dictionary containing analysis features
+        
+    Returns:
+    --------
+    dict
+        Validated and corrected features
+    """
+    if not features:
+        return features
+    
+    # Validate mobile fraction (should be 0-100%)
+    mobile_fraction = features.get('mobile_fraction', np.nan)
+    if np.isfinite(mobile_fraction):
+        if mobile_fraction < 0:
+            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% is negative, setting to 0%")
+            features['mobile_fraction'] = 0.0
+        elif mobile_fraction > 100:
+            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% exceeds 100%, capping at 100%")
+            features['mobile_fraction'] = 100.0
+    
+    # Ensure immobile fraction = 100% - mobile fraction
+    if np.isfinite(features.get('mobile_fraction', np.nan)):
+        features['immobile_fraction'] = 100.0 - features['mobile_fraction']
+    else:
+        features['immobile_fraction'] = np.nan
+    
+    # Validate rate constants (should be positive)
+    for key in features:
+        if 'rate_constant' in key and np.isfinite(features[key]):
+            if features[key] <= 0:
+                logger.warning(f"Rate constant {key} = {features[key]:.6f} is non-positive, setting to NaN")
+                features[key] = np.nan
+    
+    # Validate half-times (should be positive)
+    for key in features:
+        if 'half_time' in key and np.isfinite(features[key]):
+            if features[key] <= 0:
+                logger.warning(f"Half-time {key} = {features[key]:.6f} is non-positive, setting to NaN")
+                features[key] = np.nan
+    
+    # Validate proportions (should sum to ~100% for mobile pool)
+    mobile_props = [features.get(f'proportion_of_mobile_{comp}', 0) 
+                   for comp in ['fast', 'medium', 'slow']]
+    mobile_props = [p for p in mobile_props if np.isfinite(p)]
+    
+    if mobile_props and abs(sum(mobile_props) - 100.0) > 5.0:  # Allow 5% tolerance
+        logger.warning(f"Mobile pool proportions sum to {sum(mobile_props):.1f}%, not ~100%")
+    
+    return features
+
 class FRAPDataManager:
     def __init__(self): 
         self.files,self.groups = {},{}
@@ -495,9 +552,34 @@ class FRAPDataManager:
             processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
+                
+                # Validate the normalized data
+                if np.any(intensity < 0):
+                    logger.warning(f"Negative intensities found in normalized data for {file_name}")
+                    # Shift to ensure all values are non-negative
+                    intensity = intensity - np.min(intensity)
+                
+                # Ensure proper normalization (pre-bleach should be ~1.0)
+                bleach_idx = np.argmin(intensity)
+                if bleach_idx > 0:
+                    pre_bleach_mean = np.mean(intensity[:bleach_idx])
+                    if not np.isclose(pre_bleach_mean, 1.0, rtol=0.1):
+                        logger.warning(f"Pre-bleach intensity not normalized to ~1.0 (got {pre_bleach_mean:.3f}) for {file_name}")
+                        # Re-normalize if necessary
+                        if pre_bleach_mean > 0:
+                            intensity = intensity / pre_bleach_mean
+                
                 fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
                 best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
-                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                
+                if best_fit:
+                    params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                    # Validate the analysis results
+                    params = validate_analysis_results(params)
+                else:
+                    params = None
+                    logger.error(f"No valid fit found for {file_name}")
+                
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params
@@ -506,6 +588,7 @@ class FRAPDataManager:
                 return True
         except Exception as e: 
             st.error(f"Error loading {file_name}: {e}")
+            logger.error(f"Detailed error for {file_name}: {e}", exc_info=True)
             return False
     
     def create_group(self,name):
@@ -879,29 +962,77 @@ with tab1:
                 best_fit,params=file_data['best_fit'],file_data['features']
                 t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
                 
-                # Enhanced metrics display
+                # Enhanced metrics display with validation warnings
                 st.markdown("### Kinetic Analysis Results")
+                
+                # Check for problematic results and show warnings
+                mobile_frac = params.get('mobile_fraction', 0)
+                if mobile_frac > 100:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) exceeds 100% - this indicates a problem with the analysis")
+                elif mobile_frac < 0:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) is negative - this indicates a problem with the analysis")
+                
+                # Check data quality
+                r2 = best_fit.get('r2', 0)
+                if r2 < 0.8:
+                    st.warning(f"⚠️ Warning: Low R² ({r2:.3f}) indicates poor curve fit quality")
+                
                 col1,col2,col3,col4=st.columns(4)
                 with col1:
-                    st.metric("Mobile Fraction",f"{params.get('mobile_fraction',0):.1f}%")
+                    # Ensure mobile fraction is displayed correctly
+                    display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
+                    st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
                 with col2:
-                    st.metric("Half-time",f"{params.get('half_time_fast',params.get('half_time',0)):.1f} s")
+                    half_time = params.get('half_time_fast',params.get('half_time',0))
+                    st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
                 with col3:
-                    st.metric("R²",f"{best_fit.get('r2',0):.3f}")
+                    st.metric("R²",f"{r2:.3f}")
                 with col4:
                     st.metric("Model",best_fit['model'].title())
                 
                 # Additional goodness-of-fit metrics
                 col5,col6,col7,col8=st.columns(4)
                 with col5:
-                    st.metric("AIC",f"{best_fit.get('aic',0):.1f}")
+                    aic_val = best_fit.get('aic', np.nan)
+                    st.metric("AIC",f"{aic_val:.1f}" if np.isfinite(aic_val) else "N/A")
                 with col6:
-                    st.metric("Adj. R²",f"{best_fit.get('adj_r2',0):.3f}")
+                    adj_r2_val = best_fit.get('adj_r2', np.nan)
+                    st.metric("Adj. R²",f"{adj_r2_val:.3f}" if np.isfinite(adj_r2_val) else "N/A")
                 with col7:
-                    st.metric("BIC",f"{best_fit.get('bic',0):.1f}")
+                    bic_val = best_fit.get('bic', np.nan)
+                    st.metric("BIC",f"{bic_val:.1f}" if np.isfinite(bic_val) else "N/A")
                 with col8:
-                    st.metric("Red. χ²",f"{best_fit.get('red_chi2',0):.3f}")
+                    red_chi2_val = best_fit.get('red_chi2', np.nan)
+                    st.metric("Red. χ²",f"{red_chi2_val:.3f}" if np.isfinite(red_chi2_val) else "N/A")
                 
+                # Add data quality assessment
+                st.markdown("### Data Quality Assessment")
+                
+                # Check normalization
+                bleach_idx = np.argmin(file_data['intensity'])
+                if bleach_idx > 0:
+                    pre_bleach_mean = np.mean(file_data['intensity'][:bleach_idx])
+                    post_bleach_min = np.min(file_data['intensity'][bleach_idx:])
+                    
+                    col_qual1, col_qual2, col_qual3 = st.columns(3)
+                    with col_qual1:
+                        st.metric("Pre-bleach Level", f"{pre_bleach_mean:.3f}")
+                        if not np.isclose(pre_bleach_mean, 1.0, rtol=0.1):
+                            st.warning("Pre-bleach should be ~1.0")
+                    
+                    with col_qual2:
+                        st.metric("Bleach Depth", f"{post_bleach_min:.3f}")
+                        if post_bleach_min < 0:
+                            st.error("Negative intensities detected")
+                    
+                    with col_qual3:
+                        bleach_efficiency = (pre_bleach_mean - post_bleach_min) / pre_bleach_mean * 100
+                        st.metric("Bleach Efficiency", f"{bleach_efficiency:.1f}%")
+                        if bleach_efficiency < 10:
+                            st.warning("Low bleach efficiency (<10%)")
+                        elif bleach_efficiency > 90:
+                            st.warning("Very high bleach efficiency (>90%)")
+
                 # Main recovery curve plot with proper FRAP visualization
                 fig = go.Figure()
                 
@@ -1122,6 +1253,12 @@ with tab1:
                     gfp_mw=27.0  # kDa
                     apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
                     
+                    # Validate calculated values
+                    if diffusion_coeff > 100:
+                        st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+                    if apparent_mw > 10000:
+                        st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
+                    
                     col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
                     with col_bio1:
                         st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
@@ -1130,7 +1267,8 @@ with tab1:
                     with col_bio3:
                         st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
                     with col_bio4:
-                        st.metric("Immobile (%)",f"{params.get('immobile_fraction',0):.1f}")
+                        immobile_frac = params.get('immobile_fraction', 100 - display_mobile)
+                        st.metric("Immobile (%)",f"{immobile_frac:.1f}")
                 
                 else:
                     # More informative error message with diagnostic information
@@ -1144,7 +1282,7 @@ with tab1:
                     elif primary_rate <= 1e-8:
                         debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
                     
-                    st.warning(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
+                    st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
                     
                     # Display available parameters for debugging
                     with st.expander("🔍 Debug Information"):
@@ -1157,8 +1295,46 @@ with tab1:
                             st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
                             st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
                             st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
+                            
+                        # Show raw fitting parameters for debugging
+                        if 'params' in best_fit:
+                            st.write("**Raw fitting parameters:**")
+                            model = best_fit.get('model', 'unknown')
+                            params_raw = best_fit['params']
+                            if model == 'single' and len(params_raw) >= 3:
+                                A, k, C = params_raw[:3]
+                                st.write(f"- Amplitude (A): {A}")
+                                st.write(f"- Rate constant (k): {k}")
+                                st.write(f"- Offset (C): {C}")
+                                st.write(f"- Mobile fraction calc: {A}/{1.0-C} = {A/(1.0-C) if C < 1.0 else 'undefined'}")
+                            elif model == 'double' and len(params_raw) >= 5:
+                                A1, k1, A2, k2, C = params_raw[:5]
+                                st.write(f"- A1: {A1}, k1: {k1}")
+                                st.write(f"- A2: {A2}, k2: {k2}")
+                                st.write(f"- Offset (C): {C}")
+                                total_A = A1 + A2
+                                st.write(f"- Total amplitude: {total_A}")
+                                st.write(f"- Mobile fraction calc: {total_A}/{1.0-C} = {total_A/(1.0-C) if C < 1.0 else 'undefined'}")
+                            elif model == 'triple' and len(params_raw) >= 6:
+                                A1, k1, A2, k2, A3, k3, C = params_raw[:6]
+                                st.write(f"- A1: {A1}, k1: {k1}")
+                                st.write(f"- A2: {A2}, k2: {k2}")
+                                st.write(f"- A3: {A3}, k3: {k3}")
+                                st.write(f"- Offset (C): {C}")
+                                total_A = A1 + A2 + A3
+                                st.write(f"- Total amplitude: {total_A}")
+                                st.write(f"- Mobile fraction calc: {total_A}/{1.0-C} = {total_A/(1.0-C) if C < 1.0 else 'undefined'}")
             else: 
                 st.error("Could not determine a best fit for this file.")
+                
+                # Show debugging information for failed fits
+                if file_data.get('fits'):
+                    st.markdown("### Available Fits (Debug)")
+                    for i, fit in enumerate(file_data['fits']):
+                        st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
+                        st.write(f"- R²: {fit.get('r2', 'N/A')}")
+                        st.write(f"- AIC: {fit.get('aic', 'N/A')}")
+                        st.write(f"- Parameters: {fit.get('params', 'N/A')}")
     else: 
         st.info("Upload files using the sidebar to begin.")
 
@@ -1437,15 +1613,6 @@ with tab2:
                         # Summary statistics
                         included_data = detailed_df[detailed_df['Status'] == 'Included']
                         st.markdown("##### Summary Statistics (Included Files Only)")
-                        summary_cols = ['Mobile (%)', 'Primary Rate (k)', 'App. D (μm²/s)', 'App. MW (kDa)']
-                        summary_stats = included_data[summary_cols].describe()
-                        st.dataframe(summary_stats.round(3))
-                
-                st.markdown("---")
-                st.markdown("### Step 4: Generate Comprehensive Report")
-                
-                col_report1, col_report2 = st.columns([3, 1])
-                
                 with col_report1:
                     st.markdown("Generate a detailed analysis report including:")
                     st.markdown("- Executive summary with outlier analysis")
@@ -1457,7 +1624,7 @@ with tab2:
                     if st.button("📄 Generate Report", type="primary"):
                         try:
                             # Generate comprehensive report
-                            report_content = generate_markdown_report(
+                                                       report_content = generate_markdown_report(
                                 group_name=selected_group_name,
                                 settings=st.session_state.settings,
                                 summary_df=summary_df,
