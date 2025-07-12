@@ -1158,10 +1158,10 @@ with tab1:
                     
                     # Calculate and plot individual components
                     model_func = best_fit['func']
-                    raw_params = best_fit['params']
+                    params = best_fit['params']
                     
                     if best_fit['model'] == 'double':
-                        A1, k1, A2, k2, C = raw_params
+                        A1, k1, A2, k2, C = params
                         comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
                         comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
                         
@@ -1175,7 +1175,7 @@ with tab1:
                         ))
                         
                     elif best_fit['model'] == 'triple':
-                        A1, k1, A2, k2, A3, k3, C = raw_params
+                        A1, k1, A2, k2, A3, k3, C = params
                         comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
                         comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
                         comp3 = A3 * (1 - np.exp(-k3 * t_fit)) + C
