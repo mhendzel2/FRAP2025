@@ -959,14 +959,14 @@ with tab1:
             file_data=dm.files[selected_file_path]
             st.subheader(f"Results for: {file_data['name']}")
             if file_data['best_fit']:
-                best_fit,params=file_data['best_fit'],file_data['features']
+                best_fit,features=file_data['best_fit'],file_data['features']
                 t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
                 
                 # Enhanced metrics display with validation warnings
                 st.markdown("### Kinetic Analysis Results")
                 
                 # Check for problematic results and show warnings
-                mobile_frac = params.get('mobile_fraction', 0)
+                mobile_frac = features.get('mobile_fraction', 0)
                 if mobile_frac > 100:
                     st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) exceeds 100% - this indicates a problem with the analysis")
                 elif mobile_frac < 0:
@@ -983,7 +983,7 @@ with tab1:
                     display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
                     st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
                 with col2:
-                    half_time = params.get('half_time_fast',params.get('half_time',0))
+                    half_time = features.get('half_time_fast',features.get('half_time',0))
                     st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
                 with col3:
                     st.metric("R²",f"{r2:.3f}")
@@ -1234,7 +1234,8 @@ with tab1:
                 st.markdown("### Biophysical Interpretation")
                 
                 # Calculate diffusion coefficient and molecular weight estimates
-                primary_rate=params.get('rate_constant_fast',params.get('rate_constant',0))
+                features = file_data.get('features', {})
+                primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
                 
                 # More robust validation of rate constant
                 if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
@@ -1267,7 +1268,7 @@ with tab1:
                     with col_bio3:
                         st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
                     with col_bio4:
-                        immobile_frac = params.get('immobile_fraction', 100 - display_mobile)
+                        immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
                         st.metric("Immobile (%)",f"{immobile_frac:.1f}")
                 
                 else:
