@@ -624,27 +624,61 @@ class FRAPDataManager:
         success_count = 0
         error_count = 0
         error_details = []
+        groups_created = []
         
         try:
             # Create a temporary directory to extract the files
             with tempfile.TemporaryDirectory() as temp_dir:
-                with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
-                    z.extractall(temp_dir)
+                try:
+                    with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
+                        z.extractall(temp_dir)
+                        logger.info(f"Extracted ZIP archive to: {temp_dir}")
+                        
+                        # List all extracted files for debugging
+                        all_extracted_files = []
+                        for root, dirs, files in os.walk(temp_dir):
+                            for file in files:
+                                all_extracted_files.append(os.path.relpath(os.path.join(root, file), temp_dir))
+                        logger.info(f"Total extracted files: {len(all_extracted_files)}")
+                        logger.info(f"Extracted files: {all_extracted_files[:10]}...")  # Show first 10
+                        
+                except zipfile.BadZipFile:
+                    logger.error("Invalid ZIP file format")
+                    if hasattr(st, 'error'):
+                        st.error("Invalid ZIP file format. Please check that the uploaded file is a valid ZIP archive.")
+                    return False
+                except Exception as e:
+                    logger.error(f"Error extracting ZIP file: {e}")
+                    if hasattr(st, 'error'):
+                        st.error(f"Error extracting ZIP file: {e}")
+                    return False
 
                 # Walk through the extracted directory to find subfolders (groups)
-                for root, dirs, _ in os.walk(temp_dir):
+                root_files = []
+                for root, dirs, files in os.walk(temp_dir):
                     # We are interested in the directories at the first level
                     if root == temp_dir:
+                        logger.info(f"Found {len(dirs)} directories in ZIP: {dirs}")
+                        logger.info(f"Found {len(files)} files in ZIP root: {files}")
+                        root_files = files
+                        
+                        # Process subfolders as groups
                         for group_name in dirs:
                             if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                                logger.info(f"Skipping system folder: {group_name}")
                                 continue
                             
+                            logger.info(f"Processing group: {group_name}")
                             self.create_group(group_name)
+                            groups_created.append(group_name)
                             group_path = os.path.join(root, group_name)
                             group_success_count = 0
                             
                             # Now find the files in this group's subfolder
-                            for file_in_group in os.listdir(group_path):
+                            group_files = os.listdir(group_path)
+                            logger.info(f"Found {len(group_files)} files in group {group_name}: {group_files}")
+                            
+                            for file_in_group in group_files:
                                 file_path_in_temp = os.path.join(group_path, file_in_group)
                                 
                                 # Ignore subdirectories and hidden files
@@ -669,13 +703,21 @@ class FRAPDataManager:
                                         
                                         if tp not in self.files:
                                             # Copy the file to the data directory to be loaded
+                                            os.makedirs(os.path.dirname(tp), exist_ok=True)
                                             shutil.copy(file_path_in_temp, tp)
                                             
                                             # Attempt to load the file
                                             if self.load_file(tp, file_name):
-                                                self.add_file_to_group(group_name, tp)
-                                                success_count += 1
-                                                group_success_count += 1
+                                                add_result = self.add_file_to_group(group_name, tp)
+                                                if add_result:
+                                                    logger.info(f"Successfully added {file_name} to group {group_name}")
+                                                    success_count += 1
+                                                    group_success_count += 1
+                                                else:
+                                                    logger.error(f"Failed to add {file_name} to group {group_name}")
+                                                    error_count += 1
+                                                    error_msg = f"Failed to add file to group: {file_in_group} in group {group_name}"
+                                                    error_details.append(error_msg)
                                             else:
                                                 error_count += 1
                                                 error_msg = f"Failed to load file: {file_in_group} in group {group_name}"
@@ -686,8 +728,15 @@ class FRAPDataManager:
                                                     os.remove(tp)
                                         else:
                                             # File already exists, just add to group
-                                            self.add_file_to_group(group_name, tp)
-                                            group_success_count += 1
+                                            add_result = self.add_file_to_group(group_name, tp)
+                                            if add_result:
+                                                logger.info(f"File {file_name} already exists, added to group {group_name}")
+                                                group_success_count += 1
+                                            else:
+                                                logger.error(f"Failed to add existing file {file_name} to group {group_name}")
+                                                error_count += 1
+                                                error_msg = f"Failed to add existing file to group: {file_in_group} in group {group_name}"
+                                                error_details.append(error_msg)
                                             
                                     except Exception as e:
                                         error_count += 1
@@ -698,21 +747,109 @@ class FRAPDataManager:
                             
                             # Update group analysis only if we have successfully loaded files
                             if group_success_count > 0:
+                                logger.info(f"Group {group_name} has {group_success_count} files, updating analysis")
                                 self.update_group_analysis(group_name)
                             else:
                                 # Remove empty group
                                 logger.warning(f"Removing empty group: {group_name}")
                                 if group_name in self.groups:
                                     del self.groups[group_name]
+                                    groups_created.remove(group_name)
+                
+                # Process files in the root directory if no subfolders were found or if there are files in root
+                if not groups_created and root_files:
+                    logger.info(f"No subfolders found, processing {len(root_files)} files in root as default group")
+                    default_group_name = "Default Group"
+                    self.create_group(default_group_name)
+                    groups_created.append(default_group_name)
+                    group_success_count = 0
+                    
+                    for file_in_root in root_files:
+                        file_path_in_temp = os.path.join(temp_dir, file_in_root)
+                        
+                        # Ignore subdirectories and hidden files
+                        if os.path.isfile(file_path_in_temp) and not file_in_root.startswith('.'):
+                            try:
+                                # Check if file has valid extension
+                                file_ext = os.path.splitext(file_in_root)[1].lower()
+                                if file_ext not in ['.xls', '.xlsx', '.csv']:
+                                    logger.warning(f"Skipping unsupported file type: {file_in_root}")
+                                    continue
+                                
+                                with open(file_path_in_temp, 'rb') as f_content:
+                                    file_content = f_content.read()
+                                
+                                # Skip empty files
+                                if len(file_content) == 0:
+                                    logger.warning(f"Skipping empty file: {file_in_root}")
+                                    continue
+                                
+                                file_name = os.path.basename(file_in_root)
+                                tp = f"data/{file_name}_{hash(file_content)}"
+                                
+                                if tp not in self.files:
+                                    # Copy the file to the data directory to be loaded
+                                    os.makedirs(os.path.dirname(tp), exist_ok=True)
+                                    shutil.copy(file_path_in_temp, tp)
+                                    
+                                    # Attempt to load the file
+                                    if self.load_file(tp, file_name):
+                                        add_result = self.add_file_to_group(default_group_name, tp)
+                                        if add_result:
+                                            logger.info(f"Successfully added {file_name} to default group")
+                                            success_count += 1
+                                            group_success_count += 1
+                                        else:
+                                            logger.error(f"Failed to add {file_name} to default group")
+                                            error_count += 1
+                                            error_msg = f"Failed to add file to default group: {file_in_root}"
+                                            error_details.append(error_msg)
+                                    else:
+                                        error_count += 1
+                                        error_msg = f"Failed to load file: {file_in_root}"
+                                        error_details.append(error_msg)
+                                        logger.error(error_msg)
+                                        # Clean up failed file
+                                        if os.path.exists(tp):
+                                            os.remove(tp)
+                                else:
+                                    # File already exists, just add to group
+                                    add_result = self.add_file_to_group(default_group_name, tp)
+                                    if add_result:
+                                        logger.info(f"File {file_name} already exists, added to default group")
+                                        group_success_count += 1
+                                    else:
+                                        logger.error(f"Failed to add existing file {file_name} to default group")
+                                        error_count += 1
+                                        error_msg = f"Failed to add existing file to default group: {file_in_root}"
+                                        error_details.append(error_msg)
+                                        
+                            except Exception as e:
+                                error_count += 1
+                                error_msg = f"Error processing file {file_in_root}: {str(e)}"
+                                error_details.append(error_msg)
+                                logger.error(error_msg)
+                                continue
+                    
+                    # Update group analysis for default group
+                    if group_success_count > 0:
+                        logger.info(f"Default group has {group_success_count} files, updating analysis")
+                        self.update_group_analysis(default_group_name)
+                    else:
+                        # Remove empty default group
+                        logger.warning(f"Removing empty default group")
+                        if default_group_name in self.groups:
+                            del self.groups[default_group_name]
+                            groups_created.remove(default_group_name)
             
             # Report results
             if success_count > 0:
-                logger.info(f"Successfully processed {success_count} files from ZIP archive")
+                logger.info(f"Successfully processed {success_count} files from ZIP archive into {len(groups_created)} groups")
                 if error_count > 0:
                     logger.warning(f"{error_count} files could not be processed and were skipped")
                     # Display error details in Streamlit
                     if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files. "
+                        st.warning(f"Successfully loaded {success_count} files into {len(groups_created)} groups. "
                                  f"{error_count} files were skipped due to errors.")
                         if error_details:
                             with st.expander("⚠️ View Skipped Files Details"):
@@ -720,9 +857,14 @@ class FRAPDataManager:
                                     st.text(f"• {error}")
                                 if len(error_details) > 10:
                                     st.text(f"... and {len(error_details) - 10} more errors")
+                else:
+                    if hasattr(st, 'success'):
+                        st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups: {', '.join(groups_created)}")
                 return True
             else:
                 logger.error("No files could be processed from ZIP archive")
+                if hasattr(st, 'error'):
+                    st.error("No files could be processed from ZIP archive. Please check the ZIP file structure.")
                 return False
                 
         except Exception as e:
@@ -835,19 +977,61 @@ with st.sidebar:
     
     # --- New ZIP Uploader for Groups ---
     st.subheader("Group Upload (from ZIP with subfolders)")
-    st.markdown("Drag and drop a ZIP file containing subfolders. Each subfolder will be treated as a new group, and the files within will be added to it.")
+    st.markdown("""
+    **Expected ZIP Structure:**
+    ```
+    your_archive.zip
+    ├── Group1/
+    │   ├── file1.xls
+    │   └── file2.xls
+    ├── Group2/
+    │   ├── file3.xlsx
+    │   └── file4.csv
+    └── Group3/
+        └── file5.xls
+    ```
+    Each subfolder will become a group, and files within will be added to that group.
+    """)
     uploaded_zip = st.file_uploader("Upload a .zip file with group subfolders", type=['zip'], key="zip_uploader")
 
     if uploaded_zip:
         if st.button(f"Create Groups from '{uploaded_zip.name}'"):
             with st.spinner(f"Processing groups from '{uploaded_zip.name}'..."):
                 if 'data_manager' in st.session_state:
+                    # Clear any existing progress messages
                     success = dm.load_groups_from_zip_archive(uploaded_zip)
                     if success:
-                        st.success(f"Successfully created groups from the ZIP archive.")
+                        # Show successful groups
+                        if dm.groups:
+                            st.success(f"Successfully created {len(dm.groups)} groups from ZIP archive:")
+                            for group_name, group_data in dm.groups.items():
+                                file_count = len(group_data.get('files', []))
+                                st.write(f"📁 **{group_name}**: {file_count} files")
+                            
+                            # Show summary of what was processed
+                            total_files = sum(len(group_data.get('files', [])) for group_data in dm.groups.values())
+                            st.info(f"Total files processed: {total_files}")
+                            
+                            # Show detailed breakdown
+                            with st.expander("📋 View Detailed Breakdown"):
+                                for group_name, group_data in dm.groups.items():
+                                    st.write(f"**{group_name}**:")
+                                    files_in_group = group_data.get('files', [])
+                                    for file_path in files_in_group:
+                                        if file_path in dm.files:
+                                            file_name = dm.files[file_path]['name']
+                                            st.write(f"  • {file_name}")
+                                        else:
+                                            st.write(f"  • {file_path} (file not found)")
+                        else:
+                            st.warning("ZIP archive was processed but no groups were created.")
+                            st.info("This might happen if:")
+                            st.write("- The ZIP file contains no subfolders")
+                            st.write("- All files were filtered out due to unsupported formats")
+                            st.write("- Files could not be loaded due to format issues")
                         st.rerun()
                     else:
-                        st.error("Failed to process ZIP archive with subfolders.")
+                        st.error("Failed to process ZIP archive with subfolders. Please check the ZIP file structure and file formats.")
 
     # --- Existing Single File Uploader ---
     st.subheader("Single File Upload")
@@ -1614,6 +1798,12 @@ with tab2:
                         # Summary statistics
                         included_data = detailed_df[detailed_df['Status'] == 'Included']
                         st.markdown("##### Summary Statistics (Included Files Only)")
+                        
+                        # Add report generation section
+                        st.markdown("---")
+                        st.markdown("### Step 4: Generate Analysis Report")
+                        col_report1, col_report2 = st.columns(2)
+                        
                 with col_report1:
                     st.markdown("Generate a detailed analysis report including:")
                     st.markdown("- Executive summary with outlier analysis")
