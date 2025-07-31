@@ -627,186 +627,49 @@ class FRAPDataManager:
         groups_created = []
         
         try:
-            # Create a temporary directory to extract the files
             with tempfile.TemporaryDirectory() as temp_dir:
                 try:
                     with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
                         z.extractall(temp_dir)
                         logger.info(f"Extracted ZIP archive to: {temp_dir}")
-                        
-                        # List all extracted files for debugging
-                        all_extracted_files = []
-                        for root, dirs, files in os.walk(temp_dir):
-                            for file in files:
-                                all_extracted_files.append(os.path.relpath(os.path.join(root, file), temp_dir))
-                        logger.info(f"Total extracted files: {len(all_extracted_files)}")
-                        logger.info(f"Extracted files: {all_extracted_files[:10]}...")  # Show first 10
-                        
                 except zipfile.BadZipFile:
                     logger.error("Invalid ZIP file format")
-                    if hasattr(st, 'error'):
-                        st.error("Invalid ZIP file format. Please check that the uploaded file is a valid ZIP archive.")
+                    st.error("Invalid ZIP file format. Please check that the uploaded file is a valid ZIP archive.")
                     return False
                 except Exception as e:
                     logger.error(f"Error extracting ZIP file: {e}")
-                    if hasattr(st, 'error'):
-                        st.error(f"Error extracting ZIP file: {e}")
+                    st.error(f"Error extracting ZIP file: {e}")
                     return False
 
                 # Walk through the extracted directory to find subfolders (groups)
-                root_files = []
                 for root, dirs, files in os.walk(temp_dir):
-                    # We are interested in the directories at the first level
-                    if root == temp_dir:
-                        logger.info(f"Found {len(dirs)} directories in ZIP: {dirs}")
-                        logger.info(f"Found {len(files)} files in ZIP root: {files}")
-                        root_files = files
+                    # Process subfolders as groups
+                    for group_name in dirs:
+                        if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                            continue
                         
-                        # Process subfolders as groups
-                        for group_name in dirs:
-                            if group_name.startswith('__'): # Ignore system folders like __MACOSX
-                                logger.info(f"Skipping system folder: {group_name}")
-                                continue
-                            
-                            logger.info(f"Processing group: {group_name}")
-                            self.create_group(group_name)
-                            groups_created.append(group_name)
-                            group_path = os.path.join(root, group_name)
-                            group_success_count = 0
-                            
-                            # Now find the files in this group's subfolder
-                            group_files = os.listdir(group_path)
-                            logger.info(f"Found {len(group_files)} files in group {group_name}: {group_files}")
-                            
-                            for file_in_group in group_files:
-                                file_path_in_temp = os.path.join(group_path, file_in_group)
-                                
-                                # Ignore subdirectories and hidden files
-                                if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
-                                    try:
-                                        file_ext = os.path.splitext(file_in_group)[1].lower()
-                                        file_name = os.path.basename(file_in_group)
-
-                                        if file_ext not in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']:
-                                            logger.warning(f"Skipping unsupported file type: {file_name}")
-                                            continue
-
-                                        with open(file_path_in_temp, 'rb') as f:
-                                            file_content = f.read()
-                                        if not file_content:
-                                            logger.warning(f"Skipping empty file: {file_name}")
-                                            continue
-                                        
-                                        content_hash = hash(file_content)
-                                        
-                                        # Determine the path for the data file (either original or processed CSV)
-                                        if file_ext in ['.tif', '.tiff']:
-                                            base_name = os.path.splitext(file_name)[0]
-                                            tp = f"data/{base_name}_{content_hash}.csv"
-                                        else:
-                                            tp = f"data/{file_name}_{content_hash}"
-
-                                        # Core logic: if file doesn't exist, create and load it. Then add to group.
-                                        if tp not in self.files:
-                                            os.makedirs(os.path.dirname(tp), exist_ok=True)
-                                            
-                                            # For images, process them into a CSV. For others, just copy.
-                                            if file_ext in ['.tif', '.tiff']:
-                                                logger.info(f"Processing image file: {file_name}")
-                                                analyzer = FRAPImageAnalyzer()
-                                                if not analyzer.load_image_stack(file_path_in_temp):
-                                                    raise ValueError("Failed to load image stack.")
-                                                
-                                                settings = st.session_state.settings
-                                                analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
-                                                analyzer.time_interval = settings.get('default_time_interval', 1.0)
-
-                                                bleach_frame, bleach_coords = analyzer.detect_bleach_event()
-                                                if bleach_frame is None or bleach_coords is None:
-                                                    raise ValueError("Failed to detect bleach event automatically.")
-                                                
-                                                bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
-                                                analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
-                                                intensity_df = analyzer.extract_intensity_profiles()
-                                                intensity_df = intensity_df.rename(columns={'Time': 'time'})
-                                                intensity_df.to_csv(tp, index=False)
-                                            else:
-                                                shutil.copy(file_path_in_temp, tp)
-
-                                            # Now, load the file (either the copied original or the new CSV)
-                                            if self.load_file(tp, file_name):
-                                                add_result = self.add_file_to_group(group_name, tp)
-                                                if add_result:
-                                                    logger.info(f"Successfully added {file_name} to group {group_name}")
-                                                    success_count += 1
-                                                    group_success_count += 1
-                                                else:
-                                                    # This path indicates a logic error - file loaded but couldn't be added
-                                                    raise ValueError(f"Failed to add newly loaded file to group.")
-                                            else:
-                                                # load_file failed, raise to trigger cleanup
-                                                raise ValueError(f"Failed to load data from file.")
-                                        else:
-                                            # File already exists, just add to group
-                                            add_result = self.add_file_to_group(group_name, tp)
-                                            if add_result:
-                                                logger.info(f"File {file_name} already exists, added to group {group_name}")
-                                                group_success_count += 1
-                                            else:
-                                                logger.error(f"Failed to add existing file {file_name} to group {group_name}")
-                                                error_count += 1
-                                                error_details.append(f"Failed to add existing file to group: {file_in_group} in group {group_name}")
-                                            
-                                    except Exception as e:
-                                        error_count += 1
-                                        error_msg = f"Error processing file {file_in_group} in group {group_name}: {str(e)}"
-                                        error_details.append(error_msg)
-                                        logger.error(error_msg, exc_info=True)
-                                        # Clean up failed file if it was created
-                                        if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
-                                            os.remove(tp)
-                                        continue
-                            
-                            # Update group analysis only if we have successfully loaded files
-                            if group_success_count > 0:
-                                logger.info(f"Group {group_name} has {group_success_count} files, updating analysis")
-                                self.update_group_analysis(group_name)
-                            else:
-                                # Remove empty group
-                                logger.warning(f"Removing empty group: {group_name}")
-                                if group_name in self.groups:
-                                    del self.groups[group_name]
-                                    groups_created.remove(group_name)
-                
-                # Process files in the root directory if no subfolders were found or if there are files in root
-                if not groups_created and root_files:
-                    logger.info(f"No subfolders found, processing {len(root_files)} files in root as default group")
-                    default_group_name = "Default Group"
-                    self.create_group(default_group_name)
-                    groups_created.append(default_group_name)
-                    group_success_count = 0
-                    
-                    for file_in_root in root_files:
-                        file_path_in_temp = os.path.join(temp_dir, file_in_root)
+                        self.create_group(group_name)
+                        groups_created.append(group_name)
+                        group_path = os.path.join(root, group_name)
                         
-                        # Ignore subdirectories and hidden files
-                        if os.path.isfile(file_path_in_temp) and not file_in_root.startswith('.'):
-                            try:
-                                    file_ext = os.path.splitext(file_in_root)[1].lower()
-                                    file_name = os.path.basename(file_in_root)
+                        for file_in_group in os.listdir(group_path):
+                            file_path_in_temp = os.path.join(group_path, file_in_group)
+                            
+                            if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
+                                try:
+                                    file_ext = os.path.splitext(file_in_group)[1].lower()
+                                    file_name = os.path.basename(file_in_group)
 
                                     if file_ext not in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']:
-                                        logger.warning(f"Skipping unsupported file type: {file_name}")
                                         continue
 
                                     with open(file_path_in_temp, 'rb') as f:
                                         file_content = f.read()
                                     if not file_content:
-                                        logger.warning(f"Skipping empty file: {file_name}")
                                         continue
                                     
                                     content_hash = hash(file_content)
-
+                                    
                                     if file_ext in ['.tif', '.tiff']:
                                         base_name = os.path.splitext(file_name)[0]
                                         tp = f"data/{base_name}_{content_hash}.csv"
@@ -817,11 +680,10 @@ class FRAPDataManager:
                                         os.makedirs(os.path.dirname(tp), exist_ok=True)
                                         
                                         if file_ext in ['.tif', '.tiff']:
-                                            logger.info(f"Processing image file from root: {file_name}")
                                             analyzer = FRAPImageAnalyzer()
                                             if not analyzer.load_image_stack(file_path_in_temp):
                                                 raise ValueError("Failed to load image stack.")
-
+                                            
                                             settings = st.session_state.settings
                                             analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
                                             analyzer.time_interval = settings.get('default_time_interval', 1.0)
@@ -829,7 +691,7 @@ class FRAPDataManager:
                                             bleach_frame, bleach_coords = analyzer.detect_bleach_event()
                                             if bleach_frame is None or bleach_coords is None:
                                                 raise ValueError("Failed to detect bleach event automatically.")
-
+                                            
                                             bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
                                             analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
                                             intensity_df = analyzer.extract_intensity_profiles()
@@ -839,73 +701,38 @@ class FRAPDataManager:
                                             shutil.copy(file_path_in_temp, tp)
 
                                         if self.load_file(tp, file_name):
-                                            add_result = self.add_file_to_group(default_group_name, tp)
-                                            if add_result:
-                                                logger.info(f"Successfully added {file_name} to default group")
-                                                success_count += 1
-                                                group_success_count += 1
-                                            else:
-                                                raise ValueError("Failed to add newly loaded file to default group.")
+                                            self.add_file_to_group(group_name, tp)
+                                            success_count += 1
                                         else:
                                             raise ValueError("Failed to load data from file.")
                                     else:
-                                        add_result = self.add_file_to_group(default_group_name, tp)
-                                        if add_result:
-                                            logger.info(f"File {file_name} already exists, added to default group")
-                                            group_success_count += 1
-                                        else:
-                                            logger.error(f"Failed to add existing file {file_name} to default group")
-                                            error_count += 1
-                                            error_details.append(f"Failed to add existing file to default group: {file_in_root}")
-                                            
+                                        self.add_file_to_group(group_name, tp)
+                                        
                                 except Exception as e:
                                     error_count += 1
-                                    error_msg = f"Error processing file {file_in_root}: {str(e)}"
-                                    error_details.append(error_msg)
-                                    logger.error(error_msg, exc_info=True)
+                                    error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
+                                    logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
                                     if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
                                         os.remove(tp)
-                                    continue
-                    
-                    # Update group analysis for default group
-                    if group_success_count > 0:
-                        logger.info(f"Default group has {group_success_count} files, updating analysis")
-                        self.update_group_analysis(default_group_name)
-                    else:
-                        # Remove empty default group
-                        logger.warning(f"Removing empty default group")
-                        if default_group_name in self.groups:
-                            del self.groups[default_group_name]
-                            groups_created.remove(default_group_name)
-            
-            # Report results
-            if success_count > 0:
-                logger.info(f"Successfully processed {success_count} files from ZIP archive into {len(groups_created)} groups")
-                if error_count > 0:
-                    logger.warning(f"{error_count} files could not be processed and were skipped")
-                    # Display error details in Streamlit
-                    if hasattr(st, 'warning'):
-                        st.warning(f"Successfully loaded {success_count} files into {len(groups_created)} groups. "
-                                 f"{error_count} files were skipped due to errors.")
-                        if error_details:
-                            with st.expander("⚠️ View Skipped Files Details"):
-                                for error in error_details[:10]:  # Show first 10 errors
-                                    st.text(f"• {error}")
-                                if len(error_details) > 10:
-                                    st.text(f"... and {len(error_details) - 10} more errors")
-                else:
-                    if hasattr(st, 'success'):
-                        st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups: {', '.join(groups_created)}")
-                return True
-            else:
-                logger.error("No files could be processed from ZIP archive")
-                if hasattr(st, 'error'):
-                    st.error("No files could be processed from ZIP archive. Please check the ZIP file structure.")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+
+        if success_count > 0:
+            for group_name in groups_created:
+                self.update_group_analysis(group_name)
+            st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups.")
+            if error_count > 0:
+                st.warning(f"{error_count} files were skipped due to errors.")
+                with st.expander("View Error Details"):
+                    for error in error_details:
+                        st.text(error)
+            return True
+        else:
+            st.error("No files could be processed from the ZIP archive.")
             return False
+            
+    except Exception as e:
+        logger.error(f"Error processing ZIP archive with subfolders: {e}")
+        st.error(f"An unexpected error occurred: {e}")
+        return False
 
     def load_zip_archive_and_create_group(self, zip_file, group_name):
         """
