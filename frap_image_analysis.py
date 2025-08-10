@@ -26,6 +26,7 @@ class FRAPImageAnalyzer:
     """
     
     def __init__(self):
+        """Initialize state containers for image analysis."""
         self.image_stack = None
         self.metadata = {}
         self.rois = {}
@@ -34,8 +35,8 @@ class FRAPImageAnalyzer:
         self.time_points = None
         self.pixel_size = 1.0  # micrometers per pixel
         self.time_interval = 1.0  # seconds per frame
-    # Dynamic tracking
-    self.tracked_centers: Optional[List[Tuple[int, int]]] = None
+        # Dynamic tracking (list of (x,y) centers per frame when enabled)
+        self.tracked_centers = None
         
     def load_image_stack(self, file_path: str) -> bool:
         """

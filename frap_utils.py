@@ -35,7 +35,7 @@ def get_parameter_description(param_name):
         'rate_constant_2': 'The rate constant of the second (slower) component',
         'amplitude_3': 'The amplitude of the third (slowest) component',
         'rate_constant_3': 'The rate constant of the third (slowest) component',
-        'mobile_fraction': 'The fraction of molecules that are mobile in the bleached area',
+    'mobile_fraction': 'Mobile population (%) = (1 - (ΣA + C))*100; NaN if curve not at plateau',
         'half_time': 'The time required to reach half of the final recovery level'
     }
     

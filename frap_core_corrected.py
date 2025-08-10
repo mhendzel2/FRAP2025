@@ -1393,6 +1393,42 @@ class FRAPAnalysisCore:
         return features_df.loc[list(outlier_indices), 'file_path'].tolist() if outlier_indices else []
 
     @staticmethod
+    def analyze_frap_data(df, intensity_col='normalized', time_col='time'):
+        """Lightweight analysis pipeline returning best fit and feature dict.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Must contain columns for time and normalized intensity or raw intensity.
+        intensity_col : str
+            Column name containing normalized intensities (fallback to 'intensity').
+        time_col : str
+            Column name containing time values.
+
+        Returns
+        -------
+        dict with keys: 'fits', 'best_fit', 'features'
+        """
+        import pandas as pd
+        if df is None or len(df) == 0:
+            return {'fits': [], 'best_fit': None, 'features': None}
+        if time_col not in df.columns:
+            raise ValueError(f"Missing time column '{time_col}'")
+        if intensity_col not in df.columns:
+            # Try to create normalized column from raw intensity / pre-bleach mean
+            raw_col = 'intensity' if 'intensity' in df.columns else None
+            if raw_col is None:
+                raise ValueError("No intensity column available for normalization")
+            pre_bleach_mean = df[raw_col].iloc[:max(2, len(df)//10)].mean()
+            df[intensity_col] = df[raw_col] / pre_bleach_mean if pre_bleach_mean != 0 else df[raw_col]
+        time = df[time_col].to_numpy(dtype=float)
+        intensity = df[intensity_col].to_numpy(dtype=float)
+        fits = FRAPAnalysisCore.fit_all_models(time, intensity)
+        best = FRAPAnalysisCore.select_best_fit(fits) if fits else None
+        features = FRAPAnalysisCore.extract_clustering_features(best) if best else None
+        return {'fits': fits, 'best_fit': best, 'features': features}
+
+    @staticmethod
     def fit_group_models(traces, model='single'):
         """
         Perform global simultaneous fitting across multiple traces with shared kinetic parameters
