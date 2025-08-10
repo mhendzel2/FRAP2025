@@ -355,7 +355,7 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
         # For example, let's generate a basic plot comparing mobile fractions
         if len(groups_to_compare) > 1 and all_group_data:
             try:
-                # Create a mobile fraction comparison plot
+                # Create a mobile population comparison plot
                 plt.figure(figsize=(7, 5))
                 
                 # Use boxplot for comparison
@@ -374,7 +374,7 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
                 
                 if group_data:
                     plt.boxplot(group_data, labels=group_labels)
-                    plt.title('Mobile Fraction Comparison')
+                    plt.title('Mobile Population Comparison')
                     plt.ylabel('Mobile Fraction (%)')
                     plt.grid(True, linestyle='--', alpha=0.7)
                     
@@ -384,7 +384,7 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
                     buf.seek(0)
                     
                     # Add the image to the PDF
-                    elements.append(Paragraph("Mobile Fraction Comparison", styles['Section']))
+                    elements.append(Paragraph("Mobile Population Comparison", styles['Section']))
                     elements.append(Image(buf, width=6*inch, height=4*inch))
                     elements.append(Spacer(1, 0.2*inch))
                     
