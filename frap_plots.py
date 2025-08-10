@@ -786,9 +786,10 @@ class FRAPPlots:
                     # Extract model parameters for annotation
                     if dominant_model == 'single':
                         A, k, C = params
-                        mobile_fraction = A / (1.0 - C) if C < 1.0 else np.nan
+                        endpoint = A + C
+                        mobile_fraction = (1 - endpoint) if np.isfinite(endpoint) else np.nan
                         half_time = np.log(2) / k if k > 0 else np.nan
-                        annotation_text = f"Mobile Fraction: {mobile_fraction*100:.1f}%<br>Half-time: {half_time:.2f}s"
+                        annotation_text = f"Mobile Pop.: {mobile_fraction*100:.1f}%<br>Half-time: {half_time:.2f}s"
                     elif dominant_model == 'double':
                         A1, k1, A2, k2, C = params
                         # Sort components (fast to slow)
@@ -796,10 +797,11 @@ class FRAPPlots:
                             k1, k2 = k2, k1
                             A1, A2 = A2, A1
                         total_amp = A1 + A2
-                        mobile_fraction = total_amp / (1.0 - C) if C < 1.0 else np.nan
+                        endpoint = total_amp + C
+                        mobile_fraction = (1 - endpoint) if np.isfinite(endpoint) else np.nan
                         fast_half_time = np.log(2) / k1 if k1 > 0 else np.nan
                         slow_half_time = np.log(2) / k2 if k2 > 0 else np.nan
-                        annotation_text = f"Mobile Fraction: {mobile_fraction*100:.1f}%<br>Fast t½: {fast_half_time:.2f}s ({A1/total_amp*100:.1f}%)<br>Slow t½: {slow_half_time:.2f}s ({A2/total_amp*100:.1f}%)"
+                        annotation_text = f"Mobile Pop.: {mobile_fraction*100:.1f}%<br>Fast t½: {fast_half_time:.2f}s ({A1/total_amp*100:.1f}%)<br>Slow t½: {slow_half_time:.2f}s ({A2/total_amp*100:.1f}%)"
                     elif dominant_model == 'triple':
                         A1, k1, A2, k2, A3, k3, C = params
                         # Sort components by rate (fast to slow)
@@ -807,10 +809,11 @@ class FRAPPlots:
                         ks = [comp[0] for comp in components]
                         As = [comp[1] for comp in components]
                         total_amp = sum(As)
-                        mobile_fraction = total_amp / (1.0 - C) if C < 1.0 else np.nan
+                        endpoint = total_amp + C
+                        mobile_fraction = (1 - endpoint) if np.isfinite(endpoint) else np.nan
                         half_times = [np.log(2) / k if k > 0 else np.nan for k in ks]
                         props = [A / total_amp * 100 if total_amp > 0 else np.nan for A in As]
-                        annotation_text = f"Mobile Fraction: {mobile_fraction*100:.1f}%<br>Fast t½: {half_times[0]:.2f}s ({props[0]:.1f}%)<br>Medium t½: {half_times[1]:.2f}s ({props[1]:.1f}%)<br>Slow t½: {half_times[2]:.2f}s ({props[2]:.1f}%)"
+                        annotation_text = f"Mobile Pop.: {mobile_fraction*100:.1f}%<br>Fast t½: {half_times[0]:.2f}s ({props[0]:.1f}%)<br>Medium t½: {half_times[1]:.2f}s ({props[1]:.1f}%)<br>Slow t½: {half_times[2]:.2f}s ({props[2]:.1f}%)"
                     
                     # Add annotation with model parameters
                     fig.add_annotation(

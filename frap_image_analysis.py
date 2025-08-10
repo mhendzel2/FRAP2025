@@ -34,6 +34,8 @@ class FRAPImageAnalyzer:
         self.time_points = None
         self.pixel_size = 1.0  # micrometers per pixel
         self.time_interval = 1.0  # seconds per frame
+    # Dynamic tracking
+    self.tracked_centers: Optional[List[Tuple[int, int]]] = None
         
     def load_image_stack(self, file_path: str) -> bool:
         """
@@ -296,17 +298,34 @@ class FRAPImageAnalyzer:
         roi2_intensities = np.zeros(n_frames)
         roi3_intensities = np.zeros(n_frames)
         
-        for t in range(n_frames):
-            frame = self.image_stack[t].astype(float)
-            
-            # Apply background correction if requested
-            if apply_background_correction:
-                frame = self._apply_background_correction(frame)
-            
-            # Extract mean intensities
-            roi1_intensities[t] = np.mean(frame[self.rois['ROI1']['mask']])
-            roi2_intensities[t] = np.mean(frame[self.rois['ROI2']['mask']])
-            roi3_intensities[t] = np.mean(frame[self.rois['ROI3']['mask']])
+        dynamic_tracking = self.tracked_centers is not None and len(self.tracked_centers) == n_frames
+        height, width = self.image_stack.shape[1:]
+        if dynamic_tracking:
+            # Precompute static background mask
+            bg_mask = self.rois['ROI3']['mask']
+            for t in range(n_frames):
+                frame = self.image_stack[t].astype(float)
+                if apply_background_correction:
+                    frame = self._apply_background_correction(frame)
+                cx, cy = self.tracked_centers[t]
+                # Rebuild ROI1/ROI2 masks around tracked center
+                bleach_radius = self.rois['ROI1']['radius']
+                ref_inner = self.rois['ROI2']['inner_radius']
+                ref_outer = self.rois['ROI2']['outer_radius']
+                y_grid, x_grid = np.ogrid[:height, :width]
+                roi1_mask = (x_grid - cx)**2 + (y_grid - cy)**2 <= bleach_radius**2
+                annulus_mask = ((x_grid - cx)**2 + (y_grid - cy)**2 >= ref_inner**2) & ((x_grid - cx)**2 + (y_grid - cy)**2 <= ref_outer**2)
+                roi1_intensities[t] = np.mean(frame[roi1_mask])
+                roi2_intensities[t] = np.mean(frame[annulus_mask])
+                roi3_intensities[t] = np.mean(frame[bg_mask])
+        else:
+            for t in range(n_frames):
+                frame = self.image_stack[t].astype(float)
+                if apply_background_correction:
+                    frame = self._apply_background_correction(frame)
+                roi1_intensities[t] = np.mean(frame[self.rois['ROI1']['mask']])
+                roi2_intensities[t] = np.mean(frame[self.rois['ROI2']['mask']])
+                roi3_intensities[t] = np.mean(frame[self.rois['ROI3']['mask']])
         
         # Create DataFrame
         df = pd.DataFrame({
@@ -317,6 +336,64 @@ class FRAPImageAnalyzer:
         })
         
         return df
+
+    def track_bleach_spot(self, search_window: int = 20, invert: bool = True) -> List[Tuple[int, int]]:
+        """Dynamically track bleach spot center across frames.
+
+        Uses optional inversion so that dark bleach spot becomes bright, then
+        computes an intensity-weighted centroid within a local window around
+        the previous center.
+
+        Parameters
+        ----------
+        search_window : int
+            Half-size of square window (pixels) used for local search.
+        invert : bool
+            If True, invert each frame (max - frame) prior to centroid calc.
+
+        Returns
+        -------
+        list[tuple]
+            List of (x, y) centers per frame.
+        """
+        if self.image_stack is None or self.bleach_coordinates is None:
+            raise ValueError("Image stack and initial bleach coordinates required before tracking")
+
+        n_frames, height, width = self.image_stack.shape
+        centers: List[Tuple[int, int]] = []
+        cx, cy = self.bleach_coordinates  # initial center (x,y)
+        centers.append((cx, cy))
+
+        for t in range(1, n_frames):
+            frame = self.image_stack[t].astype(float)
+            if invert:
+                frame = frame.max() - frame
+            x_min = max(0, cx - search_window)
+            x_max = min(width, cx + search_window + 1)
+            y_min = max(0, cy - search_window)
+            y_max = min(height, cy + search_window + 1)
+            sub = frame[y_min:y_max, x_min:x_max]
+            if sub.size == 0:
+                centers.append((cx, cy))
+                continue
+            # Intensity-weighted centroid
+            y_ind, x_ind = np.indices(sub.shape)
+            weights = sub - sub.min()
+            if weights.sum() <= 0:
+                new_cx, new_cy = cx, cy
+            else:
+                wx = (weights * x_ind).sum() / weights.sum()
+                wy = (weights * y_ind).sum() / weights.sum()
+                new_cx = int(round(x_min + wx))
+                new_cy = int(round(y_min + wy))
+            # Constrain to image bounds
+            new_cx = max(0, min(width - 1, new_cx))
+            new_cy = max(0, min(height - 1, new_cy))
+            centers.append((new_cx, new_cy))
+            cx, cy = new_cx, new_cy
+
+        self.tracked_centers = centers
+        return centers
     
     def _apply_background_correction(self, image: np.ndarray, 
                                    method: str = 'rolling_ball') -> np.ndarray:
