@@ -1354,7 +1354,7 @@ with tab1:
                                 st.write(f"- Amplitude (A): {A}")
                                 st.write(f"- Rate constant (k): {k}")
                                 st.write(f"- Offset (C): {C}")
-                                st.write(f"- Mobile fraction calc: {A}/{1.0-C} = {A/(1.0-C) if C < 1.0 else 'undefined'}")
+                                st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
                             elif model == 'double' and len(params_raw) >= 5:
                                 A1, k1, A2, k2, C = params_raw[:5]
                                 st.write(f"- A1: {A1}, k1: {k1}")
@@ -1362,7 +1362,7 @@ with tab1:
                                 st.write(f"- Offset (C): {C}")
                                 total_A = A1 + A2
                                 st.write(f"- Total amplitude: {total_A}")
-                                st.write(f"- Mobile fraction calc: {total_A}/{1.0-C} = {total_A/(1.0-C) if C < 1.0 else 'undefined'}")
+                                st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
                             elif model == 'triple' and len(params_raw) >= 6:
                                 A1, k1, A2, k2, A3, k3, C = params_raw[:6]
                                 st.write(f"- A1: {A1}, k1: {k1}")
@@ -1371,7 +1371,7 @@ with tab1:
                                 st.write(f"- Offset (C): {C}")
                                 total_A = A1 + A2 + A3
                                 st.write(f"- Total amplitude: {total_A}")
-                                st.write(f"- Mobile fraction calc: {total_A}/{1.0-C} = {total_A/(1.0-C) if C < 1.0 else 'undefined'}")
+                                st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
             else: 
                 st.error("Could not determine a best fit for this file.")
                 

@@ -892,8 +892,15 @@ class FRAPAnalysisCore:
         
         if model == 'single':
             A, k, C = params
-            # Mobile fraction
-            mobile_fraction = A / (1.0 - C) if C < 1.0 else np.nan
+            # New mobile population definition: 1 - (A + C) assuming normalization to pre-bleach=1
+            endpoint = A + C
+            mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+            # Plateau validity check: if last two fitted points still rising noticeably, flag as NaN
+            fitted_vals = fit_data.get('fitted_values')
+            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                last_slope = fitted_vals[-1] - fitted_vals[-3]
+                if last_slope > 0.01:  # arbitrary small threshold; refine as needed
+                    mobile_fraction = np.nan
             details['mobile_fraction'] = mobile_fraction
             
             # Interpret as diffusion using CORRECTED formula
@@ -919,7 +926,13 @@ class FRAPAnalysisCore:
         elif model == 'double':
             A1, k1, A2, k2, C = params
             total_amp = A1 + A2
-            mobile_fraction = total_amp / (1.0 - C) if C < 1.0 else np.nan
+            endpoint = total_amp + C
+            mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+            fitted_vals = fit_data.get('fitted_values')
+            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                last_slope = fitted_vals[-1] - fitted_vals[-3]
+                if last_slope > 0.01:
+                    mobile_fraction = np.nan
             details['mobile_fraction'] = mobile_fraction
             
             # Sort components (fast to slow)
@@ -959,7 +972,13 @@ class FRAPAnalysisCore:
         elif model == 'triple':
             A1, k1, A2, k2, A3, k3, C = params
             total_amp = A1 + A2 + A3
-            mobile_fraction = total_amp / (1.0 - C) if C < 1.0 else np.nan
+            endpoint = total_amp + C
+            mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+            fitted_vals = fit_data.get('fitted_values')
+            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                last_slope = fitted_vals[-1] - fitted_vals[-3]
+                if last_slope > 0.01:
+                    mobile_fraction = np.nan
             details['mobile_fraction'] = mobile_fraction
             
             # Sort components (fast to slow)
@@ -1067,9 +1086,15 @@ class FRAPAnalysisCore:
                 
                 # Calculate mobile fraction from extrapolated recovery
                 # Since we now start from the true bleach point, mobile fraction is more accurate
-                total_recovery_potential = 1.0 - C  # Maximum possible recovery
-                features['mobile_fraction'] = (A / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(A) and np.isfinite(C) else np.nan
-                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
+                # New mobile population: 1 - (A + C) (expressed in %). Plateau check using fitted_values
+                endpoint = A + C if np.isfinite(A) and np.isfinite(C) else np.nan
+                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                fitted_vals = best_fit.get('fitted_values')
+                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
+                        mobile_fraction = np.nan  # Not yet at plateau
+                features['mobile_fraction'] = mobile_fraction
+                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
                 
                 # Store raw parameters
                 features['amplitude'] = A
@@ -1140,9 +1165,14 @@ class FRAPAnalysisCore:
                 k_slow, A_slow, _ = components[1]
                 
                 # Calculate mobile fraction from extrapolated recovery
-                total_recovery_potential = 1.0 - C if np.isfinite(C) else 1.0
-                features['mobile_fraction'] = (total_amp / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(total_amp) else np.nan
-                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
+                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
+                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                fitted_vals = best_fit.get('fitted_values')
+                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
+                        mobile_fraction = np.nan
+                features['mobile_fraction'] = mobile_fraction
+                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
                 
                 # Store component-specific features
                 features['rate_constant_fast'] = k_fast
@@ -1159,9 +1189,11 @@ class FRAPAnalysisCore:
                     features['proportion_of_mobile_slow'] = np.nan
                 
                 # Proportions relative to total population
-                if total_recovery_potential > 0:
-                    features['proportion_of_total_fast'] = (A_fast / total_recovery_potential * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / total_recovery_potential * 100.0) if np.isfinite(A_slow) else np.nan
+                if np.isfinite(endpoint) and (1 - endpoint) > 0:
+                    # Scale component contributions to total mobile population size (1-endpoint)
+                    available_mobile = 1 - endpoint
+                    features['proportion_of_total_fast'] = (A_fast / available_mobile * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_total_slow'] = (A_slow / available_mobile * 100.0) if np.isfinite(A_slow) else np.nan
                 else:
                     features['proportion_of_total_fast'] = np.nan
                     features['proportion_of_total_slow'] = np.nan
@@ -1209,9 +1241,14 @@ class FRAPAnalysisCore:
                 k_slow, A_slow, _ = components[2]
                 
                 # Calculate mobile fraction from extrapolated recovery
-                total_recovery_potential = 1.0 - C if np.isfinite(C) else 1.0
-                features['mobile_fraction'] = (total_amp / total_recovery_potential * 100.0) if total_recovery_potential > 0 and np.isfinite(total_amp) else np.nan
-                features['immobile_fraction'] = 100.0 - features['mobile_fraction'] if np.isfinite(features['mobile_fraction']) else np.nan
+                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
+                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                fitted_vals = best_fit.get('fitted_values')
+                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
+                        mobile_fraction = np.nan
+                features['mobile_fraction'] = mobile_fraction
+                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
                 
                 # Store component-specific features
                 features['rate_constant_fast'] = k_fast
@@ -1232,10 +1269,11 @@ class FRAPAnalysisCore:
                     features['proportion_of_mobile_slow'] = np.nan
                 
                 # Proportions relative to total population
-                if total_recovery_potential > 0:
-                    features['proportion_of_total_fast'] = (A_fast / total_recovery_potential * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_medium'] = (A_medium / total_recovery_potential * 100.0) if np.isfinite(A_medium) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / total_recovery_potential * 100.0) if np.isfinite(A_slow) else np.nan
+                if np.isfinite(endpoint) and (1 - endpoint) > 0:
+                    available_mobile = 1 - endpoint
+                    features['proportion_of_total_fast'] = (A_fast / available_mobile * 100.0) if np.isfinite(A_fast) else np.nan
+                    features['proportion_of_total_medium'] = (A_medium / available_mobile * 100.0) if np.isfinite(A_medium) else np.nan
+                    features['proportion_of_total_slow'] = (A_slow / available_mobile * 100.0) if np.isfinite(A_slow) else np.nan
                 else:
                     features['proportion_of_total_fast'] = np.nan
                     features['proportion_of_total_medium'] = np.nan
