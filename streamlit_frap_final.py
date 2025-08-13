@@ -21,6 +21,7 @@ from PIL import Image
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_manager import FRAPDataManager
 import zipfile
 import tempfile
 import shutil
@@ -389,7 +390,9 @@ The kinetic rates can be interpreted in two ways:
 
 def import_imagej_roi(roi_data: bytes) -> Optional[Dict[str, Any]]:
     """
-    Imports ROI data from ImageJ .roi file bytes.
+    Imports ROI data from an ImageJ .roi file.
+
+    This function now uses the `roifile` library to parse .roi files.
     
     Parameters:
     -----------
@@ -402,15 +405,31 @@ def import_imagej_roi(roi_data: bytes) -> Optional[Dict[str, Any]]:
         A dictionary containing ROI information, or None if import fails.
     """
     try:
-        # This is a simplified parser - in practice you'd use the roifile library
-        # For now, return a placeholder structure
-        return {
-            'name': 'imported_roi',
-            'type': 'rectangle',
-            'coordinates': {'x': 0, 'y': 0, 'width': 50, 'height': 50}
+        import roifile
+        import io
+
+        # Read the ROI data from bytes
+        roi = roifile.roiread(io.BytesIO(roi_data))
+
+        # Extract relevant information
+        roi_info = {
+            'name': roi.name,
+            'type': roi.roitype.name,
+            'left': roi.left,
+            'top': roi.top,
+            'right': roi.right,
+            'bottom': roi.bottom,
+            'width': roi.width,
+            'height': roi.height,
+            'coordinates': roi.coordinates().tolist() # Convert numpy array to list
         }
+
+        logger.info(f"Successfully imported ROI: {roi.name} ({roi.roitype.name})")
+        return roi_info
+
     except Exception as e:
-        logger.error(f"ROI import failed: {e}")
+        logger.error(f"ImageJ ROI import failed: {e}")
+        st.error(f"Failed to import ROI file: {e}")
         return None
 
 # --- Session State Initialization ---
@@ -466,63 +485,6 @@ def plot_average_curve(group_files_data):
     return fig
 
 # --- Core Analysis and Data Logic ---
-
-def validate_analysis_results(features: dict) -> dict:
-    """
-    Validate and correct analysis results to ensure they are physically reasonable.
-    
-    Parameters:
-    -----------
-    features : dict
-        Dictionary containing analysis features
-        
-    Returns:
-    --------
-    dict
-        Validated and corrected features
-    """
-    if not features:
-        return features
-    
-    # Validate mobile fraction (should be 0-100%)
-    mobile_fraction = features.get('mobile_fraction', np.nan)
-    if np.isfinite(mobile_fraction):
-        if mobile_fraction < 0:
-            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% is negative, setting to 0%")
-            features['mobile_fraction'] = 0.0
-        elif mobile_fraction > 100:
-            logger.warning(f"Mobile fraction {mobile_fraction:.1f}% exceeds 100%, capping at 100%")
-            features['mobile_fraction'] = 100.0
-    
-    # Ensure immobile fraction = 100% - mobile fraction
-    if np.isfinite(features.get('mobile_fraction', np.nan)):
-        features['immobile_fraction'] = 100.0 - features['mobile_fraction']
-    else:
-        features['immobile_fraction'] = np.nan
-    
-    # Validate rate constants (should be positive)
-    for key in features:
-        if 'rate_constant' in key and np.isfinite(features[key]):
-            if features[key] <= 0:
-                logger.warning(f"Rate constant {key} = {features[key]:.6f} is non-positive, setting to NaN")
-                features[key] = np.nan
-    
-    # Validate half-times (should be positive)
-    for key in features:
-        if 'half_time' in key and np.isfinite(features[key]):
-            if features[key] <= 0:
-                logger.warning(f"Half-time {key} = {features[key]:.6f} is non-positive, setting to NaN")
-                features[key] = np.nan
-    
-    # Validate proportions (should sum to ~100% for mobile pool)
-    mobile_props = [features.get(f'proportion_of_mobile_{comp}', 0) 
-                   for comp in ['fast', 'medium', 'slow']]
-    mobile_props = [p for p in mobile_props if np.isfinite(p)]
-    
-    if mobile_props and abs(sum(mobile_props) - 100.0) > 5.0:  # Allow 5% tolerance
-        logger.warning(f"Mobile pool proportions sum to {sum(mobile_props):.1f}%, not ~100%")
-    
-    return features
 
 class FRAPDataManager:
     def __init__(self): 
@@ -615,6 +577,71 @@ class FRAPDataManager:
                 self.groups[group_name]['files'].append(file_path)
                 return True
         return False
+
+    def fit_group_models(self, group_name, model='single', excluded_files=None):
+        """
+        Perform global simultaneous fitting for a group with shared kinetic parameters
+        but individual amplitudes.
+
+        Parameters:
+        -----------
+        group_name : str
+            Name of the group to fit
+        model : str
+            Model type ('single', 'double', or 'triple')
+        excluded_files : list, optional
+            List of file paths to exclude from global fitting
+
+        Returns:
+        --------
+        dict
+            Dictionary containing global fit results
+        """
+        if group_name not in self.groups:
+            raise KeyError(f"Group {group_name} not found.")
+
+        group = self.groups[group_name]
+        excluded_files = excluded_files or []
+
+        # Prepare traces for global fitting
+        traces = []
+        file_names = []
+
+        for file_path in group['files']:
+            if file_path not in excluded_files and file_path in self.files:
+                file_data = self.files[file_path]
+                t, y, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                    file_data['time'],
+                    file_data['intensity']
+                )
+                traces.append((t, y))
+                file_names.append(file_data['name'])
+
+        if len(traces) < 2:
+            raise ValueError("Need at least 2 traces for global fitting")
+
+        try:
+            # Perform global fitting using the core analysis function
+            global_fit_result = CoreFRAPAnalysis.fit_group_models(traces, model=model)
+
+            # Add file names for reference
+            global_fit_result['file_names'] = file_names
+            global_fit_result['excluded_files'] = excluded_files
+
+            # Store the result in the group
+            if 'global_fit' not in group:
+                group['global_fit'] = {}
+            group['global_fit'][model] = global_fit_result
+
+            return global_fit_result
+
+        except Exception as e:
+            logger.error(f"Error in global fitting for group {group_name}: {e}")
+            return {
+                'model': model,
+                'success': False,
+                'error': str(e)
+            }
 
     def load_groups_from_zip_archive(self, zip_file):
         """
@@ -1833,17 +1860,9 @@ with tab2:
                                     # Determine which files to exclude
                                     files_to_exclude = [] if include_outliers_global else excluded_paths
                                     
-                                    # Import the FRAPData class and perform global fitting
-                                    from frap_data import FRAPData
-                                    
-                                    # Create a temporary FRAPData instance with current data
-                                    temp_dm = FRAPData()
-                                    temp_dm.files = dm.files
-                                    temp_dm.groups = dm.groups
-                                    
-                                    # Perform global fitting
-                                    global_result = temp_dm.fit_group_models(
-                                        selected_group_name, 
+                                    # Perform global fitting directly using the main data manager
+                                    global_result = dm.fit_group_models(
+                                        selected_group_name,
                                         model=global_model,
                                         excluded_files=files_to_exclude
                                     )
@@ -2533,48 +2552,48 @@ with tab5:
         st.metric("Processed Groups", total_processed)
     
     st.markdown("---")
-    st.markdown("### Debug Package Generation")
-    st.markdown("Create a comprehensive package for external debugging and deployment")
+    # st.markdown("### Debug Package Generation")
+    # st.markdown("Create a comprehensive package for external debugging and deployment")
     
-    col_debug1, col_debug2 = st.columns([2, 1])
+    # col_debug1, col_debug2 = st.columns([2, 1])
     
-    with col_debug1:
-        st.markdown("**Debug package includes:**")
-        st.markdown("- Complete source code and documentation")
-        st.markdown("- Installation scripts for Windows and Unix")
-        st.markdown("- Sample data files and test suite")
-        st.markdown("- Docker configuration for containerized deployment")
-        st.markdown("- Streamlit configuration files")
+    # with col_debug1:
+    #     st.markdown("**Debug package includes:**")
+    #     st.markdown("- Complete source code and documentation")
+    #     st.markdown("- Installation scripts for Windows and Unix")
+    #     st.markdown("- Sample data files and test suite")
+    #     st.markdown("- Docker configuration for containerized deployment")
+    #     st.markdown("- Streamlit configuration files")
         
-    with col_debug2:
-        if st.button("📦 Create Debug Package", type="primary"):
-            try:
-                with st.spinner("Creating comprehensive debug package..."):
-                    # Import and run the debug package creator
-                    from create_debug_package import create_debug_package
-                    package_file, summary = create_debug_package()
+    # with col_debug2:
+    #     if st.button("📦 Create Debug Package", type="primary"):
+    #         try:
+    #             with st.spinner("Creating comprehensive debug package..."):
+    #                 # Import and run the debug package creator
+    #                 from create_debug_package import create_debug_package
+    #                 package_file, summary = create_debug_package()
                     
-                    # Read the package file
-                    with open(package_file, 'rb') as f:
-                        package_data = f.read()
+    #                 # Read the package file
+    #                 with open(package_file, 'rb') as f:
+    #                     package_data = f.read()
                     
-                    # Provide download button
-                    st.download_button(
-                        label="⬇️ Download Debug Package",
-                        data=package_data,
-                        file_name=package_file,
-                        mime="application/zip",
-                        help="Download complete debug package with all source code and documentation"
-                    )
+    #                 # Provide download button
+    #                 st.download_button(
+    #                     label="⬇️ Download Debug Package",
+    #                     data=package_data,
+    #                     file_name=package_file,
+    #                     mime="application/zip",
+    #                     help="Download complete debug package with all source code and documentation"
+    #                 )
                     
-                    st.success("Debug package created successfully!")
-                    st.info(f"Package size: {len(package_data) / 1024 / 1024:.1f} MB")
+    #                 st.success("Debug package created successfully!")
+    #                 st.info(f"Package size: {len(package_data) / 1024 / 1024:.1f} MB")
                     
-                    # Clean up temporary file
-                    os.remove(package_file)
-            except Exception as e:
-                st.error(f"Error creating debug package: {e}")
-                st.error("Please contact support for assistance")
+    #                 # Clean up temporary file
+    #                 os.remove(package_file)
+    #         except Exception as e:
+    #             st.error(f"Error creating debug package: {e}")
+    #             st.error("Please contact support for assistance")
 
 with tab6:
     st.subheader("Application Settings")
@@ -2613,17 +2632,19 @@ with tab6:
     col_fit1, col_fit2 = st.columns(2)
     
     with col_fit1:
-        fitting_method = st.selectbox(
-            "Curve Fitting Method",
-            ["least_squares", "robust", "bayesian"],
-            index=0,
-            format_func=lambda x: {
-                "least_squares": "Standard Least Squares",
-                "robust": "Robust Fitting (outlier resistant)",
-                "bayesian": "Bayesian MCMC (full uncertainty)"
-            }[x],
-            help="Choose fitting algorithm for kinetic analysis"
-        )
+        # fitting_method = st.selectbox(
+        #     "Curve Fitting Method",
+        #     ["least_squares", "robust", "bayesian"],
+        #     index=0,
+        #     format_func=lambda x: {
+        #         "least_squares": "Standard Least Squares",
+        #         "robust": "Robust Fitting (outlier resistant)",
+        #         "bayesian": "Bayesian MCMC (full uncertainty)"
+        #     }[x],
+        #     help="Choose fitting algorithm for kinetic analysis"
+        # )
+        st.info("Advanced fitting methods (Robust, Bayesian) are planned for a future release.")
+        fitting_method = "least_squares" # Hardcode to the only implemented method
         
         max_iterations = st.number_input(
             "Max Fitting Iterations",
@@ -2641,21 +2662,23 @@ with tab6:
             help="Constrain parameters to physically reasonable ranges"
         )
         
-    confidence_intervals = st.checkbox(
-        "Calculate Confidence Intervals",
-        value=False,
-        help="Calculate confidence intervals for fitted parameters (computationally intensive)"
-    )
+    # confidence_intervals = st.checkbox(
+    #     "Calculate Confidence Intervals",
+    #     value=False,
+    #     help="Calculate confidence intervals for fitted parameters (computationally intensive)"
+    # )
     
-    bootstrap_samples = st.number_input(
-        "Bootstrap Samples for CI",
-        value=1000,
-        min_value=100,
-        max_value=10000,
-        step=100,
-        help="Number of bootstrap samples for confidence interval calculation",
-        disabled=not confidence_intervals
-    )
+    # bootstrap_samples = st.number_input(
+    #     "Bootstrap Samples for CI",
+    #     value=1000,
+    #     min_value=100,
+    #     max_value=10000,
+    #     step=100,
+    #     help="Number of bootstrap samples for confidence interval calculation",
+    #     disabled=not confidence_intervals
+    # )
+    confidence_intervals = False # Hardcode to false
+    bootstrap_samples = 1000
 
 if st.button("Apply Settings", type="primary"):
     st.session_state.settings.update({
