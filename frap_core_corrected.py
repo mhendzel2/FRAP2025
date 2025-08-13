@@ -71,8 +71,9 @@ def get_post_bleach_data(time: np.ndarray,
     i_bleach_final = min(i_bleach_extrapolated, i_bleach_measured)
     
     # Build corrected vectors starting from extrapolated bleach point
-    t_post = np.concatenate([[t_bleach], time[i_min:]])  # Include bleach time
-    i_post = np.concatenate([[i_bleach_final], intensity[i_min:]])  # Use extrapolated intensity
+    # The time vector should not include the original bleach timepoint again, only subsequent ones.
+    t_post = np.concatenate([[t_bleach], time[i_min+1:]])
+    i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
     
     # Reset time to start from zero at bleach event
     t_post = t_post - t_bleach
@@ -200,8 +201,8 @@ class FRAPAnalysisCore:
         
         # --- Build corrected post-bleach vectors ---
         # Start from the extrapolated bleach point
-        t_post = np.concatenate([[t_bleach], time[i_min:]])
-        i_post = np.concatenate([[i_bleach_final], intensity[i_min:]])
+        t_post = np.concatenate([[t_bleach], time[i_min+1:]])
+        i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
         
         # Reset time scale to start from zero at bleach event
         t_post = t_post - t_bleach
