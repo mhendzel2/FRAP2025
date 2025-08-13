@@ -739,8 +739,12 @@ class FRAPDataManager:
                                     error_count += 1
                                     error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
                                     logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
-                                    if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
-                                        os.remove(tp)
+                                if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
+                                    os.remove(tp)
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+            st.error(f"An unexpected error occurred: {e}")
+            return False
 
         if success_count > 0:
             for group_name in groups_created:
@@ -755,11 +759,6 @@ class FRAPDataManager:
         else:
             st.error("No files could be processed from the ZIP archive.")
             return False
-            
-    except Exception as e:
-        logger.error(f"Error processing ZIP archive with subfolders: {e}")
-        st.error(f"An unexpected error occurred: {e}")
-        return False
 
     def load_zip_archive_and_create_group(self, zip_file, group_name):
         """
