@@ -26,6 +26,10 @@ def identify_outliers_iqr(values, multiplier=1.5):
     q3 = np.percentile(values, 75)
     iqr = q3 - q1
     
+    # Handle case where IQR = 0 (all values identical)
+    if iqr == 0:
+        return np.zeros_like(values, dtype=bool), q1, q3
+    
     lower_bound = q1 - (multiplier * iqr)
     upper_bound = q3 + (multiplier * iqr)
     
@@ -70,6 +74,10 @@ def identify_outliers_mad(values, threshold=3.5):
     """
     median = np.median(values)
     mad = np.median(np.abs(values - median))
+    
+    # Handle case where MAD = 0 (all values identical)
+    if mad == 0:
+        return np.zeros_like(values, dtype=bool)
     
     # Convert MAD to standard deviation estimate (for normal distribution)
     mad_to_std = 1.4826

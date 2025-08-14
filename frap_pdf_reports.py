@@ -1,424 +1,471 @@
 """
-FRAP PDF Report Generator
-Automated report generation with statistical analysis and visualization
+FRAP PDF Reports Module
+Generate comprehensive PDF reports for FRAP analysis results
 """
 
-import io
+import os
+import tempfile
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime
+import io
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
-from scipy import stats
-import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+import logging
 
-def create_statistical_plots(combined_df, param='mobile_fraction'):
-    """Create statistical visualization plots for PDF report"""
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-    
-    # Box plot
-    sns.boxplot(data=combined_df, x='group', y=param, ax=ax1)
-    ax1.set_title(f'{param.replace("_", " ").title()} Distribution by Group')
-    ax1.tick_params(axis='x', rotation=45)
-    
-    # Violin plot
-    sns.violinplot(data=combined_df, x='group', y=param, ax=ax2)
-    ax2.set_title(f'{param.replace("_", " ").title()} Density by Group')
-    ax2.tick_params(axis='x', rotation=45)
-    
-    # Bar plot with error bars
-    group_stats = combined_df.groupby('group')[param].agg(['mean', 'sem']).reset_index()
-    ax3.bar(group_stats['group'], group_stats['mean'], yerr=group_stats['sem'], capsize=5)
-    ax3.set_title(f'Mean {param.replace("_", " ").title()} (±SEM)')
-    ax3.tick_params(axis='x', rotation=45)
-    
-    # Individual data points with means
-    for i, group in enumerate(combined_df['group'].unique()):
-        group_data = combined_df[combined_df['group'] == group][param]
-        x_vals = np.random.normal(i, 0.04, size=len(group_data))
-        ax4.scatter(x_vals, group_data, alpha=0.6, s=30)
-        ax4.scatter(i, group_data.mean(), color='red', s=100, marker='_', linewidth=3)
-    
-    ax4.set_xticks(range(len(combined_df['group'].unique())))
-    ax4.set_xticklabels(combined_df['group'].unique(), rotation=45)
-    ax4.set_title(f'{param.replace("_", " ").title()} - Individual Points & Means')
-    
-    plt.tight_layout()
-    
-    # Save to buffer
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
-    img_buffer.seek(0)
-    plt.close()
-    
-    return img_buffer
+logger = logging.getLogger(__name__)
 
-def perform_comprehensive_statistics(combined_df, param='mobile_fraction'):
-    """Perform comprehensive statistical analysis between groups"""
-    results = {
-        'parameter': param,
-        'groups': list(combined_df['group'].unique()),
-        'group_stats': {},
-        'statistical_tests': {},
-        'effect_sizes': {}
-    }
-    
-    # Group statistics
-    for group in results['groups']:
-        group_data = combined_df[combined_df['group'] == group][param].dropna()
-        results['group_stats'][group] = {
-            'n': len(group_data),
-            'mean': group_data.mean(),
-            'std': group_data.std(),
-            'sem': group_data.std() / np.sqrt(len(group_data)),
-            'median': group_data.median(),
-            'q25': group_data.quantile(0.25),
-            'q75': group_data.quantile(0.75)
-        }
-    
-    # Statistical tests
-    if len(results['groups']) == 2:
-        # Two-group comparison
-        group1_data = combined_df[combined_df['group'] == results['groups'][0]][param].dropna()
-        group2_data = combined_df[combined_df['group'] == results['groups'][1]][param].dropna()
-        
-        # Normality tests
-        _, p_norm1 = stats.shapiro(group1_data) if len(group1_data) <= 5000 else (None, 0.05)
-        _, p_norm2 = stats.shapiro(group2_data) if len(group2_data) <= 5000 else (None, 0.05)
-        
-        # Choose appropriate test
-        if p_norm1 > 0.05 and p_norm2 > 0.05:
-            t_stat, p_value = stats.ttest_ind(group1_data, group2_data)
-            test_name = "Student's t-test"
-        else:
-            t_stat, p_value = stats.mannwhitneyu(group1_data, group2_data, alternative='two-sided')
-            test_name = "Mann-Whitney U test"
-        
-        results['statistical_tests']['two_group'] = {
-            'test': test_name,
-            'statistic': t_stat,
-            'p_value': p_value,
-            'significant': p_value < 0.05
-        }
-        
-        # Cohen's d
-        pooled_std = np.sqrt(((len(group1_data)-1)*group1_data.var() + (len(group2_data)-1)*group2_data.var()) / (len(group1_data)+len(group2_data)-2))
-        cohens_d = (group1_data.mean() - group2_data.mean()) / pooled_std
-        
-        results['effect_sizes']['cohens_d'] = {
-            'value': cohens_d,
-            'magnitude': 'Small' if abs(cohens_d) < 0.2 else 'Medium' if abs(cohens_d) < 0.8 else 'Large'
-        }
-    
-    elif len(results['groups']) > 2:
-        # Multi-group comparison
-        groups_data = []
-        for group in results['groups']:
-            group_data = combined_df[combined_df['group'] == group][param].dropna()
-            if len(group_data) > 1:
-                groups_data.append(group_data)
-        
-        if len(groups_data) >= 2:
-            # ANOVA
-            f_stat, p_anova = stats.f_oneway(*groups_data)
-            
-            results['statistical_tests']['anova'] = {
-                'test': 'One-way ANOVA',
-                'f_statistic': f_stat,
-                'p_value': p_anova,
-                'significant': p_anova < 0.05
-            }
-            
-            # Post-hoc pairwise comparisons
-            if p_anova < 0.05:
-                pairwise_results = []
-                for i in range(len(groups_data)):
-                    for j in range(i+1, len(groups_data)):
-                        _, p_pair = stats.ttest_ind(groups_data[i], groups_data[j])
-                        # Bonferroni correction
-                        n_comparisons = len(groups_data) * (len(groups_data) - 1) // 2
-                        p_corrected = min(p_pair * n_comparisons, 1.0)
-                        
-                        pairwise_results.append({
-                            'group1': results['groups'][i],
-                            'group2': results['groups'][j],
-                            'p_value': p_pair,
-                            'p_corrected': p_corrected,
-                            'significant': p_corrected < 0.05
-                        })
-                
-                results['statistical_tests']['pairwise'] = pairwise_results
-    
-    return results
-
-def generate_pdf_report(data_manager, groups_to_compare=None, output_filename=None, settings=None):
-    """Generate comprehensive PDF report with automated group analysis"""
-    
-    if not output_filename:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f'FRAP_Comprehensive_Report_{timestamp}.pdf'
-    
-    # Prepare data
-    if groups_to_compare is None:
-        groups_to_compare = list(data_manager.groups.keys())
-    
-    if len(groups_to_compare) < 2:
-        raise ValueError("Need at least 2 groups for comparison analysis")
-    
-    # Combine data from selected groups
-    all_group_data = []
-    for group_name in groups_to_compare:
-        if group_name in data_manager.groups:
-            group_info = data_manager.groups[group_name]
-            if group_info.get('files'):
-                data_manager.update_group_analysis(group_name)
-                features_df = group_info.get('features_df')
-                if features_df is not None and not features_df.empty:
-                    temp_df = features_df.copy()
-                    temp_df['group'] = group_name
-                    all_group_data.append(temp_df)
-    
-    if not all_group_data:
-        raise ValueError("No processed data available for the selected groups")
-    
-    combined_df = pd.concat(all_group_data, ignore_index=True)
-    
-    # Create PDF document
-    doc = SimpleDocTemplate(output_filename, pagesize=A4, 
-                           rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
-    
-    # Build story
-    story = []
-    styles = getSampleStyleSheet()
-    
-    # Custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=18,
-        spaceAfter=30,
-        alignment=TA_CENTER
-    )
-    
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=14,
-        spaceAfter=12,
-        spaceBefore=20
-    )
-    
-    # Title page
-    story.append(Paragraph("FRAP Analysis Comprehensive Report", title_style))
-    story.append(Spacer(1, 20))
-    
-    # Report metadata
-    metadata_data = [
-        ['Report Generated:', datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-        ['Groups Analyzed:', ', '.join(groups_to_compare)],
-        ['Total Files:', str(len(combined_df))],
-        ['Analysis Software:', 'FRAP Analysis Platform v1.0']
-    ]
-    
-    metadata_table = Table(metadata_data, colWidths=[2*inch, 3*inch])
-    metadata_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.lightgrey),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-        ('BACKGROUND', (0, 0), (0, -1), colors.grey),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.whitesmoke),
-    ]))
-    
-    story.append(metadata_table)
-    story.append(Spacer(1, 30))
-    
-    # Executive summary
-    story.append(Paragraph("Executive Summary", heading_style))
-    
-    summary_text = f"""
-    This report presents a comprehensive analysis of FRAP (Fluorescence Recovery After Photobleaching) 
-    data comparing {len(groups_to_compare)} experimental groups with a total of {len(combined_df)} 
-    individual measurements. The analysis includes dual-interpretation kinetics (diffusion and binding), 
-    statistical comparisons, and quality assessment metrics.
+def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, settings=None):
     """
+    Generates a comprehensive PDF report for FRAP analysis results.
     
-    story.append(Paragraph(summary_text, styles['Normal']))
-    story.append(Spacer(1, 20))
-    
-    # Group overview table
-    story.append(Paragraph("Group Overview", heading_style))
-    
-    group_overview_data = [['Group', 'N', 'Mobile (%)', 'Rate (k)', 'Half-time (s)', 'R² (avg)']]
-    
-    for group in groups_to_compare:
-        group_data = combined_df[combined_df['group'] == group]
-        mobile_mean = group_data['mobile_fraction'].mean()
-        rate_mean = group_data.get('rate_constant_fast', group_data.get('rate_constant', pd.Series([np.nan]))).mean()
-        half_time_mean = group_data.get('half_time_fast', group_data.get('half_time', pd.Series([np.nan]))).mean()
-        r2_mean = group_data.get('r2', pd.Series([np.nan])).mean()
+    Parameters:
+    -----------
+    data_manager : FRAPDataManager
+        The data manager containing all FRAP data
+    groups_to_compare : list
+        List of group names to include in the report
+    output_filename : str, optional
+        Filename for the output PDF, defaults to a timestamped name
+    settings : dict, optional
+        Analysis settings to include in the report
         
-        group_overview_data.append([
-            group,
-            str(len(group_data)),
-            f"{mobile_mean:.1f}" if not np.isnan(mobile_mean) else "N/A",
-            f"{rate_mean:.4f}" if not np.isnan(rate_mean) else "N/A",
-            f"{half_time_mean:.1f}" if not np.isnan(half_time_mean) else "N/A",
-            f"{r2_mean:.3f}" if not np.isnan(r2_mean) else "N/A"
-        ])
-    
-    group_table = Table(group_overview_data, colWidths=[1.2*inch, 0.6*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch])
-    group_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    
-    story.append(group_table)
-    story.append(PageBreak())
-    
-    # Statistical analysis for key parameters
-    key_parameters = ['mobile_fraction', 'rate_constant_fast', 'half_time_fast']
-    available_params = [p for p in key_parameters if p in combined_df.columns]
-    
-    for param in available_params:
-        story.append(Paragraph(f"Statistical Analysis: {param.replace('_', ' ').title()}", heading_style))
-        
-        # Perform statistical analysis
-        stats_results = perform_comprehensive_statistics(combined_df, param)
-        
-        # Create visualization
-        plot_buffer = create_statistical_plots(combined_df, param)
-        img = Image(plot_buffer, width=6*inch, height=5*inch)
-        story.append(img)
-        story.append(Spacer(1, 10))
-        
-        # Statistical results text
-        if 'two_group' in stats_results['statistical_tests']:
-            test_result = stats_results['statistical_tests']['two_group']
-            effect_size = stats_results['effect_sizes']['cohens_d']
+    Returns:
+    --------
+    str
+        Path to the generated PDF file
+    """
+    try:
+        # Create a temporary file if no output filename is provided
+        if output_filename is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_filename = f"FRAP_Report_{timestamp}.pdf"
             
-            stats_text = f"""
-            Two-group comparison using {test_result['test']}:
-            • Test statistic: {test_result['statistic']:.4f}
-            • P-value: {test_result['p_value']:.6f}
-            • Significance: {'Significant' if test_result['significant'] else 'Not significant'} (α = 0.05)
-            • Effect size (Cohen's d): {effect_size['value']:.3f} ({effect_size['magnitude']})
-            """
+        # Get the absolute path to the output file
+        output_path = os.path.abspath(output_filename)
+        
+        # Create a PDF document
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Define styles
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(
+            name='Title',
+            parent=styles['Heading1'],
+            fontSize=16,
+            alignment=TA_CENTER
+        ))
+        styles.add(ParagraphStyle(
+            name='Subtitle',
+            parent=styles['Heading2'],
+            fontSize=14
+        ))
+        styles.add(ParagraphStyle(
+            name='Section',
+            parent=styles['Heading3'],
+            fontSize=12
+        ))
+        styles.add(ParagraphStyle(
+            name='Normal',
+            parent=styles['Normal'],
+            fontSize=10
+        ))
+        
+        # Initialize the elements list
+        elements = []
+        
+        # Title
+        elements.append(Paragraph("FRAP Analysis Report", styles['Title']))
+        elements.append(Spacer(1, 0.25*inch))
+        
+        # Report metadata
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        elements.append(Paragraph(f"Generated: {timestamp}", styles['Normal']))
+        elements.append(Paragraph(f"Groups included: {', '.join(groups_to_compare)}", styles['Normal']))
+        elements.append(Spacer(1, 0.25*inch))
+        
+        # Settings information if provided
+        if settings:
+            elements.append(Paragraph("Analysis Settings", styles['Subtitle']))
             
-        elif 'anova' in stats_results['statistical_tests']:
-            anova_result = stats_results['statistical_tests']['anova']
+            # Create a table for settings
+            settings_data = [["Parameter", "Value"]]
+            important_settings = [
+                ('default_criterion', 'Model Selection Criterion'), 
+                ('default_bleach_radius', 'Bleach Radius (pixels)'),
+                ('default_pixel_size', 'Pixel Size (µm/pixel)'),
+                ('default_gfp_diffusion', 'Reference GFP Diffusion (µm²/s)')
+            ]
             
-            stats_text = f"""
-            Multi-group comparison using {anova_result['test']}:
-            • F-statistic: {anova_result['f_statistic']:.4f}
-            • P-value: {anova_result['p_value']:.6f}
-            • Significance: {'Significant' if anova_result['significant'] else 'Not significant'} (α = 0.05)
-            """
+            for key, label in important_settings:
+                if key in settings:
+                    value = settings[key]
+                    if isinstance(value, float):
+                        value_str = f"{value:.3f}"
+                    else:
+                        value_str = str(value)
+                    settings_data.append([label, value_str])
             
-            if 'pairwise' in stats_results['statistical_tests']:
-                stats_text += "\n\nPost-hoc pairwise comparisons (Bonferroni corrected):"
-                for pair in stats_results['statistical_tests']['pairwise']:
-                    sig_text = "***" if pair['p_corrected'] < 0.001 else "**" if pair['p_corrected'] < 0.01 else "*" if pair['p_corrected'] < 0.05 else "ns"
-                    stats_text += f"\n• {pair['group1']} vs {pair['group2']}: p = {pair['p_corrected']:.4f} {sig_text}"
-        
-        story.append(Paragraph(stats_text, styles['Normal']))
-        story.append(Spacer(1, 20))
-        
-        # Group statistics table
-        group_stats_data = [['Group', 'N', 'Mean ± SEM', 'Median', 'Q25-Q75']]
-        
-        for group in stats_results['groups']:
-            stats = stats_results['group_stats'][group]
-            group_stats_data.append([
-                group,
-                str(stats['n']),
-                f"{stats['mean']:.3f} ± {stats['sem']:.3f}",
-                f"{stats['median']:.3f}",
-                f"{stats['q25']:.3f} - {stats['q75']:.3f}"
-            ])
-        
-        stats_table = Table(group_stats_data, colWidths=[1.5*inch, 0.6*inch, 1.2*inch, 1*inch, 1.2*inch])
-        stats_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        
-        story.append(stats_table)
-        story.append(PageBreak())
-    
-    # Detailed results section
-    story.append(Paragraph("Detailed Results by Group", heading_style))
-    
-    for group_name in groups_to_compare:
-        group_data = combined_df[combined_df['group'] == group_name]
-        
-        story.append(Paragraph(f"Group: {group_name}", styles['Heading3']))
-        
-        # Individual file results
-        detailed_data = [['File', 'Mobile (%)', 'Rate (k)', 'Half-time (s)', 'Model', 'R²']]
-        
-        for _, row in group_data.iterrows():
-            file_path = row.get('file_path', '')
-            file_name = data_manager.files.get(file_path, {}).get('name', 'Unknown')[:20]  # Truncate long names
+            # Add effective bleach radius (calculated)
+            bleach_radius = settings.get('default_bleach_radius', 1.0)
+            pixel_size = settings.get('default_pixel_size', 0.3)
+            effective_radius = bleach_radius * pixel_size
+            settings_data.append(["Effective Bleach Radius (µm)", f"{effective_radius:.3f}"])
             
-            detailed_data.append([
-                file_name,
-                f"{row.get('mobile_fraction', np.nan):.1f}" if not pd.isna(row.get('mobile_fraction')) else "N/A",
-                f"{row.get('rate_constant_fast', row.get('rate_constant', np.nan)):.4f}" if not pd.isna(row.get('rate_constant_fast', row.get('rate_constant'))) else "N/A",
-                f"{row.get('half_time_fast', row.get('half_time', np.nan)):.1f}" if not pd.isna(row.get('half_time_fast', row.get('half_time'))) else "N/A",
-                row.get('model', 'Unknown'),
-                f"{row.get('r2', np.nan):.3f}" if not pd.isna(row.get('r2')) else "N/A"
-            ])
+            # Create the table
+            settings_table = Table(settings_data, colWidths=[3*inch, 2*inch])
+            settings_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (1, 0), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (1, 0), colors.black),
+                ('ALIGN', (0, 0), (1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+            ]))
+            
+            elements.append(settings_table)
+            elements.append(Spacer(1, 0.25*inch))
         
-        detailed_table = Table(detailed_data, colWidths=[1.5*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.6*inch])
-        detailed_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightblue),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
-        ]))
+        # Group Summary Section
+        elements.append(Paragraph("Group Summaries", styles['Subtitle']))
+        elements.append(Spacer(1, 0.15*inch))
         
-        story.append(detailed_table)
-        story.append(Spacer(1, 15))
-    
-    # Build PDF
-    doc.build(story)
-    
-    return output_filename
+        # Group comparison tables
+        for group_name in groups_to_compare:
+            if group_name not in data_manager.groups:
+                continue
+                
+            group = data_manager.groups[group_name]
+            
+            # Skip empty groups
+            if not group.get('files') or not group.get('features_df') is not None:
+                continue
+            
+            # Group header
+            elements.append(Paragraph(f"Group: {group_name}", styles['Section']))
+            
+            # Files count
+            total_files = len(group.get('files', []))
+            analyzed_files = len(group.get('features_df', pd.DataFrame())) if group.get('features_df') is not None else 0
+            elements.append(Paragraph(f"Total Files: {total_files}, Analyzed: {analyzed_files}", styles['Normal']))
+            elements.append(Spacer(1, 0.15*inch))
+            
+            # Group statistics
+            if group.get('features_df') is not None and not group['features_df'].empty:
+                df = group['features_df']
+                
+                # Basic statistics table
+                key_metrics = ['mobile_fraction', 'immobile_fraction', 'rate_constant', 'half_time']
+                available_metrics = [m for m in key_metrics if m in df.columns]
+                
+                if available_metrics:
+                    # Calculate statistics
+                    stats_data = [["Metric", "Mean", "Std. Dev.", "Median", "Min", "Max"]]
+                    
+                    for metric in available_metrics:
+                        values = df[metric].dropna()
+                        if not values.empty:
+                            mean_val = values.mean()
+                            std_val = values.std()
+                            median_val = values.median()
+                            min_val = values.min()
+                            max_val = values.max()
+                            
+                            metric_name = metric.replace('_', ' ').title()
+                            stats_data.append([
+                                metric_name, 
+                                f"{mean_val:.3f}", 
+                                f"{std_val:.3f}", 
+                                f"{median_val:.3f}", 
+                                f"{min_val:.3f}", 
+                                f"{max_val:.3f}"
+                            ])
+                    
+                    # Create the table
+                    stats_table = Table(stats_data, colWidths=[1.2*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch])
+                    stats_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                    ]))
+                    
+                    elements.append(stats_table)
+                    elements.append(Spacer(1, 0.2*inch))
+                
+                # Check if we have component-specific data
+                component_cols = [col for col in df.columns if 'proportion' in col and ('fast' in col or 'medium' in col or 'slow' in col)]
+                
+                if component_cols:
+                    # Create component statistics
+                    component_data = [["Component", "Proportion (%)", "Rate (k)", "Half-time (s)"]]
+                    
+                    for comp in ['fast', 'medium', 'slow']:
+                        prop_col = f'proportion_of_mobile_{comp}'
+                        rate_col = f'rate_constant_{comp}'
+                        half_col = f'half_time_{comp}'
+                        
+                        if prop_col in df.columns and rate_col in df.columns:
+                            prop_vals = df[prop_col].dropna()
+                            rate_vals = df[rate_col].dropna()
+                            half_vals = df[half_col].dropna() if half_col in df.columns else pd.Series()
+                            
+                            if not prop_vals.empty and not rate_vals.empty:
+                                mean_prop = prop_vals.mean()
+                                mean_rate = rate_vals.mean()
+                                mean_half = half_vals.mean() if not half_vals.empty else np.nan
+                                
+                                component_data.append([
+                                    comp.capitalize(),
+                                    f"{mean_prop:.1f}%",
+                                    f"{mean_rate:.4f}",
+                                    f"{mean_half:.2f}" if not np.isnan(mean_half) else "N/A"
+                                ])
+                    
+                    if len(component_data) > 1:  # Only add if we have component data
+                        elements.append(Paragraph("Component Analysis", styles['Normal']))
+                        
+                        # Create the table
+                        comp_table = Table(component_data, colWidths=[1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch])
+                        comp_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                        ]))
+                        
+                        elements.append(comp_table)
+            
+            elements.append(Spacer(1, 0.25*inch))
+        
+        # Statistical comparison section (when multiple groups)
+        if len(groups_to_compare) > 1:
+            elements.append(Paragraph("Statistical Comparison", styles['Subtitle']))
+            elements.append(Spacer(1, 0.15*inch))
+            
+            # Collect data from all groups
+            all_group_data = []
+            for group_name in groups_to_compare:
+                if group_name in data_manager.groups:
+                    group = data_manager.groups[group_name]
+                    if group.get('features_df') is not None and not group['features_df'].empty:
+                        temp_df = group['features_df'].copy()
+                        temp_df['group'] = group_name
+                        all_group_data.append(temp_df)
+            
+            # Perform statistical comparison if we have data
+            if all_group_data:
+                combined_df = pd.concat(all_group_data, ignore_index=True)
+                
+                # Compare key metrics
+                key_metrics = ['mobile_fraction', 'rate_constant', 'half_time']
+                available_metrics = [m for m in key_metrics if m in combined_df.columns]
+                
+                for metric in available_metrics:
+                    # Get group summaries
+                    group_stats = combined_df.groupby('group')[metric].agg(['count', 'mean', 'std']).reset_index()
+                    
+                    # Format the data for table
+                    stat_data = [["Group", "N", "Mean", "Std. Dev."]]
+                    for _, row in group_stats.iterrows():
+                        stat_data.append([
+                            row['group'],
+                            str(int(row['count'])),
+                            f"{row['mean']:.3f}",
+                            f"{row['std']:.3f}"
+                        ])
+                    
+                    elements.append(Paragraph(f"{metric.replace('_', ' ').title()} Comparison", styles['Normal']))
+                    
+                    # Create the table
+                    stat_table = Table(stat_data, colWidths=[1.5*inch, 0.8*inch, 1.2*inch, 1.2*inch])
+                    stat_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                    ]))
+                    
+                    elements.append(stat_table)
+                    elements.append(Spacer(1, 0.2*inch))
 
-# Import centralized kinetics interpretation from core module
-from frap_core import FRAPAnalysisCore
+                    # Calculate ANOVA or t-test results
+                    # Add statistical test results here
+                    if len(groups_to_compare) == 2:
+                        # For two groups, use t-test
+                        from scipy import stats
+                        group1_data = combined_df[combined_df['group'] == groups_to_compare[0]][metric].dropna()
+                        group2_data = combined_df[combined_df['group'] == groups_to_compare[1]][metric].dropna()
+                        
+                        if len(group1_data) > 1 and len(group2_data) > 1:
+                            # Perform t-test
+                            t_stat, p_value = stats.ttest_ind(group1_data, group2_data)
+                            
+                            elements.append(Paragraph(
+                                f"t-test result: t={t_stat:.3f}, p={p_value:.4f} " + 
+                                ("(significant)" if p_value < 0.05 else "(not significant)"),
+                                styles['Normal']
+                            ))
+                    else:
+                        # For more than two groups, use ANOVA
+                        from scipy import stats
+                        
+                        groups_data = []
+                        for group_name in groups_to_compare:
+                            group_data = combined_df[combined_df['group'] == group_name][metric].dropna()
+                            if len(group_data) > 1:
+                                groups_data.append(group_data)
+                        
+                        if len(groups_data) >= 2:
+                            # Perform ANOVA
+                            f_stat, p_value = stats.f_oneway(*groups_data)
+                            
+                            elements.append(Paragraph(
+                                f"ANOVA result: F={f_stat:.3f}, p={p_value:.4f} " + 
+                                ("(significant)" if p_value < 0.05 else "(not significant)"),
+                                styles['Normal']
+                            ))
+                    
+                    elements.append(Spacer(1, 0.25*inch))
+        
+        # Generate plots for visual representation
+        # This would typically involve generating plots using matplotlib or plotly,
+        # saving them to a BytesIO object, and then adding them to the PDF
+        
+        # For example, let's generate a basic plot comparing mobile fractions
+        if len(groups_to_compare) > 1 and all_group_data:
+            try:
+                # Create a mobile population comparison plot
+                plt.figure(figsize=(7, 5))
+                
+                # Use boxplot for comparison
+                group_data = []
+                group_labels = []
+                
+                for group_name in groups_to_compare:
+                    if group_name in data_manager.groups:
+                        group = data_manager.groups[group_name]
+                        if group.get('features_df') is not None and not group['features_df'].empty:
+                            if 'mobile_fraction' in group['features_df'].columns:
+                                mobile_values = group['features_df']['mobile_fraction'].dropna()
+                                if not mobile_values.empty:
+                                    group_data.append(mobile_values)
+                                    group_labels.append(group_name)
+                
+                if group_data:
+                    plt.boxplot(group_data, labels=group_labels)
+                    plt.title('Mobile Population Comparison')
+                    plt.ylabel('Mobile Fraction (%)')
+                    plt.grid(True, linestyle='--', alpha=0.7)
+                    
+                    # Save the plot to a BytesIO object
+                    buf = io.BytesIO()
+                    plt.savefig(buf, format='png', dpi=150)
+                    buf.seek(0)
+                    
+                    # Add the image to the PDF
+                    elements.append(Paragraph("Mobile Population Comparison", styles['Section']))
+                    elements.append(Image(buf, width=6*inch, height=4*inch))
+                    elements.append(Spacer(1, 0.2*inch))
+                    
+                plt.close()
+                
+                # Create a half-time comparison plot if available
+                if 'half_time' in combined_df.columns or 'half_time_fast' in combined_df.columns:
+                    plt.figure(figsize=(7, 5))
+                    
+                    half_time_col = 'half_time_fast' if 'half_time_fast' in combined_df.columns else 'half_time'
+                    
+                    group_data = []
+                    group_labels = []
+                    
+                    for group_name in groups_to_compare:
+                        if group_name in data_manager.groups:
+                            group = data_manager.groups[group_name]
+                            if group.get('features_df') is not None and not group['features_df'].empty:
+                                if half_time_col in group['features_df'].columns:
+                                    half_time_values = group['features_df'][half_time_col].dropna()
+                                    if not half_time_values.empty:
+                                        group_data.append(half_time_values)
+                                        group_labels.append(group_name)
+                    
+                    if group_data:
+                        plt.boxplot(group_data, labels=group_labels)
+                        plt.title('Half-time Comparison')
+                        plt.ylabel('Half-time (s)')
+                        plt.grid(True, linestyle='--', alpha=0.7)
+                        
+                        # Save the plot to a BytesIO object
+                        buf = io.BytesIO()
+                        plt.savefig(buf, format='png', dpi=150)
+                        buf.seek(0)
+                        
+                        # Add the image to the PDF
+                        elements.append(Paragraph("Half-time Comparison", styles['Section']))
+                        elements.append(Image(buf, width=6*inch, height=4*inch))
+                        elements.append(Spacer(1, 0.2*inch))
+                        
+                    plt.close()
+            except Exception as e:
+                logger.error(f"Error generating plots: {e}")
+                elements.append(Paragraph(f"Error generating plots: {str(e)}", styles['Normal']))
+        
+        # Build the PDF
+        doc.build(elements)
+        
+        logger.info(f"PDF report successfully generated: {output_path}")
+        return output_path
+        
+    except Exception as e:
+        logger.error(f"Error generating PDF report: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 
-def interpret_kinetics(rate_constant, bleach_radius_um=1.0, gfp_d=25.0, gfp_mw=27.0):
-    """Use centralized kinetics interpretation function for consistency"""
-    result = FRAPAnalysisCore.interpret_kinetics(rate_constant, bleach_radius_um, gfp_d, 2.82, gfp_mw)
-    return {
-        'diffusion_coefficient': result['diffusion_coefficient'],
-        'k_off': result['k_off'],
-        'apparent_mw': result['apparent_mw']
-    }
+def add_matplotlib_plot_to_pdf(elements, plot_function, *args, **kwargs):
+    """Helper function to add matplotlib plots to PDF"""
+    try:
+        # Generate the plot
+        fig = plot_function(*args, **kwargs)
+        
+        # Save the plot to a BytesIO object
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150)
+        buf.seek(0)
+        
+        # Add the image to the PDF
+        img = Image(buf, width=6*inch, height=4*inch)
+        elements.append(img)
+        
+        # Close the figure to free memory
+        plt.close(fig)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error adding plot to PDF: {e}")
+        return False
+
+if __name__ == "__main__":
+    # Test function if run directly
+    print("This module is not intended to be run directly.")
+    print("Import and use the generate_pdf_report function in your application.")

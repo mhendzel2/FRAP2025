@@ -24,7 +24,7 @@
 pip install streamlit pandas numpy scipy matplotlib plotly seaborn scikit-image opencv-python tifffile reportlab xlsxwriter openpyxl scikit-learn sqlalchemy psycopg2-binary
 
 # Run the application
-streamlit run streamlit_frap_final.py --server.port 5000
+streamlit run streamlit_frap_final.py --server.headless true --server.port 5000
 ```
 
 ## Key Features
@@ -60,7 +60,7 @@ streamlit run streamlit_frap_final.py --server.port 5000
 ## File Structure
 
 - `streamlit_frap_final.py` - Main application interface
-- `frap_core.py` - Core mathematical functions with corrected formulas
+- `frap_core_corrected.py_corrected.py` - Core mathematical functions with corrected formulas
 - `frap_pdf_reports.py` - Professional report generation
 - `frap_image_analysis.py` - Image processing capabilities
 - `sample_data/` - Example FRAP data files
