@@ -94,7 +94,7 @@ class FRAPDataManager:
                     shutil.copy2(file_path, temp_path)
                     file_path = temp_path
 
-            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
+            processed_df = FRAPAnalysisCore.preprocess(FRAPAnalysisCore.load_data(file_path))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
 
@@ -114,11 +114,11 @@ class FRAPDataManager:
                         if pre_bleach_mean > 0:
                             intensity = intensity / pre_bleach_mean
 
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                fits = FRAPAnalysisCore.fit_all_models(time,intensity)
+                best_fit = FRAPAnalysisCore.select_best_fit(fits,st.session_state.settings['default_criterion'])
 
                 if best_fit:
-                    params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                    params = FRAPAnalysisCore.extract_clustering_features(best_fit)
                     # Validate the analysis results
                     params = validate_analysis_results(params)
                 else:
@@ -193,7 +193,7 @@ class FRAPDataManager:
         for file_path in group['files']:
             if file_path not in excluded_files and file_path in self.files:
                 file_data = self.files[file_path]
-                t, y, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                t, y, _ = FRAPAnalysisCore.get_post_bleach_data(
                     file_data['time'],
                     file_data['intensity']
                 )
@@ -205,7 +205,7 @@ class FRAPDataManager:
 
         try:
             # Perform global fitting using the core analysis function
-            global_fit_result = CoreFRAPAnalysis.fit_group_models(traces, model=model)
+            global_fit_result = FRAPAnalysisCore.fit_group_models(traces, model=model)
 
             # Add file names for reference
             global_fit_result['file_names'] = file_names
@@ -255,7 +255,7 @@ class FRAPDataManager:
                 for root, dirs, files in os.walk(temp_dir):
                     # Process subfolders as groups
                     for group_name in dirs:
-                        if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                        if group_name.startswith('__'):  # Ignore system folders like __MACOSX
                             continue
 
                         self.create_group(group_name)
@@ -325,24 +325,25 @@ class FRAPDataManager:
                                     if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
                                         os.remove(tp)
 
-        if success_count > 0:
-            for group_name in groups_created:
-                self.update_group_analysis(group_name)
-            st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups.")
-            if error_count > 0:
-                st.warning(f"{error_count} files were skipped due to errors.")
-                with st.expander("View Error Details"):
-                    for error in error_details:
-                        st.text(error)
-            return True
-        else:
-            st.error("No files could be processed from the ZIP archive.")
-            return False
+            # After processing all groups/files
+            if success_count > 0:
+                for group_name in groups_created:
+                    self.update_group_analysis(group_name)
+                st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups.")
+                if error_count > 0:
+                    st.warning(f"{error_count} files were skipped due to errors.")
+                    with st.expander("View Error Details"):
+                        for error in error_details:
+                            st.text(error)
+                return True
+            else:
+                st.error("No files could be processed from the ZIP archive.")
+                return False
 
-    except Exception as e:
-        logger.error(f"Error processing ZIP archive with subfolders: {e}")
-        st.error(f"An unexpected error occurred: {e}")
-        return False
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+            st.error(f"An unexpected error occurred: {e}")
+            return False
 
     def load_zip_archive_and_create_group(self, zip_file, group_name):
         """
