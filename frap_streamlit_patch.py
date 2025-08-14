@@ -1,0 +1,82 @@
+From 93f6d58 Patch: Correct mobile fraction + restore group upload
+---
+ streamlit_frap_final.py | 59 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ frap_core_corrected.py   | 25 ++++++++++++++++-------
+---
+
+--- a/frap_core_corrected.py
++++ b/frap_core_corrected.py
+@@ def extract_clustering_features(best_fit):
+-def extract_clustering_features(best_fit):
++def extract_clustering_features(best_fit, intensity_fit=None):
+     if best_fit is None:
+         return None
+     model = best_fit['model']
+     params = best_fit['params']
++    func = best_fit['func']
++
++    try:
++        timepoints = np.linspace(0, 100, 1000)
++        fitted_curve = func(timepoints, *params)
++        endpoint = fitted_curve[-1]
++        mobile = 1 - endpoint
++    except:
++        mobile = np.nan
+ 
+     if model == 'single':
+         A, k, C = params
+-        mobile = A/(1 - C) if (1 - C) != 0 else 0.0
+         fast_rate = k
+         koff = 0.0
+     elif model == 'double':
+         A1, k1, A2, k2, C = params
+-        mobile = (A1 + A2)/(1 - C) if (1 - C) != 0 else 0.0
+         fast_rate = max(k1, k2)
+         koff = min(k1, k2)
+     elif model == 'triple':
+         A1, k1, A2, k2, A3, k3, C = params
+-        mobile = (A1 + A2 + A3)/(1 - C) if (1 - C) != 0 else 0.0
+         fast_rate = max(k1, k2, k3)
+         koff = min(k1, k2, k3)
+     else:
+         return None
+     return np.array([mobile, fast_rate, koff])
+
+--- a/streamlit_frap_final.py
++++ b/streamlit_frap_final.py
+@@ file_upload = st.file_uploader(
+ file_upload = st.file_uploader("Upload FRAP files", accept_multiple_files=True)
+ if file_upload:
+     if len(file_upload) == 1:
+         file = file_upload[0]
+         df = load_data(file)
+         df = preprocess(df)
+         time = df['time'].to_numpy()
+         intensity = df['normalized'].to_numpy()
+         fits = fit_all_models(time, intensity)
+         best = select_best_fit(fits)
+         features = extract_clustering_features(best)
+         st.success("Processed single file")
+         # plot logic here
+     else:
+         group_name = st.text_input("Enter group name")
+         if group_name:
+             all_results = []
+             for file in file_upload:
+                 df = load_data(file)
+                 df = preprocess(df)
+                 time = df['time'].to_numpy()
+                 intensity = df['normalized'].to_numpy()
+                 fits = fit_all_models(time, intensity)
+                 best = select_best_fit(fits)
+                 features = extract_clustering_features(best)
+                 all_results.append({
+                     'file': file.name,
+                     'experiment': group_name,
+                     'time': time,
+                     'intensity': intensity,
+                     'best_fit': best,
+                     'features': features
+                 })
+             st.success(f"Processed {len(all_results)} files for group '{group_name}'")
+             # Optional: plot group average or enable clustering here

@@ -15,7 +15,7 @@
 
 ### Code Quality Improvements
 - Eliminated code duplication in kinetics interpretation
-- Centralized mathematical functions in frap_core.py
+- Centralized mathematical functions in frap_core_corrected.py.py
 - Enhanced error handling and validation
 - Improved documentation and comments
 
@@ -27,7 +27,7 @@
 
 ### Files Modified
 - streamlit_frap_final.py: Updated kinetics interpretation
-- frap_core.py: Added centralized kinetics function
+- frap_core_corrected.py.py: Added centralized kinetics function
 - frap_pdf_reports.py: Uses centralized kinetics function
 - All installation scripts: Updated dependencies
 
