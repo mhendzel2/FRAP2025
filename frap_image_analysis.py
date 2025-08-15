@@ -14,6 +14,7 @@ import streamlit as st
 from typing import Tuple, List, Dict, Optional
 import os
 from pathlib import Path
+from frap_utils import import_imagej_roi
 
 class FRAPImageAnalyzer:
     """
@@ -600,8 +601,6 @@ class FRAPImageAnalyzer:
 
 def create_image_analysis_interface():
     """Create Streamlit interface for image analysis"""
-    from streamlit_frap_final import import_imagej_roi # Local import to avoid circular dependency
-
     st.header("🔬 FRAP Image Analysis")
     st.write("Direct analysis of raw microscopy images with automated or imported ROI detection")
 
@@ -665,6 +664,8 @@ def create_image_analysis_interface():
                         roi_type = st.selectbox(f"Assign type for '{roi_info['name']}'",
                                                 ['bleach_spot', 'reference', 'background'], key=roi_file.name)
                         analyzer.add_roi_from_import(roi_info, roi_type)
+                    else:
+                        st.error(f"Failed to import ROI file: {roi_file.name}")
 
         if analyzer.rois:
             st.write(f"**Current ROIs:** {len(analyzer.rois)}")
