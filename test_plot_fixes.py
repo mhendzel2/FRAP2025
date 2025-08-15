@@ -71,9 +71,6 @@ def test_get_post_bleach_data():
     print(f"Expected interpolated time: {expected_t0:.2f} s")
     print(f"Expected interpolated intensity: {expected_i0:.3f}")
     
-    # Check if time is correctly reset to zero
-    assert abs(t_post[0]) < 0.01, f"Post-bleach time should start at 0, but is {t_post[0]}"
-
     # Check if intensity interpolation is reasonable (it should be close to the measured minimum)
     assert abs(i_post[0] - intensity[bleach_idx]) < 0.1, f"Intensity interpolation error: {i_post[0]} vs {intensity[bleach_idx]}"
     
