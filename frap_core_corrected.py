@@ -75,9 +75,6 @@ def get_post_bleach_data(time: np.ndarray,
     t_post = np.concatenate([[t_bleach], time[i_min+1:]])
     i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
     
-    # Reset time to start from zero at bleach event
-    t_post = t_post - t_bleach
-    
     return t_post, i_post, i_min
 
 # ----------------------------- DIFFUSION ------------------------------- #
@@ -203,9 +200,6 @@ class FRAPAnalysisCore:
         # Start from the extrapolated bleach point
         t_post = np.concatenate([[t_bleach], time[i_min+1:]])
         i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
-        
-        # Reset time scale to start from zero at bleach event
-        t_post = t_post - t_bleach
         
         return t_post, i_post, i_min
 
@@ -589,7 +583,9 @@ class FRAPAnalysisCore:
             if np.any(np.isinf(time)) or np.any(np.isinf(intensity)):
                 raise ValueError("Input data contains infinite values")
             
-            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            t_fit, intensity_fit, i_min = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            bleach_time = time[i_min]
+            t_fit_for_fitting = t_fit - bleach_time
             n = len(t_fit)
             fits = []
             
@@ -609,7 +605,7 @@ class FRAPAnalysisCore:
                     A0 = 0.1
             
             # Calculate rate constant guess with error handling
-            time_span = t_fit[-1] - t_fit[0]
+            time_span = t_fit_for_fitting[-1] - t_fit_for_fitting[0]
             if time_span <= 0:
                 raise ValueError("Invalid time span for rate constant calculation")
             
@@ -624,8 +620,8 @@ class FRAPAnalysisCore:
             try:
                 p0 = [A0, k0, C0]
                 bounds = ([0, 1e-6, -np.inf], [np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
-                fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
+                popt, _ = curve_fit(FRAPAnalysisCore.single_component, t_fit_for_fitting, intensity_fit, p0=p0, bounds=bounds)
+                fitted = FRAPAnalysisCore.single_component(t_fit_for_fitting, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
@@ -646,8 +642,8 @@ class FRAPAnalysisCore:
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
-                fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
+                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit_for_fitting, intensity_fit, p0=p0_double, bounds=bounds_double)
+                fitted = FRAPAnalysisCore.two_component(t_fit_for_fitting, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_double))
@@ -670,8 +666,8 @@ class FRAPAnalysisCore:
                 k3_0 = k0 / 3
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
                 bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
-                fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
+                popt, _ = curve_fit(FRAPAnalysisCore.three_component, t_fit_for_fitting, intensity_fit, p0=p0_triple, bounds=bounds_triple)
+                fitted = FRAPAnalysisCore.three_component(t_fit_for_fitting, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_triple))
@@ -1087,9 +1083,9 @@ class FRAPAnalysisCore:
                 
                 # Calculate mobile fraction from extrapolated recovery
                 # Since we now start from the true bleach point, mobile fraction is more accurate
-                # New mobile population: 1 - (A + C) (expressed in %). Plateau check using fitted_values
+                # Mobile fraction is the final recovery percentage.
                 endpoint = A + C if np.isfinite(A) and np.isfinite(C) else np.nan
-                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
                 fitted_vals = best_fit.get('fitted_values')
                 if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
                     if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
@@ -1167,7 +1163,7 @@ class FRAPAnalysisCore:
                 
                 # Calculate mobile fraction from extrapolated recovery
                 endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
                 fitted_vals = best_fit.get('fitted_values')
                 if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
                     if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
@@ -1243,7 +1239,7 @@ class FRAPAnalysisCore:
                 
                 # Calculate mobile fraction from extrapolated recovery
                 endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = (1 - endpoint) * 100.0 if np.isfinite(endpoint) else np.nan
+                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
                 fitted_vals = best_fit.get('fitted_values')
                 if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
                     if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:

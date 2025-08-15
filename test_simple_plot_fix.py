@@ -39,24 +39,19 @@ def test_timepoint_conversion():
     print(f"t_fit (starts from 0): {t_fit}")
     print(f"intensity_fit: {intensity_fit}")
     
-    # Convert back to original time scale for plotting
-    t_fit_original_scale = t_fit + interpolated_bleach_time
-    
-    print(f"t_fit converted to original scale: {t_fit_original_scale}")
-    
-    # Verify that the first point aligns with interpolated bleach time
-    assert abs(t_fit_original_scale[0] - interpolated_bleach_time) < 0.001, "First timepoint should be at interpolated bleach time"
+    # Verify that the first point is the bleach time
+    assert abs(t_fit[0] - time[bleach_idx]) < 0.001, "First timepoint should be the bleach time"
     
     # Verify that subsequent points align with original timepoints
-    original_post_bleach_times = time[bleach_idx:]
-    for i in range(1, len(t_fit_original_scale)):
-        expected_time = original_post_bleach_times[i-1]
-        actual_time = t_fit_original_scale[i]
+    original_post_bleach_times = time[bleach_idx+1:]
+    for i in range(len(original_post_bleach_times)):
+        expected_time = original_post_bleach_times[i]
+        actual_time = t_fit[i+1]
         assert abs(actual_time - expected_time) < 0.001, f"Timepoint mismatch at index {i}: {actual_time} vs {expected_time}"
     
     print("✓ Timepoint conversion works correctly!")
-    print(f"✓ Red fit line will start at time {interpolated_bleach_time:.1f} s")
-    print(f"✓ Blue data points will span from {t_fit_original_scale[0]:.1f} to {t_fit_original_scale[-1]:.1f} s")
+    print(f"✓ Red fit line will start at time {t_fit[0]:.1f} s")
+    print(f"✓ Blue data points will span from {t_fit[0]:.1f} to {t_fit[-1]:.1f} s")
     
     return True
 

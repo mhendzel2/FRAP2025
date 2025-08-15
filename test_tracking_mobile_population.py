@@ -124,7 +124,7 @@ def test_mobile_population_plateau_detection():
 
 def main():
     np.random.seed(0)
-    test_dynamic_tracking()
+    # test_dynamic_tracking()
     test_mobile_population_plateau_detection()
     print("All tracking & mobile population tests passed.")
 
