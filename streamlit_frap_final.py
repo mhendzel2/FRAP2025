@@ -385,50 +385,6 @@ The kinetic rates can be interpreted in two ways:
 
     return report_str
 
-def import_imagej_roi(roi_data: bytes) -> Optional[Dict[str, Any]]:
-    """
-    Imports ROI data from an ImageJ .roi file.
-
-    This function now uses the `roifile` library to parse .roi files.
-    
-    Parameters:
-    -----------
-    roi_data : bytes
-        The .roi file data as bytes.
-        
-    Returns:
-    --------
-    dict or None
-        A dictionary containing ROI information, or None if import fails.
-    """
-    try:
-        import roifile
-        import io
-
-        # Read the ROI data from bytes
-        roi = roifile.roiread(io.BytesIO(roi_data))
-
-        # Extract relevant information
-        roi_info = {
-            'name': roi.name,
-            'type': roi.roitype.name,
-            'left': roi.left,
-            'top': roi.top,
-            'right': roi.right,
-            'bottom': roi.bottom,
-            'width': roi.width,
-            'height': roi.height,
-            'coordinates': roi.coordinates().tolist() # Convert numpy array to list
-        }
-
-        logger.info(f"Successfully imported ROI: {roi.name} ({roi.roitype.name})")
-        return roi_info
-
-    except Exception as e:
-        logger.error(f"ImageJ ROI import failed: {e}")
-        st.error(f"Failed to import ROI file: {e}")
-        return None
-
 # --- Session State Initialization ---
 if 'settings' not in st.session_state:
     st.session_state.settings = {
