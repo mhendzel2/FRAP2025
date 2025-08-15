@@ -3,12 +3,14 @@ FRAP Utilities Module
 Helper functions for the FRAP Analysis application
 """
 
+from typing import Optional, Dict, Any
 import pandas as pd
 import numpy as np
 import base64
 import io
 from scipy import stats
 import logging
+import roifile
 
 logger = logging.getLogger(__name__)
 
@@ -347,3 +349,43 @@ def to_excel_download_link(df, filename="data.xlsx"):
     b64 = base64.b64encode(excel_data).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">Download Excel</a>'
     return href
+
+def import_imagej_roi(roi_data: bytes) -> Optional[Dict[str, Any]]:
+    """
+    Imports ROI data from an ImageJ .roi file.
+
+    This function now uses the `roifile` library to parse .roi files.
+
+    Parameters:
+    -----------
+    roi_data : bytes
+        The .roi file data as bytes.
+
+    Returns:
+    --------
+    dict or None
+        A dictionary containing ROI information, or None if import fails.
+    """
+    try:
+        # Read the ROI data from bytes
+        roi = roifile.roiread(io.BytesIO(roi_data))
+
+        # Extract relevant information
+        roi_info = {
+            'name': roi.name,
+            'type': roi.roitype.name,
+            'left': roi.left,
+            'top': roi.top,
+            'right': roi.right,
+            'bottom': roi.bottom,
+            'width': roi.width,
+            'height': roi.height,
+            'coordinates': roi.coordinates().tolist() # Convert numpy array to list
+        }
+
+        logger.info(f"Successfully imported ROI: {roi.name} ({roi.roitype.name})")
+        return roi_info
+
+    except Exception as e:
+        logger.error(f"ImageJ ROI import failed: {e}")
+        return None
