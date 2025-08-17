@@ -125,11 +125,13 @@ class FRAPDataManager:
                     params = None
                     logger.error(f"No valid fit found for {file_name}")
 
-                self.files[file_path]={
+                # Always store using the original (hashed) path so group references remain valid
+                storage_key = original_path
+                self.files[storage_key]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params
                 }
-                logger.info(f"Loaded: {file_name}")
+                logger.info(f"Loaded: {file_name} (stored as {storage_key})")
                 return True
         except Exception as e:
             st.error(f"Error loading {file_name}: {e}")
@@ -285,8 +287,9 @@ class FRAPDataManager:
                                         tp = f"data/{base_name}_{content_hash}.csv"
                                     else:
                                         tp = f"data/{file_name}_{content_hash}"
+                                    storage_key = tp  # consistent key
 
-                                    if tp not in self.files:
+                                    if storage_key not in self.files:
                                         os.makedirs(os.path.dirname(tp), exist_ok=True)
 
                                         if file_ext in ['.tif', '.tiff']:
@@ -311,12 +314,12 @@ class FRAPDataManager:
                                             shutil.copy(file_path_in_temp, tp)
 
                                         if self.load_file(tp, file_name):
-                                            self.add_file_to_group(group_name, tp)
+                                            self.add_file_to_group(group_name, storage_key)
                                             success_count += 1
                                         else:
                                             raise ValueError("Failed to load data from file.")
                                     else:
-                                        self.add_file_to_group(group_name, tp)
+                                        self.add_file_to_group(group_name, storage_key)
 
                                 except Exception as e:
                                     error_count += 1
@@ -378,14 +381,14 @@ class FRAPDataManager:
                             file_name = os.path.basename(file_in_zip)
 
                             # Create a temporary file to use with the existing load_file logic
-                            tp = f"data/{file_name}_{hash(file_content)}"
-                            if tp not in self.files:
-                                with open(tp, "wb") as f:
+                            storage_key = f"data/{file_name}_{hash(file_content)}"
+                            if storage_key not in self.files:
+                                with open(storage_key, "wb") as f:
                                     f.write(file_content)
 
                                 # Attempt to load the file
-                                if self.load_file(tp, file_name):
-                                    self.add_file_to_group(group_name, tp)
+                                if self.load_file(storage_key, file_name):
+                                    self.add_file_to_group(group_name, storage_key)
                                     success_count += 1
                                 else:
                                     error_count += 1
@@ -393,11 +396,11 @@ class FRAPDataManager:
                                     error_details.append(error_msg)
                                     logger.error(error_msg)
                                     # Clean up failed file
-                                    if os.path.exists(tp):
-                                        os.remove(tp)
+                                    if os.path.exists(storage_key):
+                                        os.remove(storage_key)
                             else:
                                 # File already exists, just add to group
-                                self.add_file_to_group(group_name, tp)
+                                self.add_file_to_group(group_name, storage_key)
                                 success_count += 1
 
                         except Exception as e:
