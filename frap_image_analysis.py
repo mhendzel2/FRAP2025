@@ -599,6 +599,21 @@ class FRAPImageAnalyzer:
         
         return summary
 
+"""FRAP Image Analysis Module
+
+This module provides image stack handling, bleach event detection, ROI definition,
+and a Streamlit interface for interactive analysis. The optional ImageJ ROI import
+utility was previously supplied by frap_roi_utils.import_imagej_roi, but that file
+has been removed from the repository. To keep the interface functional we make
+ROI import conditional: if the helper cannot be imported, the option is hidden.
+"""
+
+# Optional ImageJ ROI importer
+try:  # pragma: no cover - optional dependency
+    from frap_roi_utils import import_imagej_roi  # type: ignore
+except Exception:  # Broad except to handle missing module or other import errors
+    import_imagej_roi = None
+
 def create_image_analysis_interface():
     """Create Streamlit interface for image analysis"""
     st.header("🔬 FRAP Image Analysis")
@@ -642,7 +657,10 @@ def create_image_analysis_interface():
         analyzer.time_interval = time_interval
 
         st.subheader("ROI Definition")
-        roi_method = st.radio("ROI Definition Method", ["Automated", "Import from ImageJ"])
+        roi_options = ["Automated"]
+        if import_imagej_roi is not None:
+            roi_options.append("Import from ImageJ")
+        roi_method = st.radio("ROI Definition Method", roi_options)
 
         if roi_method == "Automated":
             if st.button("🎯 Detect Bleach & Define ROIs"):
@@ -654,18 +672,26 @@ def create_image_analysis_interface():
                 else:
                     st.error("❌ Could not automatically detect bleach event.")
         
-        else: # Import from ImageJ
+        elif roi_method == "Import from ImageJ" and import_imagej_roi is not None:
             uploaded_rois = st.file_uploader("Upload ImageJ ROI files (.roi)", type=['roi'], accept_multiple_files=True)
             if uploaded_rois:
-                analyzer.rois = {} # Clear existing ROIs
+                analyzer.rois = {}  # Clear existing ROIs
                 for roi_file in uploaded_rois:
-                    roi_info = import_imagej_roi(roi_file.getvalue())
+                    try:
+                        roi_info = import_imagej_roi(roi_file.getvalue())
+                    except Exception as e:  # pragma: no cover
+                        roi_info = None
+                        st.error(f"Error parsing ROI file {roi_file.name}: {e}")
                     if roi_info:
-                        roi_type = st.selectbox(f"Assign type for '{roi_info['name']}'",
-                                                ['bleach_spot', 'reference', 'background'], key=roi_file.name)
+                        roi_type = st.selectbox(
+                            f"Assign type for '{roi_info['name']}'",
+                            ['bleach_spot', 'reference', 'background'], key=roi_file.name
+                        )
                         analyzer.add_roi_from_import(roi_info, roi_type)
                     else:
                         st.error(f"Failed to import ROI file: {roi_file.name}")
+        elif roi_method == "Import from ImageJ" and import_imagej_roi is None:
+            st.warning("ImageJ ROI import utility not available in this build.")
 
         if analyzer.rois:
             st.write(f"**Current ROIs:** {len(analyzer.rois)}")
