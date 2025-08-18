@@ -155,44 +155,52 @@ class FRAPImageAnalyzer:
         """
         if self.image_stack is None:
             raise ValueError("No image stack loaded")
-
-        bleach_coords = None
-        bleach_frame = None
-
+        
         if method == 'intensity_drop':
-            # Mean intensity trace
+            # Calculate mean intensity over time
             if roi_coords:
                 x, y, w, h = roi_coords
                 roi_stack = self.image_stack[:, y:y+h, x:x+w]
                 mean_intensities = np.mean(roi_stack, axis=(1, 2))
             else:
                 mean_intensities = np.mean(self.image_stack, axis=(1, 2))
+            
+            # Find largest intensity drop
             intensity_diffs = np.diff(mean_intensities)
-            if len(intensity_diffs) == 0:
-                return None, None
-            bleach_frame = int(np.argmin(intensity_diffs) + 1)
+            bleach_frame = np.argmin(intensity_diffs) + 1
+            
+            # Find bleach spot location in that frame
             if bleach_frame < len(self.image_stack):
-                blurred = cv2.GaussianBlur(self.image_stack[bleach_frame], (5, 5), 1)
+                bleach_image = self.image_stack[bleach_frame]
+                
+                # Find darkest region (bleach spot)
+                # Apply Gaussian blur to reduce noise
+                blurred = cv2.GaussianBlur(bleach_image, (5, 5), 1)
+                
+                # Find minimum intensity location
                 min_loc = np.unravel_index(np.argmin(blurred), blurred.shape)
-                bleach_coords = (int(min_loc[1]), int(min_loc[0]))
+                bleach_coords = (min_loc[1], min_loc[0])  # (x, y)
+        
         elif method == 'gradient':
+            # Detect based on temporal gradient
             temporal_gradient = np.gradient(self.image_stack.astype(float), axis=0)
+            
+            # Find frame with largest negative gradient
             gradient_magnitude = np.mean(np.abs(temporal_gradient), axis=(1, 2))
-            bleach_frame = int(np.argmax(gradient_magnitude))
+            bleach_frame = np.argmax(gradient_magnitude)
+            
+            # Find location of maximum gradient change
             gradient_frame = temporal_gradient[bleach_frame]
             max_grad_loc = np.unravel_index(np.argmax(np.abs(gradient_frame)), gradient_frame.shape)
-            bleach_coords = (int(max_grad_loc[1]), int(max_grad_loc[0]))
+            bleach_coords = (max_grad_loc[1], max_grad_loc[0])
+        
         else:
+            # Manual detection - return None to prompt user selection
             return None, None
-
-        if bleach_coords is None or bleach_frame is None:
-            avg_img = np.mean(self.image_stack, axis=0)
-            min_loc = np.unravel_index(np.argmin(avg_img), avg_img.shape)
-            bleach_coords = (int(min_loc[1]), int(min_loc[0]))
-            bleach_frame = 0
-
+        
         self.bleach_frame = bleach_frame
         self.bleach_coordinates = bleach_coords
+        
         return bleach_frame, bleach_coords
     
     def define_rois(self, bleach_center: Tuple[int, int], 
@@ -591,21 +599,8 @@ class FRAPImageAnalyzer:
         
         return summary
 
-"""FRAP Image Analysis Module
-
-This module provides image stack handling, bleach event detection, ROI definition,
-and a Streamlit interface for interactive analysis. The optional ImageJ ROI import
-utility was previously supplied by frap_roi_utils.import_imagej_roi, but that file
-has been removed from the repository. To keep the interface functional we make
-ROI import conditional: if the helper cannot be imported, the option is hidden.
-"""
-
-# Optional ImageJ ROI importer
-try:  # pragma: no cover - optional dependency
-    from frap_roi_utils import import_imagej_roi  # type: ignore
-except Exception:  # Broad except to handle missing module or other import errors
-    import_imagej_roi = None
-
+    # (Conflict resolution note) Removed legacy optional import of frap_roi_utils.
+    # The function import_imagej_roi is now provided by frap_utils; no duplicate import needed.
 def create_image_analysis_interface():
     """Create Streamlit interface for image analysis"""
     st.header("🔬 FRAP Image Analysis")
@@ -657,7 +652,7 @@ def create_image_analysis_interface():
         if roi_method == "Automated":
             if st.button("🎯 Detect Bleach & Define ROIs"):
                 bleach_frame, bleach_coords = analyzer.detect_bleach_event(method=detection_method)
-                if bleach_frame is not None and bleach_coords is not None:
+                if bleach_frame and bleach_coords:
                     st.success(f"✅ Bleach detected at frame {bleach_frame}, coordinates {bleach_coords}")
                     analyzer.define_rois(bleach_coords, bleach_radius)
                     st.info(f"📍 Defined {len(analyzer.rois)} ROIs automatically")
@@ -696,8 +691,8 @@ def create_image_analysis_interface():
                     fig, ax = plt.subplots(figsize=(10, 6))
                     for i, (roi_name, roi_data) in enumerate(analyzer.rois.items()):
                         ax.plot(df['Time'], df[roi_name], label=f"{roi_name} ({roi_data.get('name', 'N/A')})")
-                    if analyzer.bleach_frame is not None and 0 <= analyzer.bleach_frame < len(df):
-                        ax.axvline(x=df['Time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
+                    if analyzer.bleach_frame:
+                         ax.axvline(x=df['Time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
                     ax.set_xlabel('Time (s)')
                     ax.set_ylabel('Intensity')
                     ax.set_title('FRAP Intensity Profiles')
