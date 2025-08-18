@@ -22,11 +22,175 @@ from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 import zipfile
 import tempfile
 import shutil
-import logging
-from typing import Optional, Dict, Any
-
+# --- Page and Logging Configuration ---
+st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+os.makedirs('data', exist_ok=True)
+
+def validate_frap_data(df: pd.DataFrame, file_path: str = "") -> bool:
+    """
+    Validate the structure and quality of FRAP data.
+    
+    Args:
+        df: DataFrame to validate
+        file_path: Path to the file (for error reporting)
+        
+    Returns:
+        bool: True if data is valid, False otherwise
+    """
+    try:
+        # Check required columns
+        required_cols = ['time', 'ROI1', 'ROI2', 'ROI3']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            logger.error(f"Missing required columns {missing_cols} in {file_path}")
+            return False
+        
+        # Check data types
+        for col in required_cols:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                logger.error(f"Column '{col}' is not numeric in {file_path}")
+                return False
+        
+        # Check for sufficient data points
+        if len(df) < 10:
+            logger.error(f"Insufficient data points ({len(df)}) in {file_path}")
+            return False
+        
+        # Check for monotonic time
+        if not df['time'].is_monotonic_increasing:
+            logger.warning(f"Time column is not monotonic in {file_path}")
+        
+        # Check for negative intensities (should be non-negative)
+        for col in ['ROI1', 'ROI2', 'ROI3']:
+            if (df[col] < 0).any():
+                logger.warning(f"Negative intensities found in column '{col}' in {file_path}")
+        
+        # Check for NaN values
+        try:
+            has_nan = df[required_cols].isnull().sum().sum() > 0
+            if has_nan:
+                logger.warning(f"NaN values found in data from {file_path}")
+        except Exception:
+            logger.debug(f"Could not check for NaN values in {file_path}")
+        
+        logger.info(f"Data validation passed for {file_path}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Data validation failed for {file_path}: {e}")
+        return False
+
+def gaussian_2d(xy: Tuple[np.ndarray, np.ndarray], A: float, x0: float, y0: float, 
+                sigma_x: float, sigma_y: float, theta: float, offset: float) -> np.ndarray:
+    """A 2D Gaussian function for PSF fitting."""
+    x, y = xy
+    x0 = float(x0)
+    y0 = float(y0)
+    a = (np.cos(theta)**2)/(2*sigma_x**2) + (np.sin(theta)**2)/(2*sigma_y**2)
+    b = -(np.sin(2*theta))/(4*sigma_x**2) + (np.sin(2*theta))/(4*sigma_y**2)
+    c = (np.sin(theta)**2)/(2*sigma_x**2) + (np.cos(theta)**2)/(2*sigma_y**2)
+    g = offset + A * np.exp( - (a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))
+    return g.ravel()
+
+def fit_psf(image_data: np.ndarray) -> Dict[str, float]:
+    """
+    Fits a 2D Gaussian to image data to find the PSF.
+    
+    Parameters:
+    -----------
+    image_data : numpy.ndarray
+        A 2D array representing the cropped image of a fluorescent bead.
+        
+    Returns:
+    --------
+    dict
+        A dictionary containing the fitted parameters (sigma_x, sigma_y).
+    """
+    # Create x and y coordinate arrays
+    x = np.arange(image_data.shape[1])
+    y = np.arange(image_data.shape[0])
+    x, y = np.meshgrid(x, y)
+
+    # Initial guesses for the parameters
+    initial_guess = (
+        np.max(image_data),
+        image_data.shape[1]/2,
+        image_data.shape[0]/2,
+        2.0,
+        2.0,
+        0,
+        np.min(image_data)
+    )
+
+    try:
+        # The curve_fit function requires the data to be flattened
+        popt, _ = curve_fit(gaussian_2d, (x.ravel(), y.ravel()), image_data.ravel(), p0=initial_guess)
+        
+        # Extract the parameters
+        A, x0, y0, sigma_x, sigma_y, theta, offset = popt
+        
+        return {
+            'sigma_x': abs(sigma_x), 
+            'sigma_y': abs(sigma_y),
+            'amplitude': A,
+            'center_x': x0,
+            'center_y': y0,
+            'theta': theta,
+            'offset': offset
+        }
+    except Exception as e:
+        logger.error(f"PSF fitting failed: {e}")
+        return {'sigma_x': 2.0, 'sigma_y': 2.0}
+
+def track_bleach_center(image_stack: np.ndarray, bleach_frame_index: int, 
+                       search_radius: int = 5) -> List[Tuple[int, int]]:
+    """
+    Tracks the center of the photobleached region across an image stack.
+    
+    Parameters:
+    -----------
+    image_stack : numpy.ndarray
+        The 3D FRAP data (time, y, x).
+    bleach_frame_index : int
+        The index of the frame immediately after photobleaching.
+    search_radius : int
+        The radius (in pixels) to search for the minimum in subsequent frames.
+        
+    Returns:
+    --------
+    list
+        A list of (y, x) coordinates of the bleach center for each frame post-bleach.
+    """
+    post_bleach_stack = image_stack[bleach_frame_index:]
+    centers = []
+
+    # Find the initial center in the first post-bleach frame
+    initial_center = tuple(minimum_position(post_bleach_stack[0]))
+    centers.append(initial_center)
+
+    last_center = initial_center
+    for i in range(1, len(post_bleach_stack)):
+        frame = post_bleach_stack[i]
+        
+        # Define a search area around the last known center
+        y_min = max(0, int(last_center[0]) - search_radius)
+        y_max = min(frame.shape[0], int(last_center[0]) + search_radius)
+        x_min = max(0, int(last_center[1]) - search_radius)
+        x_max = min(frame.shape[1], int(last_center[1]) + search_radius)
+        
+        search_area = frame[y_min:y_max, x_min:x_max]
+        
+        # Find the minimum in the search area
+        local_min_pos = tuple(minimum_position(search_area))
+        
+        # Convert back to global frame coordinates
+        current_center = (int(local_min_pos[0]) + y_min, int(local_min_pos[1]) + x_min)
+        centers.append(current_center)
+        last_center = current_center
+        
+    return centers
 
 def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0):
     """
@@ -221,7 +385,7 @@ The kinetic rates can be interpreted in two ways:
 
     return report_str
 
-# Note: ROI import utility removed; image analysis interface handles optional import gracefully.
+# (Conflict resolution note) Removed obsolete conflict markers referencing frap_roi_utils removal.
 # --- Session State Initialization ---
 if 'settings' not in st.session_state:
     st.session_state.settings = {
@@ -693,8 +857,7 @@ with st.sidebar:
     ```
     Each subfolder will become a group, and files within will be added to that group.
     """)
-    # Unique key name to prevent duplicate element errors across modules
-    uploaded_zip = st.file_uploader("Upload a .zip file with group subfolders", type=['zip'], key="zip_uploader_sidebar")
+    uploaded_zip = st.file_uploader("Upload a .zip file with group subfolders", type=['zip'], key="zip_uploader")
 
     if uploaded_zip:
         if st.button(f"Create Groups from '{uploaded_zip.name}'"):
@@ -853,16 +1016,10 @@ with tab1:
                 
                 # Check for problematic results and show warnings
                 mobile_frac = features.get('mobile_fraction', 0)
-                plateau_status = features.get('fraction_plateau_status')
-                mobile_display = features.get('mobile_fraction_display')
-                immobile_display = features.get('immobile_fraction_display')
-                if plateau_status == 'not_determinable':
-                    st.info("Recovery still rising: mobile/immobile fractions reported as bounds (>) / (<)")
-                if np.isfinite(mobile_frac):
-                    if mobile_frac > 100:
-                        st.error(f"⚠️ Mobile fraction raw ({mobile_frac:.1f}%) exceeds 100% (check normalization)")
-                    elif mobile_frac < 0:
-                        st.error(f"⚠️ Mobile fraction raw ({mobile_frac:.1f}%) is negative (check preprocessing)")
+                if mobile_frac > 100:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) exceeds 100% - this indicates a problem with the analysis")
+                elif mobile_frac < 0:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) is negative - this indicates a problem with the analysis")
                 
                 # Check data quality
                 r2 = best_fit.get('r2', 0)
@@ -871,11 +1028,9 @@ with tab1:
                 
                 col1,col2,col3,col4=st.columns(4)
                 with col1:
-                    if mobile_display:
-                        st.metric("Mobile Fraction", mobile_display)
-                    else:
-                        display_mobile = max(0, min(100, mobile_frac))
-                        st.metric("Mobile Fraction", f"{display_mobile:.1f}%")
+                    # Ensure mobile fraction is displayed correctly
+                    display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
+                    st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
                 with col2:
                     half_time = features.get('half_time_fast',features.get('half_time',0))
                     st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
@@ -1162,14 +1317,8 @@ with tab1:
                     with col_bio3:
                         st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
                     with col_bio4:
-                        if immobile_display:
-                            st.metric("Immobile (%)", immobile_display)
-                        else:
-                            immobile_frac = features.get('immobile_fraction', np.nan)
-                            if np.isfinite(immobile_frac):
-                                st.metric("Immobile (%)", f"{immobile_frac:.1f}%")
-                            else:
-                                st.metric("Immobile (%)", "N/A")
+                        immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                        st.metric("Immobile (%)",f"{immobile_frac:.1f}")
                 
                 else:
                     # More informative error message with diagnostic information
