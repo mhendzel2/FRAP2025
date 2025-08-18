@@ -155,52 +155,44 @@ class FRAPImageAnalyzer:
         """
         if self.image_stack is None:
             raise ValueError("No image stack loaded")
-        
+
+        bleach_coords = None
+        bleach_frame = None
+
         if method == 'intensity_drop':
-            # Calculate mean intensity over time
+            # Mean intensity trace
             if roi_coords:
                 x, y, w, h = roi_coords
                 roi_stack = self.image_stack[:, y:y+h, x:x+w]
                 mean_intensities = np.mean(roi_stack, axis=(1, 2))
             else:
                 mean_intensities = np.mean(self.image_stack, axis=(1, 2))
-            
-            # Find largest intensity drop
             intensity_diffs = np.diff(mean_intensities)
-            bleach_frame = np.argmin(intensity_diffs) + 1
-            
-            # Find bleach spot location in that frame
+            if len(intensity_diffs) == 0:
+                return None, None
+            bleach_frame = int(np.argmin(intensity_diffs) + 1)
             if bleach_frame < len(self.image_stack):
-                bleach_image = self.image_stack[bleach_frame]
-                
-                # Find darkest region (bleach spot)
-                # Apply Gaussian blur to reduce noise
-                blurred = cv2.GaussianBlur(bleach_image, (5, 5), 1)
-                
-                # Find minimum intensity location
+                blurred = cv2.GaussianBlur(self.image_stack[bleach_frame], (5, 5), 1)
                 min_loc = np.unravel_index(np.argmin(blurred), blurred.shape)
-                bleach_coords = (min_loc[1], min_loc[0])  # (x, y)
-        
+                bleach_coords = (int(min_loc[1]), int(min_loc[0]))
         elif method == 'gradient':
-            # Detect based on temporal gradient
             temporal_gradient = np.gradient(self.image_stack.astype(float), axis=0)
-            
-            # Find frame with largest negative gradient
             gradient_magnitude = np.mean(np.abs(temporal_gradient), axis=(1, 2))
-            bleach_frame = np.argmax(gradient_magnitude)
-            
-            # Find location of maximum gradient change
+            bleach_frame = int(np.argmax(gradient_magnitude))
             gradient_frame = temporal_gradient[bleach_frame]
             max_grad_loc = np.unravel_index(np.argmax(np.abs(gradient_frame)), gradient_frame.shape)
-            bleach_coords = (max_grad_loc[1], max_grad_loc[0])
-        
+            bleach_coords = (int(max_grad_loc[1]), int(max_grad_loc[0]))
         else:
-            # Manual detection - return None to prompt user selection
             return None, None
-        
+
+        if bleach_coords is None or bleach_frame is None:
+            avg_img = np.mean(self.image_stack, axis=0)
+            min_loc = np.unravel_index(np.argmin(avg_img), avg_img.shape)
+            bleach_coords = (int(min_loc[1]), int(min_loc[0]))
+            bleach_frame = 0
+
         self.bleach_frame = bleach_frame
         self.bleach_coordinates = bleach_coords
-        
         return bleach_frame, bleach_coords
     
     def define_rois(self, bleach_center: Tuple[int, int], 
@@ -665,7 +657,7 @@ def create_image_analysis_interface():
         if roi_method == "Automated":
             if st.button("🎯 Detect Bleach & Define ROIs"):
                 bleach_frame, bleach_coords = analyzer.detect_bleach_event(method=detection_method)
-                if bleach_frame and bleach_coords:
+                if bleach_frame is not None and bleach_coords is not None:
                     st.success(f"✅ Bleach detected at frame {bleach_frame}, coordinates {bleach_coords}")
                     analyzer.define_rois(bleach_coords, bleach_radius)
                     st.info(f"📍 Defined {len(analyzer.rois)} ROIs automatically")
@@ -704,8 +696,8 @@ def create_image_analysis_interface():
                     fig, ax = plt.subplots(figsize=(10, 6))
                     for i, (roi_name, roi_data) in enumerate(analyzer.rois.items()):
                         ax.plot(df['Time'], df[roi_name], label=f"{roi_name} ({roi_data.get('name', 'N/A')})")
-                    if analyzer.bleach_frame:
-                         ax.axvline(x=df['Time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
+                    if analyzer.bleach_frame is not None and 0 <= analyzer.bleach_frame < len(df):
+                        ax.axvline(x=df['Time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
                     ax.set_xlabel('Time (s)')
                     ax.set_ylabel('Intensity')
                     ax.set_title('FRAP Intensity Profiles')
