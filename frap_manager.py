@@ -39,11 +39,12 @@ def validate_analysis_results(features: dict) -> dict:
             logger.warning(f"Mobile fraction {mobile_fraction:.1f}% exceeds 100%, capping at 100%")
             features['mobile_fraction'] = 100.0
 
-    # Ensure immobile fraction = 100% - mobile fraction
-    if np.isfinite(features.get('mobile_fraction', np.nan)):
-        features['immobile_fraction'] = 100.0 - features['mobile_fraction']
-    else:
-        features['immobile_fraction'] = np.nan
+    # If new bound-aware fields exist, don't overwrite
+    if 'mobile_fraction_type' not in features:
+        if np.isfinite(features.get('mobile_fraction', np.nan)):
+            features['immobile_fraction'] = 100.0 - features['mobile_fraction']
+        else:
+            features['immobile_fraction'] = np.nan
 
     # Validate rate constants (should be positive)
     for key in features:
@@ -119,11 +120,57 @@ class FRAPDataManager:
 
                 if best_fit:
                     params = FRAPAnalysisCore.extract_clustering_features(best_fit)
-                    # Validate the analysis results
-                    params = validate_analysis_results(params)
                 else:
                     params = None
                     logger.error(f"No valid fit found for {file_name}")
+
+                # --- New mobile/immobile fraction calculation based on final recovery ---
+                try:
+                    final_val = float(intensity[-1]) if len(intensity) else np.nan
+                    # Clamp to [0,1.2] to guard minor overshoot
+                    if np.isfinite(final_val):
+                        final_val = max(0.0, min(1.2, final_val))
+
+                    # Simple plateau detection: slope over last window
+                    window = min(5, max(2, len(intensity)//5)) if len(intensity) > 5 else max(2, len(intensity)-1)
+                    if len(intensity) > window:
+                        dt = time[-1] - time[-window-1] if (time[-1] - time[-window-1]) != 0 else window
+                        dy = intensity[-1] - intensity[-window-1]
+                        slope = dy / dt if dt else dy
+                    else:
+                        slope = 0.0
+
+                    plateau = not (slope > 0.005)  # threshold for "still recovering"
+
+                    mobile_exact = final_val * 100.0 if np.isfinite(final_val) else np.nan
+                    immobile_exact = (1 - final_val) * 100.0 if np.isfinite(final_val) else np.nan
+
+                    if params is None:
+                        params = {}
+
+                    if plateau:
+                        params['mobile_fraction'] = mobile_exact
+                        params['immobile_fraction'] = immobile_exact
+                        params['mobile_fraction_type'] = 'exact'
+                        params['immobile_fraction_type'] = 'exact'
+                        params['mobile_fraction_display'] = f"{mobile_exact:.2f}%"
+                        params['immobile_fraction_display'] = f"{immobile_exact:.2f}%"
+                    else:
+                        # Ongoing recovery: provide bounds
+                        params['mobile_fraction'] = mobile_exact  # lower bound (true value > this)
+                        params['immobile_fraction'] = immobile_exact  # upper bound (true value < this)
+                        params['mobile_fraction_type'] = 'lower_bound'
+                        params['immobile_fraction_type'] = 'upper_bound'
+                        params['mobile_fraction_display'] = f"> {mobile_exact:.2f}%"
+                        params['immobile_fraction_display'] = f"< {immobile_exact:.2f}%"
+                        params['fraction_plateau_status'] = 'not_determinable'
+                    params['fraction_plateau_slope'] = slope
+                except Exception as e_calc:
+                    logger.warning(f"Failed custom fraction calc for {file_name}: {e_calc}")
+
+                # Final validation (range checks only)
+                if params:
+                    params = validate_analysis_results(params)
 
                 # Always store using the original (hashed) path so group references remain valid
                 storage_key = original_path
@@ -229,123 +276,149 @@ class FRAPDataManager:
             }
 
     def load_groups_from_zip_archive(self, zip_file):
-        """
-        Loads files from a ZIP archive containing subfolders, where each subfolder
-        is treated as a new group. Gracefully handles unreadable files.
+        """Load groups + files from a ZIP that contains subfolders (each -> group).
+
+        Adds detailed per‑group diagnostics so users can see why files may have
+        been skipped. Supports .xls/.xlsx/.csv and image stacks (.tif/.tiff).
+        Returns True on any successful file load, else False.
         """
         success_count = 0
         error_count = 0
-        error_details = []
-        groups_created = []
+        error_details: list[str] = []
+        groups_created: list[str] = []
+        per_group_loaded: dict[str, list[str]] = {}
+        per_group_skipped: dict[str, list[tuple[str, str]]] = {}
 
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
+                # Extract archive
                 try:
-                    with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
-                        z.extractall(temp_dir)
+                    with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as zf:
+                        zf.extractall(temp_dir)
                         logger.info(f"Extracted ZIP archive to: {temp_dir}")
                 except zipfile.BadZipFile:
                     logger.error("Invalid ZIP file format")
-                    st.error("Invalid ZIP file format. Please check that the uploaded file is a valid ZIP archive.")
+                    st.error("Invalid ZIP file format. Please upload a valid .zip file.")
                     return False
                 except Exception as e:
                     logger.error(f"Error extracting ZIP file: {e}")
                     st.error(f"Error extracting ZIP file: {e}")
                     return False
 
-                # Walk through the extracted directory to find subfolders (groups)
-                for root, dirs, files in os.walk(temp_dir):
-                    # Process subfolders as groups
+                # Walk the extracted tree, treat each immediate subfolder as a group
+                for root, dirs, _ in os.walk(temp_dir):
                     for group_name in dirs:
-                        if group_name.startswith('__'):  # Ignore system folders like __MACOSX
-                            continue
-
+                        if group_name.startswith('__'):
+                            continue  # skip __MACOSX, etc.
                         self.create_group(group_name)
                         groups_created.append(group_name)
                         group_path = os.path.join(root, group_name)
+                        per_group_loaded[group_name] = []
+                        per_group_skipped[group_name] = []
 
                         for file_in_group in os.listdir(group_path):
                             file_path_in_temp = os.path.join(group_path, file_in_group)
+                            if not (os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.')):
+                                continue
+                            try:
+                                file_ext = os.path.splitext(file_in_group)[1].lower()
+                                file_name = os.path.basename(file_in_group)
 
-                            if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
-                                try:
-                                    file_ext = os.path.splitext(file_in_group)[1].lower()
-                                    file_name = os.path.basename(file_in_group)
+                                if file_ext not in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']:
+                                    per_group_skipped[group_name].append((file_in_group, f"Unsupported extension '{file_ext}'"))
+                                    continue
 
-                                    if file_ext not in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']:
-                                        continue
+                                with open(file_path_in_temp, 'rb') as fh:
+                                    file_content = fh.read()
+                                if not file_content:
+                                    per_group_skipped[group_name].append((file_in_group, "Empty file"))
+                                    continue
 
-                                    with open(file_path_in_temp, 'rb') as f:
-                                        file_content = f.read()
-                                    if not file_content:
-                                        continue
+                                content_hash = hash(file_content)
+                                if file_ext in ['.tif', '.tiff']:
+                                    base_name = os.path.splitext(file_name)[0]
+                                    tp = f"data/{base_name}_{content_hash}.csv"  # converted CSV path
+                                else:
+                                    tp = f"data/{file_name}_{content_hash}"  # hashed path retains original ext pattern
+                                storage_key = tp
 
-                                    content_hash = hash(file_content)
-
+                                if storage_key not in self.files:
+                                    os.makedirs(os.path.dirname(tp), exist_ok=True)
                                     if file_ext in ['.tif', '.tiff']:
-                                        base_name = os.path.splitext(file_name)[0]
-                                        tp = f"data/{base_name}_{content_hash}.csv"
+                                        analyzer = FRAPImageAnalyzer()
+                                        if not analyzer.load_image_stack(file_path_in_temp):
+                                            raise ValueError("Failed to load image stack")
+                                        settings = st.session_state.settings
+                                        analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
+                                        analyzer.time_interval = settings.get('default_time_interval', 1.0)
+                                        bleach_frame, bleach_coords = analyzer.detect_bleach_event()
+                                        if bleach_frame is None or bleach_coords is None:
+                                            raise ValueError("Bleach event detection failed")
+                                        bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
+                                        analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
+                                        intensity_df = analyzer.extract_intensity_profiles().rename(columns={'Time': 'time'})
+                                        intensity_df.to_csv(tp, index=False)
                                     else:
-                                        tp = f"data/{file_name}_{content_hash}"
-                                    storage_key = tp  # consistent key
+                                        shutil.copy(file_path_in_temp, tp)
 
-                                    if storage_key not in self.files:
-                                        os.makedirs(os.path.dirname(tp), exist_ok=True)
-
-                                        if file_ext in ['.tif', '.tiff']:
-                                            analyzer = FRAPImageAnalyzer()
-                                            if not analyzer.load_image_stack(file_path_in_temp):
-                                                raise ValueError("Failed to load image stack.")
-
-                                            settings = st.session_state.settings
-                                            analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
-                                            analyzer.time_interval = settings.get('default_time_interval', 1.0)
-
-                                            bleach_frame, bleach_coords = analyzer.detect_bleach_event()
-                                            if bleach_frame is None or bleach_coords is None:
-                                                raise ValueError("Failed to detect bleach event automatically.")
-
-                                            bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
-                                            analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
-                                            intensity_df = analyzer.extract_intensity_profiles()
-                                            intensity_df = intensity_df.rename(columns={'Time': 'time'})
-                                            intensity_df.to_csv(tp, index=False)
-                                        else:
-                                            shutil.copy(file_path_in_temp, tp)
-
-                                        if self.load_file(tp, file_name):
-                                            self.add_file_to_group(group_name, storage_key)
-                                            success_count += 1
-                                        else:
-                                            raise ValueError("Failed to load data from file.")
+                                    if self.load_file(tp, file_name):
+                                        added = self.add_file_to_group(group_name, storage_key)
+                                        if not added and storage_key not in self.groups[group_name]['files']:
+                                            self.groups[group_name]['files'].append(storage_key)
+                                        success_count += 1
+                                        per_group_loaded[group_name].append(storage_key)
                                     else:
-                                        self.add_file_to_group(group_name, storage_key)
-
-                                except Exception as e:
-                                    error_count += 1
-                                    error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
-                                    logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
-                                    if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
+                                        raise ValueError("Data load failed")
+                                else:
+                                    # Already loaded earlier (duplicate across groups/path variants)
+                                    self.add_file_to_group(group_name, storage_key)
+                                    if storage_key not in self.groups[group_name]['files']:
+                                        self.groups[group_name]['files'].append(storage_key)
+                                    per_group_loaded[group_name].append(storage_key)
+                            except Exception as e:
+                                error_count += 1
+                                msg = f"Error processing {file_in_group} in {group_name}: {e}"
+                                error_details.append(msg)
+                                per_group_skipped[group_name].append((file_in_group, f"Error: {e}"))
+                                logger.error(msg, exc_info=True)
+                                if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
+                                    try:
                                         os.remove(tp)
+                                    except Exception:
+                                        pass
 
-            # After processing all groups/files
+            # Summarize
             if success_count > 0:
-                for group_name in groups_created:
-                    self.update_group_analysis(group_name)
-                st.success(f"Successfully loaded {success_count} files into {len(groups_created)} groups.")
+                for g in groups_created:
+                    self.update_group_analysis(g)
+                st.success(f"Loaded {success_count} files into {len(groups_created)} group(s)")
+                with st.expander("📦 ZIP Import Summary (per group)"):
+                    for g in groups_created:
+                        loaded_list = per_group_loaded.get(g, [])
+                        skipped_list = per_group_skipped.get(g, [])
+                        st.markdown(f"**{g}** — loaded {len(loaded_list)} file(s), skipped {len(skipped_list)}")
+                        if loaded_list:
+                            with st.expander(f"Loaded files for {g}"):
+                                for sk in loaded_list:
+                                    st.write(f"✅ {os.path.basename(sk)}")
+                        if skipped_list:
+                            with st.expander(f"Skipped files for {g}"):
+                                for fname, reason in skipped_list[:50]:
+                                    st.write(f"⚠️ {fname} — {reason}")
+                                if len(skipped_list) > 50:
+                                    st.write(f"… plus {len(skipped_list) - 50} more")
                 if error_count > 0:
-                    st.warning(f"{error_count} files were skipped due to errors.")
-                    with st.expander("View Error Details"):
-                        for error in error_details:
-                            st.text(error)
+                    st.warning(f"{error_count} file(s) encountered errors")
+                    with st.expander("Raw Error Details"):
+                        for err in error_details:
+                            st.text(err)
                 return True
             else:
-                st.error("No files could be processed from the ZIP archive.")
+                st.error("No valid data files found inside subfolders of the ZIP archive.")
                 return False
-
         except Exception as e:
-            logger.error(f"Error processing ZIP archive with subfolders: {e}")
-            st.error(f"An unexpected error occurred: {e}")
+            logger.error(f"Unexpected error processing ZIP archive: {e}")
+            st.error(f"Unexpected error: {e}")
             return False
 
     def load_zip_archive_and_create_group(self, zip_file, group_name):

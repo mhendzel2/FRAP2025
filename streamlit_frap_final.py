@@ -853,10 +853,16 @@ with tab1:
                 
                 # Check for problematic results and show warnings
                 mobile_frac = features.get('mobile_fraction', 0)
-                if mobile_frac > 100:
-                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) exceeds 100% - this indicates a problem with the analysis")
-                elif mobile_frac < 0:
-                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) is negative - this indicates a problem with the analysis")
+                plateau_status = features.get('fraction_plateau_status')
+                mobile_display = features.get('mobile_fraction_display')
+                immobile_display = features.get('immobile_fraction_display')
+                if plateau_status == 'not_determinable':
+                    st.info("Recovery still rising: mobile/immobile fractions reported as bounds (>) / (<)")
+                if np.isfinite(mobile_frac):
+                    if mobile_frac > 100:
+                        st.error(f"⚠️ Mobile fraction raw ({mobile_frac:.1f}%) exceeds 100% (check normalization)")
+                    elif mobile_frac < 0:
+                        st.error(f"⚠️ Mobile fraction raw ({mobile_frac:.1f}%) is negative (check preprocessing)")
                 
                 # Check data quality
                 r2 = best_fit.get('r2', 0)
@@ -865,9 +871,11 @@ with tab1:
                 
                 col1,col2,col3,col4=st.columns(4)
                 with col1:
-                    # Ensure mobile fraction is displayed correctly
-                    display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
-                    st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
+                    if mobile_display:
+                        st.metric("Mobile Fraction", mobile_display)
+                    else:
+                        display_mobile = max(0, min(100, mobile_frac))
+                        st.metric("Mobile Fraction", f"{display_mobile:.1f}%")
                 with col2:
                     half_time = features.get('half_time_fast',features.get('half_time',0))
                     st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
@@ -1154,8 +1162,14 @@ with tab1:
                     with col_bio3:
                         st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
                     with col_bio4:
-                        immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
-                        st.metric("Immobile (%)",f"{immobile_frac:.1f}")
+                        if immobile_display:
+                            st.metric("Immobile (%)", immobile_display)
+                        else:
+                            immobile_frac = features.get('immobile_fraction', np.nan)
+                            if np.isfinite(immobile_frac):
+                                st.metric("Immobile (%)", f"{immobile_frac:.1f}%")
+                            else:
+                                st.metric("Immobile (%)", "N/A")
                 
                 else:
                     # More informative error message with diagnostic information
