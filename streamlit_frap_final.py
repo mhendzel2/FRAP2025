@@ -504,7 +504,7 @@ with st.sidebar:
                 dm.files.clear()
                 
                 # Load groups from ZIP
-                success = dm.load_groups_from_zip_archive(uploaded_zip, settings=st.session_state.settings)
+                success = dm.load_groups_from_zip_archive(uploaded_zip)
                 
                 if success:
                     # Show successful groups
@@ -551,10 +551,7 @@ with st.sidebar:
             if tp not in dm.files:
                 with open(tp,"wb") as f:
                     f.write(uf.getbuffer())
-
-                # load_file now returns the final path or None
-                loaded_path = dm.load_file(tp, uf.name, settings=st.session_state.settings)
-                if loaded_path:
+                if dm.load_file(tp,uf.name):
                     st.success(f"✅ Successfully loaded: {uf.name}")
                     new_files_loaded = True
                 else:
@@ -677,11 +674,83 @@ with tab1:
 
 with tab2:
     st.header("Group Analysis")
-    if dm.groups:
-        st.write("**Available Groups:**")
-        for group_name, group_data in dm.groups.items():
-            file_count = len(group_data.get('files', []))
-            st.write(f"📁 **{group_name}**: {file_count} files")
-        st.write("Full group analysis interface coming soon...")
+    selected_group_name = st.session_state.get('selected_group_name')
+
+    if selected_group_name and selected_group_name in dm.groups:
+        st.subheader(f"Analysis for Group: **{selected_group_name}**")
+        group_data = dm.groups[selected_group_name]
+
+        if not group_data.get('files'):
+            st.warning("This group has no files. Add files from the sidebar.")
+        else:
+            # --- Outlier Selection ---
+            st.markdown("### Outlier Management")
+            features_df = group_data.get('features_df')
+            if features_df is None or features_df.empty:
+                st.info("Run analysis to generate features for outlier detection.")
+                dm.update_group_analysis(selected_group_name)
+                if dm.groups[selected_group_name].get('features_df') is not None:
+                    st.rerun()
+                else:
+                    st.error("Could not generate features for this group.")
+
+            else:
+                # Manual outlier selection
+                all_files_in_group = group_data.get('files', [])
+
+                excluded_paths = st.multiselect(
+                    "Select files to EXCLUDE from analysis:",
+                    options=all_files_in_group,
+                    format_func=lambda p: dm.files[p]['name'] if p in dm.files else "Unknown file",
+                    key=f"outlier_selector_{selected_group_name}"
+                )
+
+                # --- Plots ---
+                st.markdown("### Group Plots")
+
+                # Filter data based on outlier selection for plotting
+                included_files_data = {
+                    fp: dm.files[fp] for fp in all_files_in_group
+                    if fp not in excluded_paths and fp in dm.files
+                }
+
+                if not included_files_data:
+                    st.warning("No files left to plot after exclusions.")
+                else:
+                    avg_curve_fig = plot_average_curve(included_files_data)
+                    st.plotly_chart(avg_curve_fig, use_container_width=True)
+
+                    all_curves_fig = plot_all_curves(included_files_data)
+                    st.plotly_chart(all_curves_fig, use_container_width=True)
+
+                # --- Report Generation ---
+                st.markdown("### Reporting")
+                include_outliers_in_report = st.checkbox("Include outlier data in report plots/stats", key=f"include_outliers_{selected_group_name}")
+
+                if st.button("Generate PDF Report", key=f"pdf_report_{selected_group_name}"):
+                    with st.spinner("Generating PDF report..."):
+                        files_to_exclude_in_report = [] if include_outliers_in_report else excluded_paths
+
+                        pdf_path = generate_pdf_report(
+                            data_manager=dm,
+                            groups_to_compare=[selected_group_name],
+                            settings=st.session_state.settings,
+                            excluded_files=files_to_exclude_in_report
+                        )
+
+                        if pdf_path and os.path.exists(pdf_path):
+                            with open(pdf_path, "rb") as f:
+                                st.download_button(
+                                    label="Download PDF Report",
+                                    data=f,
+                                    file_name=os.path.basename(pdf_path),
+                                    mime="application/pdf"
+                                )
+                            st.success("Report generated successfully!")
+                        else:
+                            st.error("Failed to generate PDF report.")
+
+    elif not dm.groups:
+        st.info("Create or upload a group to begin analysis.")
     else:
-        st.info("Create groups from ZIP files or manually to begin group analysis")
+        st.info("Select a group from the sidebar to begin analysis.")
