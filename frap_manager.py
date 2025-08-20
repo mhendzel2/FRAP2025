@@ -73,10 +73,12 @@ class FRAPDataManager:
     def __init__(self):
         self.files,self.groups = {},{}
 
-    def load_file(self,file_path,file_name,*,original_path=None,group_name=None):
+    def load_file(self,file_path,file_name,*,original_path=None,group_name=None, settings=None):
+        if settings is None:
+            raise ValueError("Settings must be provided to load_file")
         try:
             # Extract original extension before the hash suffix
-            original_path = file_path
+            original_path_ref = file_path
             if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
                 # Find the original extension and create a temporary file with correct extension
                 import tempfile
@@ -115,7 +117,7 @@ class FRAPDataManager:
                             intensity = intensity / pre_bleach_mean
 
                 fits = FRAPAnalysisCore.fit_all_models(time,intensity)
-                best_fit = FRAPAnalysisCore.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                best_fit = FRAPAnalysisCore.select_best_fit(fits, settings['default_criterion'])
 
                 if best_fit:
                     params = FRAPAnalysisCore.extract_clustering_features(best_fit)
@@ -128,15 +130,15 @@ class FRAPDataManager:
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params,
-                    'original_path': original_path if original_path else file_name,
+                    'original_path': original_path_ref,
                     'group_name': group_name
                 }
                 logger.info(f"Loaded: {file_name}")
-                return True
+                return file_path
         except Exception as e:
             st.error(f"Error loading {file_name}: {e}")
             logger.error(f"Detailed error for {file_name}: {e}", exc_info=True)
-            return False
+            return None
 
     def create_group(self,name):
         if name not in self.groups:
@@ -228,11 +230,13 @@ class FRAPDataManager:
                 'error': str(e)
             }
 
-    def load_groups_from_zip_archive(self, zip_file):
+    def load_groups_from_zip_archive(self, zip_file, settings=None):
         """
         Loads files from a ZIP archive containing subfolders, where each subfolder
         is treated as a new group. Gracefully handles unreadable files.
         """
+        if settings is None:
+            raise ValueError("Settings must be provided to load_groups_from_zip_archive")
         success_count = 0
         error_count = 0
         error_details = []
@@ -304,7 +308,6 @@ class FRAPDataManager:
                                     analyzer = FRAPImageAnalyzer()
                                     if not analyzer.load_image_stack(file_path_in_temp):
                                         raise ValueError("Failed to load image stack.")
-                                    settings = st.session_state.settings
                                     analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
                                     analyzer.time_interval = settings.get('default_time_interval', 1.0)
                                     bleach_frame, bleach_coords = analyzer.detect_bleach_event()
@@ -316,13 +319,16 @@ class FRAPDataManager:
                                     intensity_df.to_csv(tp, index=False)
                                 else:
                                     shutil.copy(file_path_in_temp, tp)
-                                if self.load_file(tp, file_name, original_path=rel_path, group_name=group_name):
-                                    self.add_file_to_group(group_name, tp)
+
+                                final_file_path = self.load_file(tp, file_name, original_path=rel_path, group_name=group_name, settings=settings)
+                                if final_file_path:
+                                    self.add_file_to_group(group_name, final_file_path)
                                     group_file_counts[group_name] += 1
                                     success_count += 1
                                 else:
                                     raise ValueError("Failed to load data from file.")
                             else:
+                                # File already exists, just add to group
                                 self.add_file_to_group(group_name, tp)
                                 group_file_counts[group_name] += 1
                         except Exception as e:
@@ -363,11 +369,13 @@ class FRAPDataManager:
             st.error(f"Unexpected error: {e}")
             return False
 
-    def load_zip_archive_and_create_group(self, zip_file, group_name):
+    def load_zip_archive_and_create_group(self, zip_file, group_name, settings=None):
         """
         Loads files from a ZIP archive, creates a new group, and adds the files to it.
         Gracefully handles unreadable files.
         """
+        if settings is None:
+            raise ValueError("Settings must be provided to load_zip_archive_and_create_group")
         success_count = 0
         error_count = 0
         error_details = []
@@ -402,8 +410,9 @@ class FRAPDataManager:
                                     f.write(file_content)
 
                                 # Attempt to load the file
-                                if self.load_file(tp, file_name):
-                                    self.add_file_to_group(group_name, tp)
+                                loaded_path = self.load_file(tp, file_name, settings=settings)
+                                if loaded_path:
+                                    self.add_file_to_group(group_name, loaded_path)
                                     success_count += 1
                                 else:
                                     error_count += 1
