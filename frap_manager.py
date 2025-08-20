@@ -73,7 +73,7 @@ class FRAPDataManager:
     def __init__(self):
         self.files,self.groups = {},{}
 
-    def load_file(self,file_path,file_name):
+    def load_file(self,file_path,file_name,*,original_path=None,group_name=None):
         try:
             # Extract original extension before the hash suffix
             original_path = file_path
@@ -127,7 +127,9 @@ class FRAPDataManager:
 
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
-                    'fits':fits,'best_fit':best_fit,'features':params
+                    'fits':fits,'best_fit':best_fit,'features':params,
+                    'original_path': original_path if original_path else file_name,
+                    'group_name': group_name
                 }
                 logger.info(f"Loaded: {file_name}")
                 return True
@@ -235,7 +237,7 @@ class FRAPDataManager:
         error_count = 0
         error_details = []
         groups_created = []
-
+        group_file_counts = {}
         SUPPORTED_EXTS = {'.xls', '.xlsx', '.csv', '.tif', '.tiff'}
 
         try:
@@ -261,44 +263,41 @@ class FRAPDataManager:
                     if supported_here:
                         candidate_dirs.append((dirpath, supported_here))
 
-                # Handle wrapper folder (single top-level directory holding all groups)
                 if not candidate_dirs:
                     st.error("No supported files found inside the ZIP (expect .xls/.xlsx/.csv/.tif/.tiff).")
                     return False
 
-                # If only one candidate dir and it is the extraction root, treat entire archive as single group
+                # Single-root archive -> make one group named after archive
                 if len(candidate_dirs) == 1 and candidate_dirs[0][0] == temp_dir:
                     inferred_name = getattr(zip_file, 'name', 'archive').rsplit('.', 1)[0]
-                    # Rename directory logically by creating a pseudo group entry
                     root_dir, filenames = candidate_dirs[0]
                     candidate_dirs = [(root_dir, filenames, inferred_name)]
                 else:
-                    # Normal case: (dirpath, filenames, group_name)
-                    candidate_dirs = [ (d, fns, os.path.basename(d)) for d, fns in candidate_dirs ]
+                    candidate_dirs = [(d, fns, os.path.basename(d)) for d, fns in candidate_dirs]
 
+                # 3. Process each candidate group directory
                 for dirpath, filenames, group_name in candidate_dirs:
                     if group_name not in self.groups:
                         self.create_group(group_name)
                         groups_created.append(group_name)
+                        group_file_counts[group_name] = 0
 
                     for file_in_group in filenames:
                         file_path_in_temp = os.path.join(dirpath, file_in_group)
                         try:
                             file_ext = os.path.splitext(file_in_group)[1].lower()
                             file_name = os.path.basename(file_in_group)
-
                             with open(file_path_in_temp, 'rb') as f:
                                 file_content = f.read()
                             if not file_content:
                                 continue
                             content_hash = hash(file_content)
-
                             if file_ext in ['.tif', '.tiff']:
                                 base_name = os.path.splitext(file_name)[0]
                                 tp = f"data/{base_name}_{content_hash}.csv"
                             else:
                                 tp = f"data/{file_name}_{content_hash}"
-
+                            rel_path = os.path.relpath(file_path_in_temp, temp_dir)
                             if tp not in self.files:
                                 os.makedirs(os.path.dirname(tp), exist_ok=True)
                                 if file_ext in ['.tif', '.tiff']:
@@ -317,14 +316,15 @@ class FRAPDataManager:
                                     intensity_df.to_csv(tp, index=False)
                                 else:
                                     shutil.copy(file_path_in_temp, tp)
-                                if self.load_file(tp, file_name):
+                                if self.load_file(tp, file_name, original_path=rel_path, group_name=group_name):
                                     self.add_file_to_group(group_name, tp)
+                                    group_file_counts[group_name] += 1
                                     success_count += 1
                                 else:
                                     raise ValueError("Failed to load data from file.")
                             else:
-                                # Already loaded previously (duplicate in archive?) just associate
                                 self.add_file_to_group(group_name, tp)
+                                group_file_counts[group_name] += 1
                         except Exception as e:
                             error_count += 1
                             msg = f"Error processing file {file_in_group} in group {group_name}: {e}"
@@ -333,11 +333,22 @@ class FRAPDataManager:
                             if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
                                 os.remove(tp)
 
-            # 3. Finalize
+            # 4. Finalize
             if success_count:
                 for g in groups_created:
                     self.update_group_analysis(g)
                 st.success(f"Loaded {success_count} files into {len(groups_created)} groups.")
+                try:
+                    import pandas as _pd
+                    summary = _pd.DataFrame([
+                        {'Group': g, 'Files Loaded': group_file_counts.get(g,0), 'Total Files In Group': len(self.groups[g]['files'])}
+                        for g in groups_created
+                    ])
+                    if not summary.empty:
+                        st.markdown("#### Ingestion Summary")
+                        st.dataframe(summary)
+                except Exception:
+                    pass
                 if error_count:
                     st.warning(f"{error_count} files were skipped due to errors.")
                     with st.expander("View Error Details"):
