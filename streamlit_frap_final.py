@@ -504,7 +504,7 @@ with st.sidebar:
                 dm.files.clear()
                 
                 # Load groups from ZIP
-                success = dm.load_groups_from_zip_archive(uploaded_zip)
+                success = dm.load_groups_from_zip_archive(uploaded_zip, settings=st.session_state.settings)
                 
                 if success:
                     # Show successful groups
@@ -551,7 +551,10 @@ with st.sidebar:
             if tp not in dm.files:
                 with open(tp,"wb") as f:
                     f.write(uf.getbuffer())
-                if dm.load_file(tp,uf.name):
+
+                # load_file now returns the final path or None
+                loaded_path = dm.load_file(tp, uf.name, settings=st.session_state.settings)
+                if loaded_path:
                     st.success(f"✅ Successfully loaded: {uf.name}")
                     new_files_loaded = True
                 else:
