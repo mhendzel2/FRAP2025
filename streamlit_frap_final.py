@@ -467,7 +467,12 @@ def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
-dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_manager is None else st.session_state.data_manager
+
+# Initialize session state properly
+if 'data_manager' not in st.session_state:
+    st.session_state.data_manager = FRAPDataManager()
+
+dm = st.session_state.data_manager
 
 with st.sidebar:
     st.header("Data Management")
@@ -494,41 +499,46 @@ with st.sidebar:
     if uploaded_zip:
         if st.button(f"Create Groups from '{uploaded_zip.name}'"):
             with st.spinner(f"Processing groups from '{uploaded_zip.name}'..."):
-                if 'data_manager' in st.session_state:
-                    # Clear any existing progress messages
-                    success = dm.load_groups_from_zip_archive(uploaded_zip)
-                    if success:
-                        # Show successful groups
-                        if dm.groups:
-                            st.success("Successfully created {} groups from ZIP archive:".format(len(dm.groups)))
+                # Clear any existing groups first for testing
+                dm.groups.clear()
+                dm.files.clear()
+                
+                # Load groups from ZIP
+                success = dm.load_groups_from_zip_archive(uploaded_zip)
+                
+                if success:
+                    # Show successful groups
+                    if dm.groups:
+                        st.success("Successfully created {} groups from ZIP archive:".format(len(dm.groups)))
+                        for group_name, group_data in dm.groups.items():
+                            file_count = len(group_data.get('files', []))
+                            st.write(f"📁 **{group_name}**: {file_count} files")
+                        
+                        # Show summary of what was processed
+                        total_files = sum(len(group_data.get('files', [])) for group_data in dm.groups.values())
+                        st.info(f"Total files processed: {total_files}")
+                        
+                        # Show detailed breakdown
+                        with st.expander("📋 View Detailed Breakdown"):
                             for group_name, group_data in dm.groups.items():
-                                file_count = len(group_data.get('files', []))
-                                st.write(f"📁 **{group_name}**: {file_count} files")
-                            
-                            # Show summary of what was processed
-                            total_files = sum(len(group_data.get('files', [])) for group_data in dm.groups.values())
-                            st.info(f"Total files processed: {total_files}")
-                            
-                            # Show detailed breakdown
-                            with st.expander("📋 View Detailed Breakdown"):
-                                for group_name, group_data in dm.groups.items():
-                                    st.write(f"**{group_name}**:")
-                                    files_in_group = group_data.get('files', [])
-                                    for file_path in files_in_group:
-                                        if file_path in dm.files:
-                                            file_name = dm.files[file_path]['name']
-                                            st.write(f"  • {file_name}")
-                                        else:
-                                            st.write(f"  • {file_path} (file not found)")
-                        else:
-                            st.warning("ZIP archive was processed but no groups were created.")
-                            st.info("This might happen if:")
-                            st.write("- The ZIP file contains no subfolders")
-                            st.write("- All files were filtered out due to unsupported formats")
-                            st.write("- Files could not be loaded due to format issues")
-                        st.rerun()
+                                st.write(f"**{group_name}**:")
+                                files_in_group = group_data.get('files', [])
+                                for file_path in files_in_group:
+                                    if file_path in dm.files:
+                                        file_name = dm.files[file_path]['name']
+                                        st.write(f"  • {file_name}")
+                                    else:
+                                        st.write(f"  • {file_path} (file not found)")
                     else:
-                        st.error("Failed to process ZIP archive with subfolders. Please check the ZIP file structure and file formats.")
+                        st.warning("No groups were created from the ZIP file")
+                        st.info("This might happen if:")
+                        st.write("- The ZIP file contains no subfolders")
+                        st.write("- All files were filtered out due to unsupported formats")
+                        st.write("- Files could not be loaded due to format issues")
+                else:
+                    st.error("Failed to process ZIP file")
+                    
+                st.rerun()
 
     # --- Existing Single File Uploader ---
     st.subheader("Single File Upload")
