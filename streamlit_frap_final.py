@@ -395,7 +395,7 @@ if 'settings' not in st.session_state:
         'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
     }
 if "data_manager" not in st.session_state:
-    st.session_state.data_manager = None
+    st.session_state.data_manager = FRAPDataManager()
 if 'selected_group_name' not in st.session_state:
     st.session_state.selected_group_name = None
 
@@ -467,10 +467,6 @@ def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
-
-# Initialize session state properly
-if 'data_manager' not in st.session_state:
-    st.session_state.data_manager = FRAPDataManager()
 
 dm = st.session_state.data_manager
 
