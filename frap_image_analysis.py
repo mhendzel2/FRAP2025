@@ -338,7 +338,7 @@ class FRAPImageAnalyzer:
     
     def extract_intensity_profiles(self, apply_background_correction: bool = True) -> pd.DataFrame:
         """
-        Extract intensity profiles from defined ROIs
+        Extract intensity profiles from defined ROIs, using tracked centers if available.
         
         Parameters:
         -----------
@@ -353,10 +353,8 @@ class FRAPImageAnalyzer:
         if self.image_stack is None or not self.rois:
             raise ValueError("No image stack or ROIs defined")
         
-        n_frames = len(self.image_stack)
+        n_frames, height, width = self.image_stack.shape
         
-        # Standardize ROI names to ROI1, ROI2, ROI3 for downstream compatibility
-        # Assign based on type
         roi_map = {}
         for name, data in self.rois.items():
             if data['type'] == 'bleach_spot' and 'ROI1' not in roi_map:
@@ -370,25 +368,38 @@ class FRAPImageAnalyzer:
             st.error("Please define exactly one of each ROI type: 'bleach_spot', 'reference', and 'background'.")
             return pd.DataFrame()
 
-        # Extract intensities for each ROI
-        intensities = {
-            'ROI1': np.zeros(n_frames),
-            'ROI2': np.zeros(n_frames),
-            'ROI3': np.zeros(n_frames)
-        }
+        intensities = {'ROI1': np.zeros(n_frames), 'ROI2': np.zeros(n_frames), 'ROI3': np.zeros(n_frames)}
         
+        # Get static masks for reference and background
+        ref_mask = self.rois[roi_map['ROI2']]['mask']
+        bg_mask = self.rois[roi_map['ROI3']]['mask']
+
+        y_grid, x_grid = np.ogrid[:height, :width]
+
         for t in range(n_frames):
             frame = self.image_stack[t].astype(float)
             if apply_background_correction:
                 frame = self._apply_background_correction(frame)
 
-            intensities['ROI1'][t] = np.mean(frame[self.rois[roi_map['ROI1']]['mask']])
-            intensities['ROI2'][t] = np.mean(frame[self.rois[roi_map['ROI2']]['mask']])
-            intensities['ROI3'][t] = np.mean(frame[self.rois[roi_map['ROI3']]['mask']])
+            # If tracking, update the bleach spot ROI for each frame
+            if self.tracked_centers:
+                bleach_roi_data = self.rois[roi_map['ROI1']]
+                center_x, center_y = self.tracked_centers[t]
+                radius = bleach_roi_data['radius']
 
-        # Create DataFrame
+                # Create a new mask for the current frame
+                bleach_mask = (x_grid - center_x)**2 + (y_grid - center_y)**2 <= radius**2
+            else:
+                # Use the static bleach spot mask
+                bleach_mask = self.rois[roi_map['ROI1']]['mask']
+
+            intensities['ROI1'][t] = np.mean(frame[bleach_mask]) if np.any(bleach_mask) else 0
+            intensities['ROI2'][t] = np.mean(frame[ref_mask]) if np.any(ref_mask) else 0
+            intensities['ROI3'][t] = np.mean(frame[bg_mask]) if np.any(bg_mask) else 0
+
+
         df = pd.DataFrame({
-            'Time': self.time_points[:n_frames],
+            'time': self.time_points[:n_frames], # Renamed to 'time' for compatibility
             'ROI1': intensities['ROI1'],
             'ROI2': intensities['ROI2'],
             'ROI3': intensities['ROI3']
@@ -601,7 +612,8 @@ class FRAPImageAnalyzer:
 
     # (Conflict resolution note) Removed legacy optional import of frap_roi_utils.
     # The function import_imagej_roi is now provided by frap_utils; no duplicate import needed.
-def create_image_analysis_interface():
+import tempfile
+def create_image_analysis_interface(dm):
     """Create Streamlit interface for image analysis"""
     st.header("🔬 FRAP Image Analysis")
     st.write("Direct analysis of raw microscopy images with automated or imported ROI detection")
@@ -609,6 +621,8 @@ def create_image_analysis_interface():
     if 'frap_analyzer' not in st.session_state:
         st.session_state.frap_analyzer = FRAPImageAnalyzer()
     analyzer = st.session_state.frap_analyzer
+    if 'image_analysis_df' not in st.session_state:
+        st.session_state.image_analysis_df = None
 
     uploaded_file = st.file_uploader(
         "Upload FRAP Image Stack",
@@ -619,6 +633,7 @@ def create_image_analysis_interface():
     if uploaded_file:
         if not hasattr(analyzer, 'file_name') or analyzer.file_name != uploaded_file.name:
             with st.spinner("Loading image..."):
+                st.session_state.image_analysis_df = None # Reset previous analysis
                 temp_path = f"temp_{uploaded_file.name}"
                 with open(temp_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
@@ -632,13 +647,15 @@ def create_image_analysis_interface():
 
     if analyzer.image_stack is not None:
         st.subheader("Analysis Parameters")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            pixel_size = st.number_input("Pixel Size (μm)", value=0.1, min_value=0.01, max_value=1.0, step=0.01)
-            time_interval = st.number_input("Time Interval (s)", value=1.0, min_value=0.1, max_value=10.0, step=0.1)
+            pixel_size = st.number_input("Pixel Size (μm)", value=0.1, min_value=0.01, max_value=1.0, step=0.01, key="ia_pixel_size")
+            time_interval = st.number_input("Time Interval (s)", value=1.0, min_value=0.1, max_value=10.0, step=0.1, key="ia_time_interval")
         with col2:
-            bleach_radius = st.number_input("Bleach Spot Radius (pixels)", value=10, min_value=3, max_value=50)
-            detection_method = st.selectbox("Bleach Detection", ["intensity_drop", "gradient"])
+            bleach_radius = st.number_input("Bleach Spot Radius (pixels)", value=10, min_value=3, max_value=50, key="ia_bleach_radius")
+            detection_method = st.selectbox("Bleach Detection", ["intensity_drop", "gradient"], key="ia_detection_method")
+        with col3:
+            enable_tracking = st.checkbox("Enable ROI Tracking", value=True, help="Track bleach spot over time with image inversion.", key="ia_enable_tracking")
 
         analyzer.pixel_size = pixel_size
         analyzer.time_interval = time_interval
@@ -647,10 +664,10 @@ def create_image_analysis_interface():
         roi_options = ["Automated"]
         if import_imagej_roi is not None:
             roi_options.append("Import from ImageJ")
-        roi_method = st.radio("ROI Definition Method", roi_options)
+        roi_method = st.radio("ROI Definition Method", roi_options, key="ia_roi_method")
 
         if roi_method == "Automated":
-            if st.button("🎯 Detect Bleach & Define ROIs"):
+            if st.button("🎯 Detect Bleach & Define ROIs", key="ia_detect_rois"):
                 bleach_frame, bleach_coords = analyzer.detect_bleach_event(method=detection_method)
                 if bleach_frame and bleach_coords:
                     st.success(f"✅ Bleach detected at frame {bleach_frame}, coordinates {bleach_coords}")
@@ -660,39 +677,36 @@ def create_image_analysis_interface():
                     st.error("❌ Could not automatically detect bleach event.")
         
         elif roi_method == "Import from ImageJ" and import_imagej_roi is not None:
-            uploaded_rois = st.file_uploader("Upload ImageJ ROI files (.roi)", type=['roi'], accept_multiple_files=True)
+            uploaded_rois = st.file_uploader("Upload ImageJ ROI files (.roi)", type=['roi'], accept_multiple_files=True, key="ia_roi_uploader")
             if uploaded_rois:
-                analyzer.rois = {}  # Clear existing ROIs
+                analyzer.rois = {}
                 for roi_file in uploaded_rois:
                     try:
                         roi_info = import_imagej_roi(roi_file.getvalue())
-                    except Exception as e:  # pragma: no cover
-                        roi_info = None
-                        st.error(f"Error parsing ROI file {roi_file.name}: {e}")
-                    if roi_info:
-                        roi_type = st.selectbox(
-                            f"Assign type for '{roi_info['name']}'",
-                            ['bleach_spot', 'reference', 'background'], key=roi_file.name
-                        )
+                        roi_type = st.selectbox(f"Assign type for '{roi_info['name']}'", ['bleach_spot', 'reference', 'background'], key=f"ia_roi_type_{roi_file.name}")
                         analyzer.add_roi_from_import(roi_info, roi_type)
-                    else:
-                        st.error(f"Failed to import ROI file: {roi_file.name}")
-        elif roi_method == "Import from ImageJ" and import_imagej_roi is None:
-            st.warning("ImageJ ROI import utility not available in this build.")
+                    except Exception as e:
+                        st.error(f"Error parsing ROI file {roi_file.name}: {e}")
 
         if analyzer.rois:
             st.write(f"**Current ROIs:** {len(analyzer.rois)}")
-            if st.button("📈 Extract Intensity Profiles"):
+            if st.button("📈 Extract Intensity Profiles", key="ia_extract_profiles"):
                 with st.spinner("Extracting intensity profiles..."):
+                    if enable_tracking:
+                        st.info("Tracking enabled. This may take a moment.")
+                        analyzer.track_bleach_spot(invert=True)
+
                     df = analyzer.extract_intensity_profiles()
+                    st.session_state.image_analysis_df = df
+
                     st.subheader("📊 Extracted Intensity Data")
                     st.dataframe(df.head(10))
 
                     fig, ax = plt.subplots(figsize=(10, 6))
-                    for i, (roi_name, roi_data) in enumerate(analyzer.rois.items()):
-                        ax.plot(df['Time'], df[roi_name], label=f"{roi_name} ({roi_data.get('name', 'N/A')})")
+                    for roi_name in ['ROI1', 'ROI2', 'ROI3']:
+                        ax.plot(df['time'], df[roi_name], label=roi_name)
                     if analyzer.bleach_frame:
-                         ax.axvline(x=df['Time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
+                         ax.axvline(x=df['time'].iloc[analyzer.bleach_frame], color='orange', linestyle='--', label='Bleach Event')
                     ax.set_xlabel('Time (s)')
                     ax.set_ylabel('Intensity')
                     ax.set_title('FRAP Intensity Profiles')
@@ -700,32 +714,40 @@ def create_image_analysis_interface():
                     ax.grid(True, alpha=0.3)
                     st.pyplot(fig)
 
-                    st.subheader("💾 Export Data")
+            if st.session_state.image_analysis_df is not None:
+                st.subheader("💾 Export and Add to Analysis")
+                df = st.session_state.image_analysis_df
+
+                col1, col2 = st.columns(2)
+                with col1:
                     csv_data = df.to_csv(index=False)
                     st.download_button(
                         label="📥 Download Intensity Data (CSV)",
                         data=csv_data,
                         file_name=f"frap_intensities_{analyzer.file_name.split('.')[0]}.csv",
-                        mime="text/csv"
+                        mime="text/csv",
+                        key="ia_download_csv"
                     )
+                with col2:
+                    if st.button("➕ Add to Data Manager", key="ia_add_to_dm"):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", mode='w', newline='') as tmp:
+                            df.to_csv(tmp.name, index=False)
+                            tmp_path = tmp.name
+
+                        file_name = f"{os.path.splitext(analyzer.file_name)[0]}.csv"
+                        if dm.load_file(tmp_path, file_name, settings=st.session_state.settings):
+                            st.success(f"Successfully added '{file_name}' to the data manager.")
+                        else:
+                            st.error("Failed to add file to data manager.")
+
+                        os.remove(tmp_path)
+                        st.rerun()
     
     else:
         st.info("👆 Upload a TIFF image stack to begin analysis")
         
-        # Show supported formats
         with st.expander("📋 Supported Image Formats"):
             st.write("""
-            **Currently Supported:**
             - TIFF/TIF files (single and multi-page)
             - Image sequences in directories
-            
-            **Future Enhancement (requires additional packages):**
-            - Zeiss CZI files (install: `pip install czifile`)
-            - Leica LIF files (install: `pip install readlif`)
-            - OME-TIFF and other formats (Bio-Formats integration)
-            
-            **Recommended Workflow:**
-            1. Export your microscopy data as TIFF stacks
-            2. Ensure consistent time intervals
-            3. Include metadata when possible
             """)

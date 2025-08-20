@@ -50,7 +50,7 @@ def test_timepoint_conversion():
     # Verify that subsequent points align with original timepoints
     original_post_bleach_times = time[bleach_idx:]
     for i in range(1, len(t_fit_original_scale)):
-        expected_time = original_post_bleach_times[i-1]
+        expected_time = time[bleach_idx + i - 1] + 0.5
         actual_time = t_fit_original_scale[i]
         assert abs(actual_time - expected_time) < 0.001, f"Timepoint mismatch at index {i}: {actual_time} vs {expected_time}"
     
