@@ -394,8 +394,8 @@ if 'settings' not in st.session_state:
         'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
         'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
     }
-if "data_manager" not in st.session_state:
-    st.session_state.data_manager = None
+if "data_manager" not in st.session_state or st.session_state.data_manager is None:
+    st.session_state.data_manager = FRAPDataManager()
 if 'selected_group_name' not in st.session_state:
     st.session_state.selected_group_name = None
 
