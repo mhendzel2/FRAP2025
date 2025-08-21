@@ -39,7 +39,13 @@ def test_zip_loading():
         mock_zip = MockFileUpload(sample_zip_path)
         
         try:
-            success = dm.load_groups_from_zip_archive(mock_zip)
+            # Provide a mock settings dictionary
+            mock_settings = {
+                'default_criterion': 'aic',
+                'default_bleach_radius': 1.0,
+                'default_pixel_size': 0.3
+            }
+            success = dm.load_groups_from_zip_archive(mock_zip, settings=mock_settings)
             print(f"\nResult: {'Success' if success else 'Failed'}")
             print(f"Groups created: {len(dm.groups)}")
             print(f"Files loaded: {len(dm.files)}")
