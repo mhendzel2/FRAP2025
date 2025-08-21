@@ -12,11 +12,13 @@ import os
 import io
 from scipy.optimize import curve_fit
 from scipy.ndimage import minimum_position
+from scipy import stats
 import plotly.graph_objects as go
 import plotly.express as px
 from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
+from frap_html_reports import generate_html_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
 from frap_manager import FRAPDataManager
@@ -643,6 +645,76 @@ with st.sidebar:
                     st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
                     st.rerun()
 
+    st.header("📄 Report Generation")
+    report_format = st.radio("Select report format", ("PDF", "HTML"), key="report_format_selector")
+    report_type = st.radio(
+        "Select report type",
+        ("Single File", "Group", "Multi-Group Comparison"),
+        key="report_type_selector"
+    )
+
+    # Common report generation logic
+    def generate_report(groups, single_file=False):
+        if not groups:
+            st.warning("Please select one or more groups/files.")
+            return
+
+        with st.spinner(f"Generating {report_format} report..."):
+            if report_format == "PDF":
+                report_path = generate_pdf_report(dm, groups, settings=st.session_state.settings)
+                mime_type = "application/pdf"
+            else:
+                report_path = generate_html_report(dm, groups, settings=st.session_state.settings)
+                mime_type = "text/html"
+
+            if report_path:
+                with open(report_path, "rb") as f:
+                    st.download_button(
+                        f"Download {report_format} Report", f.read(), file_name=os.path.basename(report_path), mime=mime_type
+                    )
+                os.remove(report_path)
+            else:
+                st.error(f"Failed to generate {report_format} report.")
+
+    if report_type == "Single File":
+        if dm.files:
+            file_to_report = st.selectbox(
+                "Select file for report",
+                list(dm.files.keys()),
+                format_func=lambda p: dm.files[p]['name'],
+                key="report_file_selector"
+            )
+            if st.button(f"Generate {report_format} Report"):
+                temp_group_name = f"temp_report_{dm.files[file_to_report]['name']}"
+                dm.create_group(temp_group_name)
+                dm.add_file_to_group(temp_group_name, file_to_report)
+                dm.update_group_analysis(temp_group_name)
+                generate_report([temp_group_name], single_file=True)
+                del dm.groups[temp_group_name]
+
+    elif report_type == "Group":
+        if dm.groups:
+            group_to_report = st.selectbox(
+                "Select group for report",
+                list(dm.groups.keys()),
+                key="report_group_selector"
+            )
+            if st.button(f"Generate {report_format} Report"):
+                generate_report([group_to_report])
+
+    elif report_type == "Multi-Group Comparison":
+        if len(dm.groups) >= 2:
+            groups_to_report = st.multiselect(
+                "Select groups to compare in report",
+                list(dm.groups.keys()),
+                default=list(dm.groups.keys())[:2],
+                key="report_multigroup_selector"
+            )
+            if st.button(f"Generate {report_format} Report"):
+                generate_report(groups_to_report)
+        else:
+            st.warning("You need at least two groups to generate a comparison report.")
+
 st.info("✅ **ZIP file import functionality has been restored!** Files from ZIP folders are now properly assigned to their respective groups.")
 
 if st.button("🧪 Test ZIP import", help="Test the ZIP import functionality"):
@@ -658,30 +730,136 @@ if st.button("🧪 Test ZIP import", help="Test the ZIP import functionality"):
     """)
 
 # Add minimal tabs for now - full content can be added later
-tab1, tab2 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis"])
+tab1, tab2, tab3 = st.tabs(["🔬 Image Analysis", "📊 Single File Analysis", "📈 Group Analysis"])
 
 with tab1:
-    st.header("Single File Analysis")
-    if dm.files:
-        selected_file_path = st.selectbox("Select file to analyze", list(dm.files.keys()), format_func=lambda p: dm.files[p]['name'])
-        if selected_file_path:
-            file_data = dm.files[selected_file_path]
-            st.write(f"**File:** {file_data['name']}")
-            if 'original_path' in file_data:
-                st.write(f"**Original Path:** {file_data['original_path']}")
-            if 'group_name' in file_data:
-                st.write(f"**Group:** {file_data['group_name']}")
-            st.write("Full analysis interface coming soon...")
-    else:
-        st.info("Upload files to begin analysis")
+    create_image_analysis_interface(dm)
 
 with tab2:
-    st.header("Group Analysis")
-    if dm.groups:
-        st.write("**Available Groups:**")
-        for group_name, group_data in dm.groups.items():
-            file_count = len(group_data.get('files', []))
-            st.write(f"📁 **{group_name}**: {file_count} files")
-        st.write("Full group analysis interface coming soon...")
+    st.header("📊 Single File Analysis")
+    if not dm.files:
+        st.info("Upload files to begin analysis.")
     else:
-        st.info("Create groups from ZIP files or manually to begin group analysis")
+        selected_file_path = st.selectbox(
+            "Select file to analyze",
+            list(dm.files.keys()),
+            format_func=lambda p: dm.files[p]['name'],
+            key="single_file_selector"
+        )
+        if selected_file_path and selected_file_path in dm.files:
+            file_data = dm.files[selected_file_path]
+
+            st.subheader(f"Analysis for: {file_data['name']}")
+
+            if file_data.get('features'):
+                features = file_data['features']
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Mobile Fraction", f"{features.get('mobile_fraction', 0):.2f}%")
+                    st.metric("Immobile Fraction", f"{features.get('immobile_fraction', 0):.2f}%")
+                with col2:
+                    st.metric("Primary Half-time (s)", f"{features.get('half_time', 0):.3f}")
+                    st.metric("Primary Rate (k)", f"{features.get('rate_constant', 0):.4f}")
+                with col3:
+                    st.metric("R² of Best Fit", f"{features.get('r2', 0):.4f}")
+                    st.metric("Best Fit Model", features.get('model', 'N/A').replace('_', ' ').title())
+
+                # Display the curve fit
+                st.subheader("Curve Fit")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='markers', name='Experimental Data'))
+                if file_data.get('best_fit') and 'fit_y' in file_data['best_fit']:
+                    fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['best_fit']['fit_y'], mode='lines', name='Best Fit', line=dict(color='red')))
+                fig.update_layout(title="FRAP Curve and Best Fit", xaxis_title="Time (s)", yaxis_title="Normalized Intensity")
+                st.plotly_chart(fig, use_container_width=True)
+
+            else:
+                st.warning("No analysis results found for this file. Please ensure it has been processed correctly.")
+
+with tab3:
+    st.header("📈 Group Analysis and Comparison")
+
+    if not dm.groups:
+        st.info("Create groups from ZIP files or manually to begin group analysis.")
+    else:
+        groups_to_compare = st.multiselect(
+            "Select groups to compare (2 or more)",
+            list(dm.groups.keys()),
+            default=list(dm.groups.keys())[:2] if len(dm.groups.keys()) >= 2 else []
+        )
+
+        if len(groups_to_compare) < 2:
+            st.warning("Please select at least two groups to compare.")
+        else:
+            st.subheader("Comparative Analysis")
+
+            # Combine data from selected groups
+            all_group_data = []
+            for group_name in groups_to_compare:
+                if group_name in dm.groups:
+                    group = dm.groups[group_name]
+                    if group.get('features_df') is not None and not group['features_df'].empty:
+                        temp_df = group['features_df'].copy()
+                        temp_df['group'] = group_name
+                        all_group_data.append(temp_df)
+
+            if not all_group_data:
+                st.warning("No analysis data found for the selected groups.")
+            else:
+                combined_df = pd.concat(all_group_data, ignore_index=True)
+
+                # --- Display Summary Statistics Table ---
+                st.markdown("#### Summary Statistics")
+                summary_table = combined_df.groupby('group').agg({
+                    'mobile_fraction': ['mean', 'std'],
+                    'rate_constant': ['mean', 'std'],
+                    'half_time': ['mean', 'std'],
+                }).round(3)
+                if not summary_table.empty:
+                    summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
+                    st.dataframe(summary_table)
+
+                # --- Display Comparison Plots ---
+                st.markdown("#### Comparison Plots")
+
+                # Melt the dataframe for easier plotting with plotly
+                plot_df = pd.melt(combined_df, id_vars=['group'],
+                                  value_vars=['mobile_fraction', 'rate_constant', 'half_time'],
+                                  var_name='Metric', value_name='Value')
+
+                fig = px.box(plot_df, x='Metric', y='Value', color='group',
+                             title="Comparison of Key Metrics Across Groups",
+                             labels={'Value': 'Metric Value', 'Metric': 'Parameter'},
+                             notched=True)
+                fig.update_traces(quartilemethod="exclusive")
+                st.plotly_chart(fig, use_container_width=True)
+
+                # --- Statistical Tests ---
+                st.markdown("#### Statistical Significance (p-values)")
+
+                metrics_to_test = ['mobile_fraction', 'rate_constant', 'half_time']
+                p_values = []
+
+                for metric in metrics_to_test:
+                    groups_data = [
+                        combined_df[combined_df['group'] == g][metric].dropna() for g in groups_to_compare
+                    ]
+
+                    groups_data = [g for g in groups_data if len(g) > 1]
+
+                    if len(groups_data) >= 2:
+                        if len(groups_to_compare) == 2:
+                            stat_val, p_val = stats.ttest_ind(*groups_data, equal_var=False)
+                            test_type = "Welch's t-test"
+                        else:
+                            stat_val, p_val = stats.f_oneway(*groups_data)
+                            test_type = "ANOVA"
+
+                        p_values.append({'Metric': metric, 'Test': test_type, 'p-value': p_val, 'Significant (p<0.05)': p_val < 0.05})
+
+                if p_values:
+                    p_values_df = pd.DataFrame(p_values)
+                    st.dataframe(p_values_df.style.format({'p-value': '{:.4f}'}))
+                else:
+                    st.warning("Not enough data to perform statistical tests.")
