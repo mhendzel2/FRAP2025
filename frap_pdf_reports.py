@@ -20,6 +20,12 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 import logging
 
+try:
+    from scipy import stats  # noqa
+except Exception:
+    stats = None
+    logging.warning("scipy not available; statistical tests in PDF report will be skipped.")
+
 logger = logging.getLogger(__name__)
 
 def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, settings=None):
@@ -169,7 +175,7 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
                 df = group['features_df']
                 
                 # Basic statistics table
-                key_metrics = ['mobile_fraction', 'immobile_fraction', 'rate_constant', 'half_time']
+                key_metrics = ['mobile_fraction', 'immobile_fraction', 'rate_constant', 'k_off', 'half_time', 'diffusion_coefficient', 'radius_of_gyration', 'molecular_weight_estimate']
                 available_metrics = [m for m in key_metrics if m in df.columns]
                 
                 if available_metrics:
@@ -311,9 +317,10 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
 
                     # Calculate ANOVA or t-test results
                     # Add statistical test results here
-                    if len(groups_to_compare) == 2:
+                    if stats is None:
+                        elements.append(Paragraph("Statistical tests unavailable (scipy not installed).", styles['Normal']))
+                    elif len(groups_to_compare) == 2:
                         # For two groups, use t-test
-                        from scipy import stats
                         group1_data = combined_df[combined_df['group'] == groups_to_compare[0]][metric].dropna()
                         group2_data = combined_df[combined_df['group'] == groups_to_compare[1]][metric].dropna()
                         
@@ -328,8 +335,6 @@ def generate_pdf_report(data_manager, groups_to_compare, output_filename=None, s
                             ))
                     else:
                         # For more than two groups, use ANOVA
-                        from scipy import stats
-                        
                         groups_data = []
                         for group_name in groups_to_compare:
                             group_data = combined_df[combined_df['group'] == group_name][metric].dropna()

@@ -835,23 +835,21 @@ with tab3:
 
                 # --- Display Comparison Plots ---
                 st.markdown("#### Comparison Plots")
-
-                # Melt the dataframe for easier plotting with plotly
-                plot_df = pd.melt(combined_df, id_vars=['group'],
-                                  value_vars=['mobile_fraction', 'rate_constant', 'half_time'],
-                                  var_name='Metric', value_name='Value')
-
-                fig = px.box(plot_df, x='Metric', y='Value', color='group',
-                             title="Comparison of Key Metrics Across Groups",
-                             labels={'Value': 'Metric Value', 'Metric': 'Parameter'},
-                             notched=True)
-                fig.update_traces(quartilemethod="exclusive")
-                st.plotly_chart(fig, use_container_width=True)
+                available_metrics = [m for m in ['mobile_fraction','immobile_fraction','rate_constant','k_off','half_time','diffusion_coefficient','radius_of_gyration','molecular_weight_estimate'] if m in combined_df.columns]
+                metrics_selected = st.multiselect("Select metrics to plot", available_metrics, default=['mobile_fraction','rate_constant','diffusion_coefficient'] if 'diffusion_coefficient' in available_metrics else available_metrics[:3])
+                if metrics_selected:
+                    plot_df = pd.melt(combined_df, id_vars=['group'], value_vars=metrics_selected, var_name='Metric', value_name='Value')
+                    fig = px.box(plot_df, x='Metric', y='Value', color='group',
+                                 title="Comparison of Selected Metrics Across Groups",
+                                 labels={'Value': 'Metric Value', 'Metric': 'Parameter'},
+                                 notched=True)
+                    fig.update_traces(quartilemethod="exclusive")
+                    st.plotly_chart(fig, use_container_width=True)
 
                 # --- Statistical Tests ---
                 st.markdown("#### Statistical Significance (p-values)")
 
-                metrics_to_test = ['mobile_fraction', 'rate_constant', 'half_time']
+                metrics_to_test = [m for m in ['mobile_fraction','immobile_fraction','rate_constant','k_off','half_time','diffusion_coefficient'] if m in combined_df.columns]
                 p_values = []
 
                 for metric in metrics_to_test:

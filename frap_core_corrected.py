@@ -912,6 +912,7 @@ class FRAPAnalysisCore:
             expected_D = reference_D * (reference_Rg / expected_rg)
             details['single_component'] = {
                 'rate_constant': k,
+                'k_off': k,
                 'half_time': np.log(2) / k if k > 0 else np.nan,
                 'diffusion_coef': diffusion_coef,
                 'radius_gyration': radius_gyration,
@@ -950,6 +951,7 @@ class FRAPAnalysisCore:
                     'component': i+1,
                     'proportion': prop,
                     'rate_constant': k,
+                    'k_off': k,
                     'half_time': np.log(2) / k if k > 0 else np.nan,
                     'diffusion_coef': diffusion_coef,
                     'radius_gyration': radius_gyration,
@@ -988,6 +990,7 @@ class FRAPAnalysisCore:
                     'component': i+1,
                     'proportion': prop,
                     'rate_constant': k,
+                    'k_off': k,
                     'half_time': np.log(2) / k if k > 0 else np.nan,
                     'diffusion_coef': diffusion_coef,
                     'radius_gyration': radius_gyration,
@@ -1070,6 +1073,7 @@ class FRAPAnalysisCore:
                 features['plateau_reached'] = plateau_reached
                 features['amplitude'] = A
                 features['rate_constant'] = k
+                features['k_off'] = k
                 features['offset'] = C
                 features['half_time'] = np.log(2) / k if k > 0 and np.isfinite(k) else np.nan
                 diffusion_coef = (default_spot_radius**2 * k) / 4.0 if k > 0 and np.isfinite(k) else np.nan
@@ -1112,6 +1116,8 @@ class FRAPAnalysisCore:
                 features['plateau_reached'] = plateau_reached
                 features['rate_constant_fast'] = k_fast
                 features['rate_constant_slow'] = k_slow
+                features['k_off_fast'] = k_fast
+                features['k_off_slow'] = k_slow
                 features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
                 features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
                 if total_amp > 0 and np.isfinite(total_amp):
@@ -1161,6 +1167,9 @@ class FRAPAnalysisCore:
                 features['rate_constant_fast'] = k_fast
                 features['rate_constant_medium'] = k_med
                 features['rate_constant_slow'] = k_slow
+                features['k_off_fast'] = k_fast
+                features['k_off_medium'] = k_med
+                features['k_off_slow'] = k_slow
                 features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
                 features['half_time_medium'] = np.log(2) / k_med if k_med > 0 and np.isfinite(k_med) else np.nan
                 features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
