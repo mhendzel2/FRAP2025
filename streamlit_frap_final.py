@@ -441,6 +441,37 @@ def plot_average_curve(group_files_data):
     )
     return fig
 
+def plot_multi_average_curves(dm, group_names):
+    fig = go.Figure()
+    for group_name in group_names:
+        group_data = dm.groups.get(group_name)
+        if group_data and group_data.get('files'):
+            files_in_group = {fp: dm.files[fp] for fp in group_data['files'] if fp in dm.files}
+            if not files_in_group:
+                continue
+
+            all_times = np.concatenate([d['time'] for d in files_in_group.values() if d['time'] is not None])
+            if all_times.size == 0:
+                continue
+
+            common_time = np.linspace(all_times.min(), all_times.max(), num=200)
+            interpolated_intensities = [np.interp(common_time, fd['time'], fd['intensity'], left=np.nan, right=np.nan) for fd in files_in_group.values()]
+
+            if not interpolated_intensities:
+                continue
+
+            mean_intensity = np.nanmean(np.array(interpolated_intensities), axis=0)
+            fig.add_trace(go.Scatter(x=common_time, y=mean_intensity, mode='lines', name=group_name))
+
+    fig.update_layout(
+        title="Average FRAP Recovery Curve Comparison",
+        xaxis_title="Time (s)",
+        yaxis_title="Normalized Intensity",
+        yaxis=dict(range=[0, None]),
+        legend_title="Group"
+    )
+    return fig
+
 # --- Core Analysis and Data Logic ---
 
 def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -730,7 +761,7 @@ if st.button("🧪 Test ZIP import", help="Test the ZIP import functionality"):
     """)
 
 # Add minimal tabs for now - full content can be added later
-tab1, tab2, tab3 = st.tabs(["🔬 Image Analysis", "📊 Single File Analysis", "📈 Group Analysis"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔬 Image Analysis", "📊 Single File Analysis", "📈 Group Analysis", "🆚 Multi-Group Comparison"])
 
 with tab1:
     create_image_analysis_interface(dm)
@@ -778,15 +809,67 @@ with tab2:
                 st.warning("No analysis results found for this file. Please ensure it has been processed correctly.")
 
 with tab3:
-    st.header("📈 Group Analysis and Comparison")
+    st.header("📈 Group Analysis")
 
     if not dm.groups:
-        st.info("Create groups from ZIP files or manually to begin group analysis.")
+        st.info("Create or select a group to begin analysis.")
+    else:
+        group_to_analyze = st.selectbox(
+            "Select a group to analyze",
+            list(dm.groups.keys()),
+            key="group_analysis_selector"
+        )
+
+        if group_to_analyze:
+            group_data = dm.groups[group_to_analyze]
+            files_in_group = group_data.get('files', [])
+
+            if not files_in_group:
+                st.warning("This group has no files.")
+            else:
+                features_df = group_data.get('features_df')
+                if features_df is None or features_df.empty:
+                    st.warning("No analysis data found for this group. Please ensure files have been processed.")
+                else:
+                    # --- Outlier Toggle ---
+                    use_outliers = st.checkbox("Include outliers in plots", value=True, key=f"outlier_toggle_{group_to_analyze}")
+
+                    outliers = []
+                    if not use_outliers:
+                        outliers = CoreFRAPAnalysis.identify_outliers(features_df, ['mobile_fraction', 'rate_constant'])
+                        if outliers:
+                            st.info(f"Excluding {len(outliers)} outliers.")
+
+                    # Filtered data
+                    filtered_files = [fp for fp in files_in_group if fp not in outliers]
+
+                    # --- Individual Plots ---
+                    st.subheader("Individual Recovery Curves")
+                    group_files_data = {fp: dm.files[fp] for fp in filtered_files if fp in dm.files}
+                    if group_files_data:
+                        fig_all = plot_all_curves(group_files_data)
+                        st.plotly_chart(fig_all, use_container_width=True)
+                    else:
+                        st.info("No data to plot.")
+
+                    # --- Average Plot ---
+                    st.subheader("Average Recovery Curve")
+                    if group_files_data:
+                        fig_avg = plot_average_curve(group_files_data)
+                        st.plotly_chart(fig_avg, use_container_width=True)
+                    else:
+                        st.info("No data to plot.")
+
+with tab4:
+    st.header("🆚 Multi-Group Comparison")
+
+    if not dm.groups or len(dm.groups) < 2:
+        st.info("Create or select at least two groups to compare.")
     else:
         groups_to_compare = st.multiselect(
             "Select groups to compare (2 or more)",
             list(dm.groups.keys()),
-            default=list(dm.groups.keys())[:2] if len(dm.groups.keys()) >= 2 else []
+            default=list(dm.groups.keys())[:2]
         )
 
         if len(groups_to_compare) < 2:
@@ -834,6 +917,11 @@ with tab3:
                              notched=True)
                 fig.update_traces(quartilemethod="exclusive")
                 st.plotly_chart(fig, use_container_width=True)
+
+                # --- Average Curve Comparison Plot ---
+                st.markdown("#### Average Curve Comparison")
+                fig_avg_multi = plot_multi_average_curves(dm, groups_to_compare)
+                st.plotly_chart(fig_avg_multi, use_container_width=True)
 
                 # --- Statistical Tests ---
                 st.markdown("#### Statistical Significance (p-values)")
