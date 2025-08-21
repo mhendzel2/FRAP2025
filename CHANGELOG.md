@@ -37,5 +37,10 @@
 - Sample data analysis validated
 - Report generation confirmed
 
+### Mobile/Immobile Fraction Correction (Unreleased)
+- Corrected definitions: mobile fraction now equals plateau (final normalized recovery) × 100; immobile fraction = 100 − mobile.
+- Added `plateau_reached` flag; if late-curve slope > 0.01 (still recovering), both fractions suppressed (NaN) and UI shows warning.
+- Updated PDF/HTML reporting and Streamlit single-file metrics to reflect new logic.
+
 ---
-Release Date: {datetime.now().strftime("%Y-%m-%d")}
+Release Date: 2025-08-20 (auto-generated earlier; update on cut release)

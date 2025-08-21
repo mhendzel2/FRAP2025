@@ -754,10 +754,23 @@ with tab2:
             if file_data.get('features'):
                 features = file_data['features']
 
+                import math
                 col1, col2, col3 = st.columns(3)
+                plateau_reached = features.get('plateau_reached', True)
+                mf = features.get('mobile_fraction')
+                imf = features.get('immobile_fraction')
+                def fmt_pct(val):
+                    try:
+                        if val is None or (isinstance(val, float) and (math.isnan(val))):
+                            return '—'
+                        return f"{float(val):.2f}%"
+                    except Exception:
+                        return '—'
                 with col1:
-                    st.metric("Mobile Fraction", f"{features.get('mobile_fraction', 0):.2f}%")
-                    st.metric("Immobile Fraction", f"{features.get('immobile_fraction', 0):.2f}%")
+                    st.metric("Mobile Fraction", fmt_pct(mf))
+                    st.metric("Immobile Fraction", fmt_pct(imf))
+                    if not plateau_reached:
+                        st.caption("Plateau not reached; fractions not reliable.")
                 with col2:
                     st.metric("Primary Half-time (s)", f"{features.get('half_time', 0):.3f}")
                     st.metric("Primary Rate (k)", f"{features.get('rate_constant', 0):.4f}")
