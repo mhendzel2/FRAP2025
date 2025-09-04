@@ -396,8 +396,8 @@ if 'settings' not in st.session_state:
         'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
         'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
     }
-if "data_manager" not in st.session_state:
-    st.session_state.data_manager = None
+if "data_manager" not in st.session_state or st.session_state.data_manager is None:
+    st.session_state.data_manager = FRAPDataManager()
 if 'selected_group_name' not in st.session_state:
     st.session_state.selected_group_name = None
 
@@ -759,9 +759,13 @@ if st.button("🧪 Test ZIP import", help="Test the ZIP import functionality"):
     
     **Next Steps:** Upload a ZIP file with subfolders to test the restored functionality.
     """)
-
+feature/frap-analysis-enhancements
 # Add minimal tabs for now - full content can be added later
 tab1, tab2, tab3, tab4 = st.tabs(["🔬 Image Analysis", "📊 Single File Analysis", "📈 Group Analysis", "🆚 Multi-Group Comparison"])
+=======
+# Tabs separated for clearer workflow
+tab1, tab2, tab3, tab4 = st.tabs(["🔬 Image Analysis", "📊 Single File Analysis", "📈 Group Analysis", "🧪 Multi-Group Comparison"])
+main
 
 with tab1:
     create_image_analysis_interface(dm)
@@ -785,10 +789,23 @@ with tab2:
             if file_data.get('features'):
                 features = file_data['features']
 
+                import math
                 col1, col2, col3 = st.columns(3)
+                plateau_reached = features.get('plateau_reached', True)
+                mf = features.get('mobile_fraction')
+                imf = features.get('immobile_fraction')
+                def fmt_pct(val):
+                    try:
+                        if val is None or (isinstance(val, float) and (math.isnan(val))):
+                            return '—'
+                        return f"{float(val):.2f}%"
+                    except Exception:
+                        return '—'
                 with col1:
-                    st.metric("Mobile Fraction", f"{features.get('mobile_fraction', 0):.2f}%")
-                    st.metric("Immobile Fraction", f"{features.get('immobile_fraction', 0):.2f}%")
+                    st.metric("Mobile Fraction", fmt_pct(mf))
+                    st.metric("Immobile Fraction", fmt_pct(imf))
+                    if not plateau_reached:
+                        st.caption("Plateau not reached; fractions not reliable.")
                 with col2:
                     st.metric("Primary Half-time (s)", f"{features.get('half_time', 0):.3f}")
                     st.metric("Primary Rate (k)", f"{features.get('rate_constant', 0):.4f}")
@@ -800,8 +817,8 @@ with tab2:
                 st.subheader("Curve Fit")
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='markers', name='Experimental Data'))
-                if file_data.get('best_fit') and 'fit_y' in file_data['best_fit']:
-                    fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['best_fit']['fit_y'], mode='lines', name='Best Fit', line=dict(color='red')))
+                if file_data.get('best_fit') and 'fitted_values' in file_data['best_fit']:
+                    fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['best_fit']['fitted_values'], mode='lines', name='Best Fit', line=dict(color='red')))
                 fig.update_layout(title="FRAP Curve and Best Fit", xaxis_title="Time (s)", yaxis_title="Normalized Intensity")
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -810,6 +827,7 @@ with tab2:
 
 with tab3:
     st.header("📈 Group Analysis")
+ feature/frap-analysis-enhancements
 
     if not dm.groups:
         st.info("Create or select a group to begin analysis.")
@@ -872,39 +890,129 @@ with tab4:
             default=list(dm.groups.keys())[:2]
         )
 
-        if len(groups_to_compare) < 2:
-            st.warning("Please select at least two groups to compare.")
+=======
+    if not dm.groups:
+        st.info("Create groups to begin group analysis.")
+    else:
+        group_name = st.selectbox("Select Group", list(dm.groups.keys()), key="single_group_selector")
+        group = dm.groups.get(group_name, {})
+        if not group.get('files'):
+            st.warning("Group has no files.")
         else:
-            st.subheader("Comparative Analysis")
+            # Outlier detection metric selection
+            features_df = group.get('features_df')
+            if features_df is None or features_df.empty:
+                st.warning("No features available for this group yet.")
+            else:
+                st.subheader("Per-File FRAP Curves")
+                files_to_show = st.multiselect("Files to display", group['files'], format_func=lambda p: dm.files[p]['name'], default=group['files'])
+                overlay_fit = st.checkbox("Show Fits", value=True, key="group_show_fits")
+                avg_col1, avg_col2 = st.columns(2)
+                with avg_col1:
+                    metric_for_outliers = st.selectbox("Outlier metric", [m for m in ['mobile_fraction','rate_constant','half_time','diffusion_coefficient','k_off'] if m in features_df.columns], index=0)
+                with avg_col2:
+                    iqr_multiplier = st.number_input("IQR multiplier", min_value=0.5, max_value=5.0, value=1.5, step=0.5)
 
-            # Combine data from selected groups
+                # Compute outliers using IQR
+                metric_series = features_df.set_index('file_path')[metric_for_outliers].dropna()
+                q1, q3 = metric_series.quantile(0.25), metric_series.quantile(0.75)
+                iqr = q3 - q1
+                lower, upper = q1 - iqr_multiplier*iqr, q3 + iqr_multiplier*iqr
+                outlier_files = metric_series[(metric_series < lower) | (metric_series > upper)].index.tolist()
+
+                show_outliers = st.checkbox("Highlight outliers", value=True)
+                exclude_outliers = st.checkbox("Exclude outliers from average", value=False)
+
+                # Prepare unified time grid for average
+                all_times = []
+                for fp in group['files']:
+                    if fp in dm.files:
+                        all_times.append(dm.files[fp]['time'])
+                if all_times:
+                    # Determine common grid (min dt among files)
+                    min_dt = np.min([np.min(np.diff(t)) for t in all_times if len(t) > 1]) if any(len(t)>1 for t in all_times) else 1.0
+                    max_t = np.max([t.max() for t in all_times])
+                    common_time = np.arange(0, max_t + min_dt, min_dt)
+                else:
+                    common_time = np.array([])
+
+                fig_group = go.Figure()
+                for fp in files_to_show:
+                    if fp not in dm.files:
+                        continue
+                    fdata = dm.files[fp]
+                    name = fdata['name']
+                    is_outlier = fp in outlier_files
+                    color = 'red' if (show_outliers and is_outlier) else None
+                    fig_group.add_trace(go.Scatter(x=fdata['time'], y=fdata['intensity'], mode='lines', name=name, line=dict(color=color)))
+                    if overlay_fit and fdata.get('best_fit') and 'fitted_values' in fdata['best_fit']:
+                        fig_group.add_trace(go.Scatter(x=fdata['time'], y=fdata['best_fit']['fitted_values'], mode='lines', name=f"Fit: {name}", line=dict(dash='dot', width=1)))
+
+                # Average curve
+                if common_time.size > 0:
+                    interpolated = []
+                    for fp in group['files']:
+                        if fp in dm.files and (not exclude_outliers or fp not in outlier_files):
+                            fdata = dm.files[fp]
+                            t = fdata['time']
+                            y = fdata['intensity']
+                            if len(t) > 1:
+                                try:
+                                    yi = np.interp(common_time, t, y)
+                                    interpolated.append(yi)
+                                except Exception:
+                                    pass
+                    if interpolated:
+                        mean_curve = np.nanmean(np.vstack(interpolated), axis=0)
+                        fig_group.add_trace(go.Scatter(x=common_time, y=mean_curve, mode='lines', name='Group Average', line=dict(color='black', width=3)))
+                fig_group.update_layout(title=f"Group Curves: {group_name}", xaxis_title='Time (s)', yaxis_title='Normalized Intensity')
+                st.plotly_chart(fig_group, use_container_width=True)
+
+                # Group statistics
+                st.subheader("Group Summary Statistics")
+                numeric_cols = [c for c in ['mobile_fraction','immobile_fraction','rate_constant','k_off','half_time','diffusion_coefficient','radius_of_gyration','molecular_weight_estimate'] if c in features_df.columns]
+                if numeric_cols:
+                    group_stats = features_df[numeric_cols].agg(['count','mean','std','median','min','max']).T.round(3)
+                    st.dataframe(group_stats)
+
+                # Within-group parameter distribution plots
+                st.subheader("Parameter Distributions")
+                params_selected = st.multiselect("Parameters to plot", numeric_cols, default=numeric_cols[:3])
+                if params_selected:
+                    long_df = features_df.melt(id_vars=['file_path','file_name'], value_vars=params_selected, var_name='Metric', value_name='Value')
+                    fig_box = px.box(long_df, x='Metric', y='Value', points='all', hover_data=['file_name'], title='Within-Group Distributions')
+                    st.plotly_chart(fig_box, use_container_width=True)
+
+                if outlier_files:
+                    st.caption(f"Outliers ({metric_for_outliers}): {', '.join([dm.files[f]['name'] for f in outlier_files if f in dm.files])}")
+
+with tab4:
+    st.header("🧪 Multi-Group Comparison")
+    if not dm.groups or len(dm.groups) < 2:
+        st.info("Need at least two groups for comparison.")
+    else:
+        groups_to_compare = st.multiselect("Select groups", list(dm.groups.keys()), default=list(dm.groups.keys())[:2], key="multi_group_selector")
+ main
+        if len(groups_to_compare) < 2:
+            st.warning("Select at least two groups.")
+        else:
             all_group_data = []
-            for group_name in groups_to_compare:
-                if group_name in dm.groups:
-                    group = dm.groups[group_name]
-                    if group.get('features_df') is not None and not group['features_df'].empty:
-                        temp_df = group['features_df'].copy()
-                        temp_df['group'] = group_name
-                        all_group_data.append(temp_df)
-
+            for gname in groups_to_compare:
+                g = dm.groups.get(gname)
+                if g and g.get('features_df') is not None and not g['features_df'].empty:
+                    tmp = g['features_df'].copy()
+                    tmp['group'] = gname
+                    all_group_data.append(tmp)
             if not all_group_data:
-                st.warning("No analysis data found for the selected groups.")
+                st.warning("No data in selected groups.")
             else:
                 combined_df = pd.concat(all_group_data, ignore_index=True)
-
-                # --- Display Summary Statistics Table ---
                 st.markdown("#### Summary Statistics")
-                summary_table = combined_df.groupby('group').agg({
-                    'mobile_fraction': ['mean', 'std'],
-                    'rate_constant': ['mean', 'std'],
-                    'half_time': ['mean', 'std'],
-                }).round(3)
+                summary_table = combined_df.groupby('group').agg({'mobile_fraction':['mean','std'],'rate_constant':['mean','std'],'half_time':['mean','std']}).round(3)
                 if not summary_table.empty:
-                    summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
+                    summary_table.columns = [' '.join(c).strip() for c in summary_table.columns]
                     st.dataframe(summary_table)
-
-                # --- Display Comparison Plots ---
-                st.markdown("#### Comparison Plots")
+feature/frap-analysis-enhancements
 
                 # Melt the dataframe for easier plotting with plotly
                 plot_df = pd.melt(combined_df, id_vars=['group'],
@@ -929,25 +1037,29 @@ with tab4:
                 metrics_to_test = ['mobile_fraction', 'rate_constant', 'half_time']
                 p_values = []
 
+=======
+                avail = [m for m in ['mobile_fraction','immobile_fraction','rate_constant','k_off','half_time','diffusion_coefficient','radius_of_gyration','molecular_weight_estimate'] if m in combined_df.columns]
+                sel = st.multiselect("Metrics", avail, default=['mobile_fraction','rate_constant'] if 'rate_constant' in avail else avail[:2])
+                if sel:
+                    cplot = pd.melt(combined_df, id_vars=['group'], value_vars=sel, var_name='Metric', value_name='Value')
+                    fig = px.box(cplot, x='Metric', y='Value', color='group', notched=True, title='Between-Group Comparison')
+                    st.plotly_chart(fig, use_container_width=True)
+                st.markdown("#### Statistical Tests")
+                metrics_to_test = [m for m in ['mobile_fraction','immobile_fraction','rate_constant','k_off','half_time','diffusion_coefficient'] if m in combined_df.columns]
+                results = []
+main
                 for metric in metrics_to_test:
-                    groups_data = [
-                        combined_df[combined_df['group'] == g][metric].dropna() for g in groups_to_compare
-                    ]
-
-                    groups_data = [g for g in groups_data if len(g) > 1]
-
-                    if len(groups_data) >= 2:
-                        if len(groups_to_compare) == 2:
-                            stat_val, p_val = stats.ttest_ind(*groups_data, equal_var=False)
-                            test_type = "Welch's t-test"
+                    data_series = [combined_df[combined_df['group']==g][metric].dropna() for g in groups_to_compare]
+                    data_series = [d for d in data_series if len(d)>1]
+                    if len(data_series) >= 2:
+                        if len(groups_to_compare)==2:
+                            stat_val, p_val = stats.ttest_ind(*data_series, equal_var=False)
+                            test = "Welch t-test"
                         else:
-                            stat_val, p_val = stats.f_oneway(*groups_data)
-                            test_type = "ANOVA"
-
-                        p_values.append({'Metric': metric, 'Test': test_type, 'p-value': p_val, 'Significant (p<0.05)': p_val < 0.05})
-
-                if p_values:
-                    p_values_df = pd.DataFrame(p_values)
-                    st.dataframe(p_values_df.style.format({'p-value': '{:.4f}'}))
+                            stat_val, p_val = stats.f_oneway(*data_series)
+                            test = "ANOVA"
+                        results.append({'Metric':metric,'Test':test,'p-value':p_val,'Significant (p<0.05)':p_val<0.05})
+                if results:
+                    st.dataframe(pd.DataFrame(results).style.format({'p-value':'{:.4f}'}))
                 else:
-                    st.warning("Not enough data to perform statistical tests.")
+                    st.info("Not enough data for statistical tests.")
