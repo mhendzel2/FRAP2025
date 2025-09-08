@@ -312,9 +312,21 @@ class FRAPAnalysisCore:
             'roi3': ['intensity region 3', 'roi3', 'background', 'bg', 'intensity3', 'region 3', 'region3']
         }
 
+        # Add optional stabilization columns to the mapping
+        optional_columns = {
+            'roi_centroid_x': ['roi_centroid_x'],
+            'roi_centroid_y': ['roi_centroid_y'],
+            'roi_radius_per_frame': ['roi_radius_per_frame'],
+            'total_drift_um': ['total_drift_um'],
+            'mean_framewise_shift_um': ['mean_framewise_shift_um'],
+            'motion_qc_flag': ['motion_qc_flag'],
+            'motion_qc_reason': ['motion_qc_reason']
+        }
+
         standardized_df = pd.DataFrame()
         missing_columns = []
         
+        # Process required columns first
         for standard_name, potential_names in column_mapping.items():
             found = False
             for col in df.columns:
@@ -326,6 +338,14 @@ class FRAPAnalysisCore:
             if not found:
                 missing_columns.append(standard_name)
         
+        # Process optional stabilization columns
+        for standard_name, potential_names in optional_columns.items():
+            for col in df.columns:
+                if any(potential_name in str(col).lower() for potential_name in potential_names):
+                    standardized_df[standard_name] = df[col]
+                    logging.info(f"Mapped optional column '{col}' to '{standard_name}'")
+                    break
+
         # If we have missing critical columns, try positional assignment as fallback
         if missing_columns and len(df.columns) >= 4:
             logging.warning(f"Missing columns {missing_columns}, attempting positional assignment")
