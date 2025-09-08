@@ -15,6 +15,7 @@ from typing import Tuple, List, Dict, Optional
 import os
 from pathlib import Path
 from frap_utils import import_imagej_roi
+from frap_core_corrected import FRAPAnalysisCore
 
 class FRAPImageAnalyzer:
     """
@@ -38,6 +39,7 @@ class FRAPImageAnalyzer:
         self.time_interval = 1.0  # seconds per frame
         # Dynamic tracking (list of (x,y) centers per frame when enabled)
         self.tracked_centers = None
+        self.stabilization_results = None
         
     def load_image_stack(self, file_path: str) -> bool:
         """
@@ -336,23 +338,25 @@ class FRAPImageAnalyzer:
         st.success(f"Added '{roi_info['name']}' as {roi_name} ({roi_type})")
         return True
     
-    def extract_intensity_profiles(self, apply_background_correction: bool = True) -> pd.DataFrame:
+    def extract_intensity_profiles(self, apply_background_correction: bool = True, enable_stabilization: bool = True) -> pd.DataFrame:
         """
-        Extract intensity profiles from defined ROIs, using tracked centers if available.
+        Extract intensity profiles from defined ROIs, with optional motion stabilization.
         
         Parameters:
         -----------
         apply_background_correction : bool
-            Whether to apply background correction
+            Whether to apply background correction.
+        enable_stabilization : bool
+            Whether to perform motion stabilization before intensity extraction.
             
         Returns:
         --------
         pd.DataFrame
-            DataFrame with time points and intensity values
+            DataFrame with time points, intensity values, and stabilization metrics.
         """
         if self.image_stack is None or not self.rois:
             raise ValueError("No image stack or ROIs defined")
-        
+
         n_frames, height, width = self.image_stack.shape
         
         roi_map = {}
@@ -368,42 +372,98 @@ class FRAPImageAnalyzer:
             st.error("Please define exactly one of each ROI type: 'bleach_spot', 'reference', and 'background'.")
             return pd.DataFrame()
 
+        # --- Motion Stabilization ---
+        motion_qc_flag = False
+        motion_qc_reason = "Stabilization not enabled."
+        stabilized_stack = self.image_stack
+
+        if enable_stabilization:
+            try:
+                st.info("Performing motion stabilization...")
+                bleach_roi_data = self.rois[roi_map['ROI1']]
+
+                self.stabilization_results = FRAPAnalysisCore.motion_compensate_stack(
+                    stack=self.image_stack,
+                    init_center=self.bleach_coordinates,
+                    radius=bleach_roi_data['radius'],
+                    pixel_size_um=self.pixel_size,
+                    use_optical_flow=True,
+                    do_global=True,
+                    kalman=True
+                )
+
+                warnings = self.stabilization_results.get('warnings', [])
+                if not warnings:
+                    motion_qc_flag = True
+                    motion_qc_reason = "Stabilization successful."
+                    stabilized_stack = self.stabilization_results['stabilized_stack']
+                    # Use the tracked centers from the more advanced stabilization
+                    self.tracked_centers = [d['centroid'] for d in self.stabilization_results['roi_trace']]
+                    st.success("Motion stabilization successful.")
+                else:
+                    motion_qc_flag = False
+                    motion_qc_reason = "; ".join(warnings)
+                    st.warning(f"Stabilization finished with warnings: {motion_qc_reason}. Falling back to static ROI.")
+
+            except Exception as e:
+                motion_qc_flag = False
+                motion_qc_reason = f"Stabilization failed: {str(e)}"
+                st.error(f"Motion stabilization failed: {e}. Falling back to static ROI.")
+                self.stabilization_results = None
+
+        # --- Intensity Extraction ---
         intensities = {'ROI1': np.zeros(n_frames), 'ROI2': np.zeros(n_frames), 'ROI3': np.zeros(n_frames)}
         
-        # Get static masks for reference and background
         ref_mask = self.rois[roi_map['ROI2']]['mask']
         bg_mask = self.rois[roi_map['ROI3']]['mask']
-
         y_grid, x_grid = np.ogrid[:height, :width]
 
         for t in range(n_frames):
-            frame = self.image_stack[t].astype(float)
+            frame = stabilized_stack[t].astype(float)
             if apply_background_correction:
                 frame = self._apply_background_correction(frame)
 
-            # If tracking, update the bleach spot ROI for each frame
-            if self.tracked_centers:
-                bleach_roi_data = self.rois[roi_map['ROI1']]
-                center_x, center_y = self.tracked_centers[t]
-                radius = bleach_roi_data['radius']
-
-                # Create a new mask for the current frame
+            # If stabilization was successful and tracked centers are available, use dynamic ROI
+            if motion_qc_flag and self.tracked_centers:
+                center_x, center_y = self.tracked_centers[t]['x'], self.tracked_centers[t]['y']
+                radius = self.rois[roi_map['ROI1']]['radius']
                 bleach_mask = (x_grid - center_x)**2 + (y_grid - center_y)**2 <= radius**2
-            else:
-                # Use the static bleach spot mask
+            else: # Fallback to static ROI
                 bleach_mask = self.rois[roi_map['ROI1']]['mask']
 
             intensities['ROI1'][t] = np.mean(frame[bleach_mask]) if np.any(bleach_mask) else 0
             intensities['ROI2'][t] = np.mean(frame[ref_mask]) if np.any(ref_mask) else 0
             intensities['ROI3'][t] = np.mean(frame[bg_mask]) if np.any(bg_mask) else 0
 
-
+        # --- Assemble DataFrame ---
         df = pd.DataFrame({
-            'time': self.time_points[:n_frames], # Renamed to 'time' for compatibility
+            'time': self.time_points[:n_frames],
             'ROI1': intensities['ROI1'],
             'ROI2': intensities['ROI2'],
             'ROI3': intensities['ROI3']
         })
+
+        # Add stabilization metrics to the dataframe
+        if self.stabilization_results:
+            trace = self.stabilization_results['roi_trace']
+            df['roi_centroid_x'] = [d['centroid']['x'] for d in trace]
+            df['roi_centroid_y'] = [d['centroid']['y'] for d in trace]
+            df['roi_radius_per_frame'] = [d['applied_radius'] for d in trace]
+            df['total_drift_um'] = self.stabilization_results.get('drift_um', np.nan)
+
+            displacements_px = [d['displacement_px'] for d in trace]
+            mean_shift_um = np.mean(displacements_px) * self.pixel_size if self.pixel_size else np.nan
+            df['mean_framewise_shift_um'] = mean_shift_um
+        else:
+            # Fill with NaNs if stabilization was not run or failed
+            df['roi_centroid_x'] = np.nan
+            df['roi_centroid_y'] = np.nan
+            df['roi_radius_per_frame'] = np.nan
+            df['total_drift_um'] = np.nan
+            df['mean_framewise_shift_um'] = np.nan
+
+        df['motion_qc_flag'] = motion_qc_flag
+        df['motion_qc_reason'] = motion_qc_reason
         
         return df
 
@@ -692,11 +752,7 @@ def create_image_analysis_interface(dm):
             st.write(f"**Current ROIs:** {len(analyzer.rois)}")
             if st.button("📈 Extract Intensity Profiles", key="ia_extract_profiles"):
                 with st.spinner("Extracting intensity profiles..."):
-                    if enable_tracking:
-                        st.info("Tracking enabled. This may take a moment.")
-                        analyzer.track_bleach_spot(invert=True)
-
-                    df = analyzer.extract_intensity_profiles()
+                    df = analyzer.extract_intensity_profiles(enable_stabilization=enable_tracking)
                     st.session_state.image_analysis_df = df
 
                     st.subheader("📊 Extracted Intensity Data")

@@ -281,7 +281,10 @@ def _avg_lk_flow(
     pts = np.stack([xx.ravel(), yy.ravel()], axis=1).astype(np.float32)
     p0 = pts.reshape(-1, 1, 2)
 
-    p1, st, err = cv2.calcOpticalFlowPyrLK(prev, curr, p0, None)
+    prev_8u = cv2.normalize(prev, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    curr_8u = cv2.normalize(curr, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    p1, st, err = cv2.calcOpticalFlowPyrLK(prev_8u, curr_8u, p0, None)
     if p1 is None or st is None:
         return 0.0, 0.0, 0
     st = st.reshape(-1)
