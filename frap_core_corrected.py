@@ -169,7 +169,7 @@ class FRAPAnalysisCore:
         # --- Recovery trajectory extrapolation ---
         # Use the next 3-5 recovery points to extrapolate back to bleach time
         recovery_start = i_min + 1
-        recovery_end = min(i_min + 5, len(time))  # Use up to 4 recovery points
+        recovery_end = min(int(i_min) + 5, len(time))  # Use up to 4 recovery points
         
         if recovery_end - recovery_start < 2:
             raise ValueError("Insufficient recovery points for trajectory extrapolation.")
@@ -208,6 +208,67 @@ class FRAPAnalysisCore:
         t_post = t_post - t_bleach
         
         return t_post, i_post, i_min
+
+    @staticmethod
+    def motion_compensate_stack(stack: np.ndarray,
+                                init_center: tuple[float, float],
+                                radius: float,
+                                *,
+                                pixel_size_um: float | None = None,
+                                use_optical_flow: bool = True,
+                                do_global: bool = True,
+                                window_radius: int = 24,
+                                flow_window: int = 32,
+                                kalman: bool = True) -> dict:
+        """
+        Run motion compensation on a grayscale image stack.
+
+        Parameters
+        ----------
+        stack : np.ndarray
+            Input image stack shaped (T, H, W), single channel.
+        init_center : tuple[float, float]
+            Initial bleach-spot center (x, y) in pixels.
+        radius : float
+            ROI radius in pixels to apply around the tracked center.
+        pixel_size_um : float | None
+            Pixel size in micrometers. If provided, returns drift in micrometers.
+        use_optical_flow : bool
+            Use Lucas–Kanade optical flow to help local prediction.
+        do_global : bool
+            Apply global translation registration before local recentering.
+        window_radius : int
+            Half-size for Gaussian fitting window.
+        flow_window : int
+            Half-size for optical flow window.
+        kalman : bool
+            Apply constant-velocity Kalman smoothing to trajectory.
+
+        Returns
+        -------
+        dict
+            {
+              'stabilized_stack': np.ndarray,
+              'roi_trace': list[{'frame', 'centroid': {'x','y'}, 'applied_radius', 'displacement_px'}],
+              'drift_um': float | None,
+              'warnings': list[str],
+              'details': {'global': {...} | None, 'tracking': {...}}
+            }
+        """
+        # Local import to keep optional heavy deps isolated
+        from image_motion import stabilize_roi
+
+        return stabilize_roi(
+            stack=stack,
+            init_center=init_center,
+            radius=radius,
+            pixel_size_um=pixel_size_um,
+            use_optical_flow=use_optical_flow,
+            window_radius=window_radius,
+            flow_window=flow_window,
+            kalman=kalman,
+            do_global=do_global,
+        )
 
     @staticmethod
     def load_data(file_path):
@@ -1440,6 +1501,13 @@ class FRAPAnalysisCore:
         else:
             raise ValueError(f"Unsupported model type: {model}")
         
+        # Initialize outputs to safe defaults to avoid unbound-variable warnings in static analysis
+        shared_params = {}
+        individual_params = []
+        shared_offset = None
+        fitted_curves = None
+        r2_values = []
+
         try:
             # Perform global optimization
             sol = optimize.least_squares(residual, p0, bounds=bounds, max_nfev=5000)
@@ -1455,7 +1523,8 @@ class FRAPAnalysisCore:
             bic = FRAPAnalysisCore.compute_bic(rss, n_data, n_params)
             
             # Calculate R-squared for each trace
-            fitted_curves = (fitted_residuals.reshape(Y.shape) - Y + Y)  # Reconstruct fitted values
+            # residual() returns (Y - fit), so reconstruct fitted values as fit = Y - residuals
+            fitted_curves = Y - fitted_residuals.reshape(Y.shape)
             r2_values = []
             for i in range(n_traces):
                 r2 = FRAPAnalysisCore.compute_r_squared(Y[i], fitted_curves[i])
@@ -1498,7 +1567,7 @@ class FRAPAnalysisCore:
                 'aic': aic,
                 'bic': bic,
                 'r2_values': r2_values,
-                'mean_r2': np.mean(r2_values),
+                'mean_r2': np.mean(r2_values) if r2_values else np.nan,
                 'n_traces': n_traces,
                 'n_params': n_params,
                 'fitted_curves': fitted_curves,
