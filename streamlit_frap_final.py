@@ -481,6 +481,36 @@ def plot_average_curve(group_files_data):
     )
     return fig
 
+def create_sparkline(x_coords, y_coords):
+    """Generates a tiny sparkline for centroid displacement."""
+    if not isinstance(x_coords, (list, np.ndarray, pd.Series)) or not isinstance(y_coords, (list, np.ndarray, pd.Series)):
+        return ""
+
+    x = np.array(x_coords)
+    y = np.array(y_coords)
+
+    if len(x) < 2 or len(y) < 2 or pd.isnull(x).all() or pd.isnull(y).all():
+        return ""
+
+    # Calculate displacement from the initial point
+    displacement = np.sqrt((x - x[0])**2 + (y - y[0])**2)
+
+    fig = go.Figure(go.Scatter(
+        x=np.arange(len(displacement)), y=displacement,
+        mode='lines', line=dict(color='blue', width=2)
+    ))
+
+    fig.update_layout(
+        width=100, height=30,
+        margin=dict(l=0, r=0, t=0, b=0),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+
+    return fig.to_image(format="svg+xml", engine="kaleido")
+
 # --- Core Analysis and Data Logic ---
 
 def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -558,8 +588,19 @@ class FRAPDataManager:
                     # Validate the analysis results
                     params = validate_analysis_results(params)
                 else:
-                    params = None
+                    params = {}
                     logger.error(f"No valid fit found for {file_name}")
+
+                # Add stabilization data to features if it exists in the dataframe
+                for col in ['roi_centroid_x', 'roi_centroid_y', 'roi_radius_per_frame',
+                            'total_drift_um', 'mean_framewise_shift_um',
+                            'motion_qc_flag', 'motion_qc_reason']:
+                    if col in processed_df.columns:
+                        # For per-frame data, store the series; for single values, store the first value
+                        if processed_df[col].nunique() > 1:
+                            params[col] = processed_df[col].tolist()
+                        else:
+                            params[col] = processed_df[col].iloc[0]
 
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
@@ -1668,6 +1709,13 @@ with tab2:
                             gfp_mw=27.0
                         )
 
+                        sparkline_svg = ""
+                        if features.get('motion_qc_flag', False):
+                             sparkline_svg = create_sparkline(
+                                 features.get('roi_centroid_x', []),
+                                 features.get('roi_centroid_y', [])
+                             )
+
                         all_files_data.append({
                             'File Name': file_data['name'],
                             'Status': 'Outlier' if path in excluded_paths else 'Included',
@@ -1679,7 +1727,8 @@ with tab2:
                             'App. D (μm²/s)': kinetic_interp['diffusion_coefficient'],
                             'App. MW (kDa)': kinetic_interp['apparent_mw'],
                             'Model': features.get('model', 'Unknown'),
-                            'R²': features.get('r2', np.nan)
+                            'R²': features.get('r2', np.nan),
+                            'Centroid Drift': sparkline_svg
                         })
 
                     detailed_df = pd.DataFrame(all_files_data)
@@ -1689,19 +1738,18 @@ with tab2:
                         return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
 
                     with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
-                        st.dataframe(
-                            detailed_df.style.apply(highlight_outliers, axis=1).format({
-                                'Mobile (%)': '{:.1f}',
-                                'Immobile (%)': '{:.1f}',
-                                'Primary Rate (k)': '{:.4f}',
-                                'Half-time (s)': '{:.2f}',
-                                'k_off (1/s)': '{:.4f}',
-                                'Apparent D (μm²/s)': '{:.3f}',
-                                'Apparent MW (kDa)': '{:.1f}',
-                                'R²': '{:.3f}'
-                            }, na_rep="-"),
-                            use_container_width=True
-                        )
+                        # Convert dataframe to HTML and embed SVG sparklines
+                        html = detailed_df.to_html(escape=False, index=False, formatters={
+                            'Mobile (%)': '{:.1f}'.format,
+                            'Immobile (%)': '{:.1f}'.format,
+                            'Primary Rate (k)': '{:.4f}'.format,
+                            'Half-time (s)': '{:.2f}'.format,
+                            'k_off (1/s)': '{:.4f}'.format,
+                            'App. D (μm²/s)': '{:.3f}'.format,
+                            'App. MW (kDa)': '{:.1f}'.format,
+                            'R²': '{:.3f}'.format
+                        })
+                        st.markdown(html, unsafe_allow_html=True)
 
                         # Summary statistics
                         included_data = detailed_df[detailed_df['Status'] == 'Included']
