@@ -13,7 +13,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from sklearn.cluster import AgglomerativeClustering
-
+from calibration import Calibration
 # ---------------------------------------------------------------------- #
 #  PUBLIC HELPER – post‑bleach extraction with recovery extrapolation    #
 # ---------------------------------------------------------------------- #
@@ -93,22 +93,33 @@ def diffusion_coefficient(bleach_radius_um: float, k: float) -> float:
 
 def interpret_kinetics(k: float,
                        bleach_radius_um: float,
+                       calibration: Calibration = None,
                        gfp_d: float = 25.0,
-                       gfp_rg: float = 2.82,
                        gfp_mw: float = 27.0) -> dict[str, float]:
     """
     Dual interpretation (diffusion / binding) using the *correct* D formula.
     """
     if k <= 0 or bleach_radius_um <= 0:
-        return {k: np.nan for k in
-                ("k_off", "diffusion_coefficient", "apparent_mw",
+        return {key: np.nan for key in
+                ("k_off", "diffusion_coefficient", "apparent_mw", "apparent_mw_ci_low", "apparent_mw_ci_high",
                  "half_time_diffusion", "half_time_binding")}
 
     D = diffusion_coefficient(bleach_radius_um, k)
+
+    apparent_mw, ci_low, ci_high = np.nan, np.nan, np.nan
+    if calibration:
+        apparent_mw, ci_low, ci_high = calibration.estimate_apparent_mw(D)
+    else:
+        # Fallback to old method if no calibration object is provided
+        if D > 0:
+            apparent_mw = gfp_mw * (gfp_d / D)**3
+
     return {
         "k_off": k,
         "diffusion_coefficient": D,
-        "apparent_mw": gfp_mw * (gfp_d / D)**3,
+        "apparent_mw": apparent_mw,
+        "apparent_mw_ci_low": ci_low,
+        "apparent_mw_ci_high": ci_high,
         "half_time_diffusion": np.log(2) / k,
         "half_time_binding": np.log(2) / k,
     }
@@ -828,7 +839,7 @@ class FRAPAnalysisCore:
         return (bleach_spot_radius**2 * rate_constant) / 4.0
     
     @staticmethod
-    def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0):
+    def interpret_kinetics(k, bleach_radius_um, calibration=None, gfp_d=25.0, gfp_mw=27.0):
         """
         Centralized kinetics interpretation function with CORRECTED mathematics
         
@@ -838,10 +849,10 @@ class FRAPAnalysisCore:
             The fitted kinetic rate constant (1/s)
         bleach_radius_um : float
             The radius of the photobleach spot in micrometers
+        calibration : Calibration, optional
+            A Calibration object for MW estimation.
         gfp_d : float
             Reference diffusion coefficient for GFP (um^2/s)
-        gfp_rg : float
-            Reference radius of gyration for GFP (nm)
         gfp_mw : float
             Reference molecular weight for GFP (kDa)
             
@@ -855,6 +866,8 @@ class FRAPAnalysisCore:
                 'k_off': k,
                 'diffusion_coefficient': np.nan,
                 'apparent_mw': np.nan,
+                'apparent_mw_ci_low': np.nan,
+                'apparent_mw_ci_high': np.nan,
                 'half_time_diffusion': np.nan,
                 'half_time_binding': np.nan
             }
@@ -866,432 +879,120 @@ class FRAPAnalysisCore:
         # 2. Interpretation as a diffusion process
         # CORRECTED FORMULA: For 2D diffusion: D = (w^2 * k) / 4 
         # where w is bleach radius and k is rate constant
-        # This is the correct formula WITHOUT the erroneous np.log(2) factor
         diffusion_coefficient = (bleach_radius_um**2 * k) / 4.0
         half_time_diffusion = np.log(2) / k  # Half-time from rate constant
 
         # Estimate apparent molecular weight from diffusion coefficient
-        # Using Stokes-Einstein relation: D ∝ 1/Rg ∝ 1/MW^(1/3)
-        if diffusion_coefficient > 0:
-            apparent_mw = gfp_mw * (gfp_d / diffusion_coefficient)**3
+        apparent_mw, ci_low, ci_high = np.nan, np.nan, np.nan
+        if calibration:
+            apparent_mw, ci_low, ci_high = calibration.estimate_apparent_mw(diffusion_coefficient)
         else:
-            apparent_mw = np.nan
+            # Fallback to old method if no calibration object is provided
+            if diffusion_coefficient > 0:
+                apparent_mw = gfp_mw * (gfp_d / diffusion_coefficient)**3
 
         return {
             'k_off': k_off,
             'diffusion_coefficient': diffusion_coefficient,
             'apparent_mw': apparent_mw,
+            'apparent_mw_ci_low': ci_low,
+            'apparent_mw_ci_high': ci_high,
             'half_time_diffusion': half_time_diffusion,
             'half_time_binding': half_time_binding
         }
-        
+
     @staticmethod
-    def compute_radius_of_gyration(diffusion_coefficient, reference_D=25.0, reference_Rg=2.82):
+    def extract_clustering_features(best_fit, bleach_spot_radius=1.0, pixel_size=1.0, calibration=None):
         """
-        Calculate radius of gyration using the Stokes-Einstein relation with GFP as reference
+        Extract features for clustering from the best fit model.
+        """
+        if best_fit is None:
+            return None
+
+        model = best_fit.get('model')
+        params = best_fit.get('params')
+
+        if not model or not isinstance(params, (list, tuple, np.ndarray)):
+            return None
+
+        features = {}
+        effective_radius_um = bleach_spot_radius * pixel_size
         
-        Parameters:
-        -----------
-        diffusion_coefficient : float
-            Diffusion coefficient in μm²/s
-        reference_D : float
-            Reference diffusion coefficient (default: GFP = 25 μm²/s)
-        reference_Rg : float
-            Reference radius of gyration (default: GFP = 2.82 nm)
-            
-        Returns:
-        --------
-        float
-            Radius of gyration in nm
-        """
-        if diffusion_coefficient <= 0:
-            return np.nan
-        return reference_Rg * (reference_D / diffusion_coefficient)
-        
-    @staticmethod
-    def compute_molecular_weight_estimate(radius_of_gyration, reference_Rg=2.82, reference_MW=27.0):
-        """
-        Estimate molecular weight from radius of gyration
-        Assumption: MW scales with Rg^3 for globular proteins
-        
-        Parameters:
-        -----------
-        radius_of_gyration : float
-            Radius of gyration in nm
-        reference_Rg : float
-            Reference radius of gyration (default: GFP = 2.82 nm)
-        reference_MW : float
-            Reference molecular weight (default: GFP = 27 kDa)
-            
-        Returns:
-        --------
-        float
-            Estimated molecular weight in kDa
-        """
-        if np.isnan(radius_of_gyration) or radius_of_gyration <= 0:
-            return np.nan
-        return reference_MW * (radius_of_gyration / reference_Rg)**3
-    
-    @staticmethod
-    def compute_kinetic_details(fit_data, bleach_spot_radius=1.0, pixel_size=1.0, 
-                               reference_D=25.0, reference_Rg=2.82, reference_MW=27.0, 
-                               target_MW=27.0, scaling_alpha=1.0):
-        """
-        Compute detailed kinetic parameters from fit data, including both 
-        diffusion and binding interpretations with CORRECTED formulas.
-        
-        Parameters:
-        -----------
-        fit_data : dict
-            Dictionary containing fit information
-        bleach_spot_radius : float
-            Radius of the bleach spot in μm
-        pixel_size : float
-            Size of a pixel in μm
-        reference_D : float
-            Reference diffusion coefficient (GFP) in μm²/s
-        reference_Rg : float
-            Reference radius of gyration (GFP) in nm
-        reference_MW : float
-            Reference molecular weight (GFP) in kDa
-        target_MW : float
-            Target molecular weight to compare in kDa
-        scaling_alpha : float
-            Scaling factor for diffusion calculation
-            
-        Returns:
-        --------
-        dict
-            Dictionary of detailed kinetic parameters
-        """
-        if fit_data is None:
-            return {}
-            
-        model = fit_data['model']
-        params = fit_data['params']
-        actual_spot_radius = bleach_spot_radius * pixel_size
-        details = {}
-        
-        if model == 'single':
+        # --- Common feature extraction ---
+        fitted_vals = best_fit.get('fitted_values')
+        plateau_reached = True
+        if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
+            if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
+                plateau_reached = False
+        features['plateau_reached'] = plateau_reached
+
+        # --- Model-specific feature extraction ---
+        if model == 'single' and len(params) >= 3:
             A, k, C = params
             endpoint = A + C
-            mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-            plateau_reached = True
-            fitted_vals = fit_data.get('fitted_values')
-            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                    mobile_fraction = np.nan
-                    plateau_reached = False
-            details['mobile_fraction'] = mobile_fraction
-            details['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-            details['plateau_reached'] = plateau_reached
+            features.update({
+                'amplitude': A, 'rate_constant': k, 'offset': C,
+                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'rate_constant_fast': k,
+                'proportion_of_mobile_fast': 100.0
+            })
+            features.update(FRAPAnalysisCore.interpret_kinetics(k, effective_radius_um, calibration))
+            features['half_time_fast'] = features.get('half_time_binding')
+            features['proportion_of_total_fast'] = features['mobile_fraction']
 
-            diffusion_coef = (actual_spot_radius**2 * k) / 4.0
-            radius_gyration = reference_Rg * (reference_D / diffusion_coef) if diffusion_coef > 0 else np.nan
-            mw_estimate = reference_MW * (radius_gyration / reference_Rg)**3 if not np.isnan(radius_gyration) else np.nan
-            expected_rg = reference_Rg * (reference_MW / target_MW)**(1/3) * scaling_alpha
-            expected_D = reference_D * (reference_Rg / expected_rg)
-            details['single_component'] = {
-                'rate_constant': k,
-                'k_off': k,
-                'half_time': np.log(2) / k if k > 0 else np.nan,
-                'diffusion_coef': diffusion_coef,
-                'radius_gyration': radius_gyration,
-                'mw_estimate': mw_estimate,
-                'expected_D': expected_D,
-                'expected_rg': expected_rg,
-                'is_pure_diffusion': np.isclose(diffusion_coef, expected_D, rtol=0.2)
-            }
-        elif model == 'double':
+        elif model == 'double' and len(params) >= 5:
             A1, k1, A2, k2, C = params
             total_amp = A1 + A2
             endpoint = total_amp + C
-            mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-            plateau_reached = True
-            fitted_vals = fit_data.get('fitted_values')
-            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                    mobile_fraction = np.nan
-                    plateau_reached = False
-            details['mobile_fraction'] = mobile_fraction
-            details['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-            details['plateau_reached'] = plateau_reached
+            components = sorted([(k1, A1), (k2, A2)], key=lambda x: x[0], reverse=True)
+            k_fast, A_fast = components[0]
+            k_slow, A_slow = components[1]
 
-            components = sorted([(k1, A1), (k2, A2)], reverse=True)
-            rates = [comp[0] for comp in components]
-            amps = [comp[1] for comp in components]
-            details['components'] = []
-            for i, (k, A) in enumerate(zip(rates, amps)):
-                prop = A / total_amp if total_amp > 0 else np.nan
-                diffusion_coef = (actual_spot_radius**2 * k) / 4.0
-                radius_gyration = reference_Rg * (reference_D / diffusion_coef) if diffusion_coef > 0 else np.nan
-                mw_estimate = reference_MW * (radius_gyration / reference_Rg)**3 if not np.isnan(radius_gyration) else np.nan
-                expected_rg = reference_Rg * (reference_MW / target_MW)**(1/3) * scaling_alpha
-                expected_D = reference_D * (reference_Rg / expected_rg)
-                details['components'].append({
-                    'component': i+1,
-                    'proportion': prop,
-                    'rate_constant': k,
-                    'k_off': k,
-                    'half_time': np.log(2) / k if k > 0 else np.nan,
-                    'diffusion_coef': diffusion_coef,
-                    'radius_gyration': radius_gyration,
-                    'mw_estimate': mw_estimate,
-                    'expected_D': expected_D,
-                    'expected_rg': expected_rg,
-                    'is_pure_diffusion': np.isclose(diffusion_coef, expected_D, rtol=0.2)
-                })
-        elif model == 'triple':
+            features.update({
+                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'rate_constant_fast': k_fast,
+                'rate_constant_slow': k_slow,
+                'proportion_of_mobile_fast': (A_fast / total_amp) * 100 if total_amp > 0 else 0,
+                'proportion_of_mobile_slow': (A_slow / total_amp) * 100 if total_amp > 0 else 0,
+            })
+            features['proportion_of_total_fast'] = (A_fast / endpoint) * 100 if endpoint > 0 else 0
+            features['proportion_of_total_slow'] = (A_slow / endpoint) * 100 if endpoint > 0 else 0
+            features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
+            features['half_time_fast'] = features.get('half_time_binding')
+
+        elif model == 'triple' and len(params) >= 7:
             A1, k1, A2, k2, A3, k3, C = params
             total_amp = A1 + A2 + A3
             endpoint = total_amp + C
-            mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-            plateau_reached = True
-            fitted_vals = fit_data.get('fitted_values')
-            if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                    mobile_fraction = np.nan
-                    plateau_reached = False
-            details['mobile_fraction'] = mobile_fraction
-            details['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-            details['plateau_reached'] = plateau_reached
+            components = sorted([(k1, A1), (k2, A2), (k3, A3)], key=lambda x: x[0], reverse=True)
+            k_fast, A_fast = components[0]
+            k_med, A_med = components[1]
+            k_slow, A_slow = components[2]
 
-            components = sorted([(k1, A1), (k2, A2), (k3, A3)], reverse=True)
-            rates = [comp[0] for comp in components]
-            amps = [comp[1] for comp in components]
-            details['components'] = []
-            for i, (k, A) in enumerate(zip(rates, amps)):
-                prop = A / total_amp if total_amp > 0 else np.nan
-                diffusion_coef = (actual_spot_radius**2 * k) / 4.0
-                radius_gyration = reference_Rg * (reference_D / diffusion_coef) if diffusion_coef > 0 else np.nan
-                mw_estimate = reference_MW * (radius_gyration / reference_Rg)**3 if not np.isnan(radius_gyration) else np.nan
-                expected_rg = reference_Rg * (reference_MW / target_MW)**(1/3) * scaling_alpha
-                expected_D = reference_D * (reference_Rg / expected_rg)
-                details['components'].append({
-                    'component': i+1,
-                    'proportion': prop,
-                    'rate_constant': k,
-                    'k_off': k,
-                    'half_time': np.log(2) / k if k > 0 else np.nan,
-                    'diffusion_coef': diffusion_coef,
-                    'radius_gyration': radius_gyration,
-                    'mw_estimate': mw_estimate,
-                    'expected_D': expected_D,
-                    'expected_rg': expected_rg,
-                    'is_pure_diffusion': np.isclose(diffusion_coef, expected_D, rtol=0.2)
-                })
-        return details
+            features.update({
+                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'rate_constant_fast': k_fast,
+                'rate_constant_medium': k_med,
+                'rate_constant_slow': k_slow,
+                'proportion_of_mobile_fast': (A_fast / total_amp) * 100 if total_amp > 0 else 0,
+                'proportion_of_mobile_medium': (A_med / total_amp) * 100 if total_amp > 0 else 0,
+                'proportion_of_mobile_slow': (A_slow / total_amp) * 100 if total_amp > 0 else 0,
+            })
+            features['proportion_of_total_fast'] = (A_fast / endpoint) * 100 if endpoint > 0 else 0
+            features['proportion_of_total_medium'] = (A_med / endpoint) * 100 if endpoint > 0 else 0
+            features['proportion_of_total_slow'] = (A_slow / endpoint) * 100 if endpoint > 0 else 0
+            features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
+            features['half_time_fast'] = features.get('half_time_binding')
 
-    @staticmethod
-    def extract_clustering_features(best_fit):
-        """
-        Extract features for clustering from the best fit model with CORRECTED formulas
-        and proper handling of extrapolated recovery curves.
+        features['immobile_fraction'] = 100 - features.get('mobile_fraction', 0)
         
-        Parameters:
-        -----------
-        best_fit : dict
-            Dictionary containing the best fit model information
-            
-        Returns:
-        --------
-        dict or None
-            Dictionary containing features for clustering
-        """
-        if best_fit is None:
-            logging.warning("extract_clustering_features: best_fit is None")
-            return None
-        
-        # Validate best_fit structure
-        if not isinstance(best_fit, dict):
-            logging.error(f"extract_clustering_features: best_fit is not a dict, got {type(best_fit)}")
-            return None
-            
-        if 'model' not in best_fit or 'params' not in best_fit:
-            logging.error(f"extract_clustering_features: best_fit missing required keys. Available keys: {list(best_fit.keys())}")
-            return None
-            
-        model = best_fit['model']
-        params = best_fit['params']
-        
-        # Validate params
-        if params is None:
-            logging.error("extract_clustering_features: params is None")
-            return None
-            
-        if not isinstance(params, (list, tuple, np.ndarray)) or len(params) == 0:
-            logging.error(f"extract_clustering_features: invalid params type or empty. Got {type(params)} with length {len(params) if hasattr(params, '__len__') else 'unknown'}")
-            return None
-        
-        features = {}
-        
-        # Default bleach spot radius in μm (will be replaced with user input in real application)
-        default_spot_radius = 1.0  # μm
-        
-        # GFP reference values
-        D_GFP = 25.0  # μm²/s (default reference value)
-        Rg_GFP = 2.82  # nm
-        MW_GFP = 27.0  # kDa
-        
-        try:
-            if model == 'single':
-                if len(params) < 3:
-                    logging.error(f"extract_clustering_features: single model requires 3 parameters, got {len(params)}")
-                    return None
-                A, k, C = params[:3]
-                if not np.isfinite(A) or not np.isfinite(k) or not np.isfinite(C):
-                    logging.warning("extract_clustering_features: non-finite parameters in single model")
-                endpoint = (A + C) if np.isfinite(A) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['amplitude'] = A
-                features['rate_constant'] = k
-                features['k_off'] = k
-                features['offset'] = C
-                features['half_time'] = np.log(2) / k if k > 0 and np.isfinite(k) else np.nan
-                diffusion_coef = (default_spot_radius**2 * k) / 4.0 if k > 0 and np.isfinite(k) else np.nan
-                features['diffusion_coefficient'] = diffusion_coef
-                features['radius_of_gyration'] = Rg_GFP * (D_GFP / diffusion_coef) if diffusion_coef > 0 and np.isfinite(diffusion_coef) else np.nan
-                rg = features['radius_of_gyration']
-                features['molecular_weight_estimate'] = MW_GFP * (rg / Rg_GFP)**3 if not np.isnan(rg) and rg > 0 else np.nan
-                features['rate_constant_fast'] = k
-                features['half_time_fast'] = features['half_time']
-                features['proportion_of_mobile_fast'] = 100.0 if np.isfinite(features['mobile_fraction']) else np.nan
-                features['proportion_of_total_fast'] = features['mobile_fraction']
-            elif model == 'double':
-                if len(params) < 5:
-                    logging.error(f"extract_clustering_features: double model requires 5 parameters, got {len(params)}")
-                    return None
-                A1, k1, A2, k2, C = params[:5]
-                total_amp = A1 + A2 if np.isfinite(A1) and np.isfinite(A2) else np.nan
-                components = []
-                if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1, 'fast'))
-                if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2, 'slow'))
-                if not components:
-                    return None
-                components.sort(reverse=True, key=lambda x: x[0])
-                while len(components) < 2:
-                    components.append((np.nan, np.nan, 'missing'))
-                k_fast, A_fast, _ = components[0]
-                k_slow, A_slow, _ = components[1]
-                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['rate_constant_fast'] = k_fast
-                features['rate_constant_slow'] = k_slow
-                features['k_off_fast'] = k_fast
-                features['k_off_slow'] = k_slow
-                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
-                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
-                if total_amp > 0 and np.isfinite(total_amp):
-                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_mobile_fast'] = np.nan
-                    features['proportion_of_mobile_slow'] = np.nan
-                if np.isfinite(endpoint) and endpoint > 0:
-                    features['proportion_of_total_fast'] = (A_fast / endpoint * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / endpoint * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_total_fast'] = np.nan
-                    features['proportion_of_total_slow'] = np.nan
-            elif model == 'triple':
-                if len(params) < 7:
-                    logging.error(f"extract_clustering_features: triple model requires 7 parameters, got {len(params)}")
-                    return None
-                A1, k1, A2, k2, A3, k3, C = params[:7]
-                total_amp = (A1 + A2 + A3) if all(np.isfinite([A1, A2, A3])) else np.nan
-                components = []
-                if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1, 'fast'))
-                if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2, 'medium'))
-                if np.isfinite(k3) and np.isfinite(A3):
-                    components.append((k3, A3, 'slow'))
-                if not components:
-                    return None
-                components.sort(reverse=True, key=lambda x: x[0])
-                while len(components) < 3:
-                    components.append((np.nan, np.nan, 'missing'))
-                k_fast, A_fast, _ = components[0]
-                k_med, A_med, _ = components[1]
-                k_slow, A_slow, _ = components[2]
-                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['rate_constant_fast'] = k_fast
-                features['rate_constant_medium'] = k_med
-                features['rate_constant_slow'] = k_slow
-                features['k_off_fast'] = k_fast
-                features['k_off_medium'] = k_med
-                features['k_off_slow'] = k_slow
-                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
-                features['half_time_medium'] = np.log(2) / k_med if k_med > 0 and np.isfinite(k_med) else np.nan
-                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
-                if total_amp > 0 and np.isfinite(total_amp):
-                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_mobile_medium'] = (A_med / total_amp * 100.0) if np.isfinite(A_med) else np.nan
-                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_mobile_fast'] = np.nan
-                    features['proportion_of_mobile_medium'] = np.nan
-                    features['proportion_of_mobile_slow'] = np.nan
-                if np.isfinite(endpoint) and endpoint > 0:
-                    features['proportion_of_total_fast'] = (A_fast / endpoint * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_medium'] = (A_med / endpoint * 100.0) if np.isfinite(A_med) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / endpoint * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_total_fast'] = np.nan
-                    features['proportion_of_total_medium'] = np.nan
-                    features['proportion_of_total_slow'] = np.nan
-            else:
-                logging.error(f"extract_clustering_features: unknown model type: {model}")
-                return None
-        except Exception as e:
-            logging.error(f"extract_clustering_features: error processing {model} model: {e}")
-            return None
-            
-        # Add model information and quality metrics to features
-        features['model'] = model
-        features['r2'] = best_fit.get('r2', np.nan)
-        features['aic'] = best_fit.get('aic', np.nan)
-        features['bic'] = best_fit.get('bic', np.nan)
-        
-        # Add available rate constant names for easier access
-        rate_constants = []
-        for key in features:
-            if 'rate_constant' in key and key != 'rate_constant' and np.isfinite(features.get(key, np.nan)):
-                rate_constants.append(features[key])
-        
-        if rate_constants:
-            features['rate_constant_fast'] = max(rate_constants) if 'rate_constant_fast' not in features else features['rate_constant_fast']
-            features['rate_constant_slow'] = min(rate_constants) if 'rate_constant_slow' not in features else features['rate_constant_slow']
+        # Add model information and quality metrics
+        features.update({
+            'model': model,
+            'r2': best_fit.get('r2', np.nan),
+            'aic': best_fit.get('aic', np.nan),
+            'bic': best_fit.get('bic', np.nan)
+        })
         
         return features
 
