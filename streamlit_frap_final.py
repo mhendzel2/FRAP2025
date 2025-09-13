@@ -2174,6 +2174,9 @@ with tab3:
             st.markdown("### Statistical Testing")
 
             # Statistical comparison options
+            use_mixed_effects = st.checkbox("Use Mixed-Effects Model", value=False, help="Requires 'experiment_id' or 'fov_id' column in data.")
+            random_effect_col = st.selectbox("Random Effect Variable", ["experiment_id", "file_name"], disabled=not use_mixed_effects)
+
             col_stat1, col_stat2 = st.columns(2)
 
             with col_stat1:
@@ -2344,7 +2347,8 @@ with tab3:
                                     data_manager=dm,
                                     groups_to_compare=selected_groups_pdf,
                                     output_filename=pdf_filename,
-                                    settings=st.session_state.settings
+                                    settings=st.session_state.settings,
+                                    use_mixed_effects=use_mixed_effects,
                                 )
 
                                 # Read the generated PDF file
@@ -2368,6 +2372,49 @@ with tab3:
 
                         except Exception as e:
                             st.error(f"Error generating PDF report: {e}")
+                            st.error("Please ensure all selected groups have processed data")
+                    else:
+                        st.warning("Select at least 2 groups for statistical comparison")
+
+                if st.button("📄 Generate HTML Report", type="primary", disabled=len(selected_groups_pdf) < 2):
+                    if len(selected_groups_pdf) >= 2:
+                        try:
+                            with st.spinner("Generating comprehensive HTML report..."):
+                                from frap_html_reports import generate_html_report
+                                # Generate the HTML report
+                                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                                html_filename = f"FRAP_Statistical_Report_{timestamp}.html"
+
+                                # Call the HTML report generator
+                                output_file = generate_html_report(
+                                    data_manager=dm,
+                                    groups_to_compare=selected_groups_pdf,
+                                    output_filename=html_filename,
+                                    settings=st.session_state.settings,
+                                    use_mixed_effects=use_mixed_effects,
+                                )
+
+                                # Read the generated HTML file
+                                with open(output_file, 'r', encoding='utf-8') as html_file:
+                                    html_data = html_file.read()
+
+                                # Provide download button
+                                st.download_button(
+                                    label="⬇️ Download HTML Report",
+                                    data=html_data,
+                                    file_name=html_filename,
+                                    mime="text/html",
+                                    help="Download comprehensive statistical analysis report"
+                                )
+
+                                st.success("HTML report generated successfully!")
+                                st.info(f"Report includes {len(selected_groups_pdf)} groups with comprehensive statistical analysis")
+
+                                # Clean up temporary file
+                                os.remove(output_file)
+
+                        except Exception as e:
+                            st.error(f"Error generating HTML report: {e}")
                             st.error("Please ensure all selected groups have processed data")
                     else:
                         st.warning("Select at least 2 groups for statistical comparison")

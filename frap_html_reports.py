@@ -5,15 +5,16 @@ import pandas as pd
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-try:  # Plotly is already used in the Streamlit app; keep optional for headless usage
+try:
     import plotly.express as px
-except Exception:  # pragma: no cover - if plotly missing we degrade gracefully
+except ImportError:
     px = None
 
 try:
-    from scipy import stats
-except Exception:  # pragma: no cover - statistical tests optional
-    stats = None
+    from group_stats import calculate_group_stats
+except ImportError:
+    calculate_group_stats = None
+
 
 def _encode_plot(fig) -> str:
     """Return an HTML div for a plotly figure or a placeholder string."""
@@ -25,52 +26,66 @@ def _encode_plot(fig) -> str:
         return "<p><i>Plot rendering failed.</i></p>"
 
 
-def _stat_tests_table(combined_df: pd.DataFrame, group_order: List[str]) -> str:
-    """Generate HTML for statistical tests across groups (t-test or ANOVA)."""
-    if stats is None or len(group_order) < 2:
-        return "<p><i>Statistical tests unavailable (scipy not installed or insufficient groups).</i></p>"
+def _create_stats_table_html(stats_df: pd.DataFrame) -> str:
+    """Generate HTML table from the statistics DataFrame."""
+    if stats_df.empty:
+        return "<p><i>No statistical results to display.</i></p>"
 
-    metrics = [m for m in ['mobile_fraction', 'rate_constant', 'half_time'] if m in combined_df.columns]
-    if not metrics:
-        return "<p><i>No comparable metrics found for statistical testing.</i></p>"
+    # Define headers
+    headers = [
+        "Metric", "Test", "p-value", "q-value", "Permutation p-value",
+        "Cohen's d", "Cliff's Delta", "TOST p-value", "TOST Outcome"
+    ]
 
-    rows = []
-    for metric in metrics:
-        groups_data = [combined_df[combined_df['group'] == g][metric].dropna() for g in group_order]
-        groups_data_valid = [g for g in groups_data if len(g) > 1]
-        if len(groups_data_valid) < 2:
-            rows.append((metric, 'N/A', 'n/a', 'Insufficient data'))
-            continue
-        if len(group_order) == 2:
-            g1, g2 = groups_data_valid[0], groups_data_valid[1]
-            try:
-                t_stat, p_val = stats.ttest_ind(g1, g2, equal_var=False)
-                rows.append((metric, "Welch t-test", f"{p_val:.4g}", "Yes" if p_val < 0.05 else "No"))
-            except Exception:
-                rows.append((metric, 'Welch t-test', 'err', 'Error'))
-        else:
-            try:
-                f_stat, p_val = stats.f_oneway(*groups_data_valid)
-                rows.append((metric, "ANOVA", f"{p_val:.4g}", "Yes" if p_val < 0.05 else "No"))
-            except Exception:
-                rows.append((metric, 'ANOVA', 'err', 'Error'))
+    html = ["<table><thead><tr>"]
+    for header in headers:
+        html.append(f"<th>{header}</th>")
+    html.append("</tr></thead><tbody>")
 
-    html = ["<table><thead><tr><th>Metric</th><th>Test</th><th>p-value</th><th>Significant (p<0.05)</th></tr></thead><tbody>"]
-    for metric, test, pval, sig in rows:
-        sig_color = '#d4edda' if sig == 'Yes' else '#f8d7da' if sig == 'No' and pval not in ('n/a', 'err') else 'white'
-        html.append(f"<tr style='background:{sig_color}'><td>{metric.replace('_',' ')}</td><td>{test}</td><td>{pval}</td><td>{sig}</td></tr>")
+    for _, row in stats_df.iterrows():
+        p_val = row.get('p_value', 'N/A')
+        q_val = row.get('q_value', 'N/A')
+
+        # Color rows based on significance
+        sig_color = 'white'
+        if pd.notna(q_val) and q_val < 0.05:
+            sig_color = '#d4edda'  # Green for significant
+        elif pd.notna(p_val) and p_val < 0.05:
+             sig_color = '#f8d7da' # Red for ns after correction
+
+        html.append(f"<tr style='background:{sig_color}'>")
+        html.append(f"<td>{row.get('metric', 'N/A')}</td>")
+        html.append(f"<td>{row.get('test', 'N/A')}</td>")
+        html.append(f"<td>{p_val:.4g}</td>" if pd.notna(p_val) else "<td>N/A</td>")
+        html.append(f"<td>{q_val:.4g}</td>" if pd.notna(q_val) else "<td>N/A</td>")
+        p_perm_val = row.get('p_perm')
+        html.append(f"<td>{p_perm_val:.4g}</td>" if pd.notna(p_perm_val) else "<td>N/A</td>")
+        html.append(f"<td>{row.get('cohen_d', 'N/A'):.3f}</td>" if pd.notna(row.get('cohen_d')) else "<td>N/A</td>")
+        html.append(f"<td>{row.get('cliffs_delta', 'N/A'):.3f}</td>" if pd.notna(row.get('cliffs_delta')) else "<td>N/A</td>")
+        html.append(f"<td>{row.get('p_tost', 'N/A'):.4g}</td>" if pd.notna(row.get('p_tost')) else "<td>N/A</td>")
+        html.append(f"<td>{row.get('tost_outcome', 'N/A')}</td>")
+        html.append("</tr>")
+
     html.append("</tbody></table>")
+
+    if 'mixed_effects_summary' in stats_df.columns:
+        html.append("<h3>Mixed-Effects Model Summaries</h3>")
+        for metric, summary in stats_df.groupby('metric')['mixed_effects_summary'].first().items():
+            if pd.notna(summary):
+                html.append(f"<h4>{metric}</h4>")
+                html.append(f"<pre>{summary}</pre>")
+
     return ''.join(html)
 
 
-def generate_html_report(data_manager, groups_to_compare, output_filename: Optional[str] = None, settings: Optional[Dict[str, Any]] = None):
-    """Generate a comprehensive HTML report.
-
-    Enhancements:
-    - Supports single file (wrapped as a temp group) or multiple groups.
-    - Adds statistical comparison (t-test / ANOVA) when >1 group.
-    - Embeds interactive Plotly boxplots (if plotly present) for key metrics.
-    """
+def generate_html_report(
+    data_manager,
+    groups_to_compare: List[str],
+    output_filename: Optional[str] = None,
+    settings: Optional[Dict[str, Any]] = None,
+    use_mixed_effects: bool = False
+):
+    """Generate a comprehensive HTML report with robust statistics."""
     if not groups_to_compare:
         return None
 
@@ -84,6 +99,9 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
         if df is not None and not df.empty:
             tmp = df.copy()
             tmp['group'] = group_name
+            # Add a placeholder for experiment_id if it's missing
+            if 'experiment_id' not in tmp.columns:
+                tmp['experiment_id'] = group_name
             all_group_data.append(tmp)
 
     if not all_group_data:
@@ -91,36 +109,55 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
 
     combined_df = pd.concat(all_group_data, ignore_index=True)
 
-    # Header
+    # Rename columns for consistency
+    combined_df.rename(columns={
+        'diffusion_coefficient': 'D_um2_s',
+        'molecular_weight_estimate': 'app_mw_kDa',
+        'rate_constant': 'koff'
+    }, inplace=True)
+
+
     html_parts: List[str] = [
         "<h1>FRAP Analysis Report</h1>",
         f"<p><b>Report Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>",
         f"<p><b>Groups:</b> {', '.join(groups_to_compare)}</p>",
     ]
 
-    # Settings
     if settings:
         settings_df = pd.DataFrame(list(settings.items()), columns=['Parameter', 'Value'])
         html_parts.append("<h2>Analysis Settings</h2>")
         html_parts.append(settings_df.to_html(index=False))
 
-    # Summary Statistics
-    html_parts.append("<h2>Summary Statistics</h2>")
-    summary_metrics = [m for m in ['mobile_fraction', 'rate_constant', 'half_time'] if m in combined_df.columns]
+    summary_metrics = [m for m in ['mobile_fraction', 'koff', 'D_um2_s', 'app_mw_kDa'] if m in combined_df.columns]
     if summary_metrics:
+        html_parts.append("<h2>Summary Statistics</h2>")
         summary_table = combined_df.groupby('group')[summary_metrics].agg(['mean', 'std']).round(3)
-        if not summary_table.empty:
-            summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
-            html_parts.append(summary_table.to_html())
+        summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
+        html_parts.append(summary_table.to_html())
     else:
         html_parts.append("<p><i>No summary metrics available.</i></p>")
 
     # Statistical Comparison
-    if len(groups_to_compare) > 1:
+    if len(groups_to_compare) > 1 and calculate_group_stats is not None:
         html_parts.append("<h2>Statistical Comparison</h2>")
-        html_parts.append(_stat_tests_table(combined_df, groups_to_compare))
 
-    # Plots (only if plotly available and multiple groups)
+        tost_thresholds = {
+            'D_um2_s': (-0.2, 0.2),
+            'mobile_fraction': (-0.1, 0.1)
+        }
+
+        stats_df = calculate_group_stats(
+            data=combined_df,
+            metrics=summary_metrics,
+            group_order=groups_to_compare,
+            tost_thresholds=tost_thresholds,
+            use_mixed_effects=use_mixed_effects
+        )
+        html_parts.append(_create_stats_table_html(stats_df))
+    elif calculate_group_stats is None:
+        html_parts.append("<p><i>Statistical tests unavailable (group_stats module not found).</i></p>")
+
+
     if px is not None and len(groups_to_compare) >= 1 and summary_metrics:
         try:
             long_df = combined_df.melt(id_vars='group', value_vars=summary_metrics, var_name='Metric', value_name='Value')
@@ -131,11 +168,9 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
         except Exception:
             html_parts.append("<p><i>Plot generation failed.</i></p>")
 
-    # Detailed results
     html_parts.append("<h2>Detailed Results</h2>")
     html_parts.append(combined_df.to_html(index=False))
 
-    # Assemble full HTML
     body_html = '\n'.join(html_parts)
     html_template = f"""
     <!DOCTYPE html>
