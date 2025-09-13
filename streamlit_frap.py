@@ -18,7 +18,8 @@ from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
-from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from calibration import Calibration
 import zipfile
 import tempfile
 import shutil
@@ -192,44 +193,6 @@ def track_bleach_center(image_stack: np.ndarray, bleach_frame_index: int,
 
     return centers
 
-def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0):
-    """
-    Centralized kinetics interpretation function with CORRECTED mathematics
-    """
-    if k <= 0:
-        return {
-            'k_off': k,
-            'diffusion_coefficient': np.nan,
-            'apparent_mw': np.nan,
-            'half_time_diffusion': np.nan,
-            'half_time_binding': np.nan
-        }
-
-    # 1. Interpretation as a binding/unbinding process
-    k_off = k  # The rate is the dissociation constant
-    half_time_binding = np.log(2) / k  # Time for 50% recovery via binding
-
-    # 2. Interpretation as a diffusion process
-    # CORRECTED FORMULA: For 2D diffusion: D = (w^2 * k) / 4
-    # where w is bleach radius and k is rate constant
-    # This is the mathematically correct formula WITHOUT the erroneous np.log(2) factor
-    diffusion_coefficient = (bleach_radius_um**2 * k) / 4.0  # CORRECTED: removed ln(2)
-    half_time_diffusion = np.log(2) / k  # Half-time from rate constant
-
-    # Estimate apparent molecular weight from diffusion coefficient
-    # Using Stokes-Einstein relation: D ∝ 1/Rg ∝ 1/MW^(1/3)
-    if diffusion_coefficient > 0:
-        apparent_mw = gfp_mw * (gfp_d / diffusion_coefficient)**3
-    else:
-        apparent_mw = np.nan
-
-    return {
-        'k_off': k_off,
-        'diffusion_coefficient': diffusion_coefficient,
-        'apparent_mw': apparent_mw,
-        'half_time_diffusion': half_time_diffusion,
-        'half_time_binding': half_time_binding
-    }
 
 def generate_markdown_report(group_name, settings, summary_df, detailed_df, excluded_count, total_count):
     """
@@ -436,6 +399,12 @@ if 'settings' not in st.session_state:
         'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
         'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
     }
+if 'calibration_standards' not in st.session_state:
+    st.session_state.calibration_standards = [
+        {'name': 'GFP monomer', 'mw_kda': 27, 'd_um2_s': 25.0},
+        {'name': 'GFP dimer', 'mw_kda': 54, 'd_um2_s': 17.7},
+        {'name': 'GFP trimer', 'mw_kda': 81, 'd_um2_s': 14.4},
+    ]
 if "data_manager" not in st.session_state:
     st.session_state.data_manager = None
 if 'selected_group_name' not in st.session_state:
@@ -537,8 +506,9 @@ def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
     return params
 
 class FRAPDataManager:
-    def __init__(self):
+    def __init__(self, calibration=None):
         self.files,self.groups = {},{}
+        self.calibration = calibration
 
     def load_file(self,file_path,file_name):
         try:
@@ -584,7 +554,12 @@ class FRAPDataManager:
                 best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
 
                 if best_fit:
-                    params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                    params = CoreFRAPAnalysis.extract_clustering_features(
+                        best_fit,
+                        bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
+                        pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
+                        calibration=self.calibration
+                    )
                     # Validate the analysis results
                     params = validate_analysis_results(params)
                 else:
@@ -919,7 +894,14 @@ class FRAPDataManager:
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
-dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_manager is None else st.session_state.data_manager
+
+# --- Calibration Setup ---
+calibration = Calibration(st.session_state.calibration_standards)
+if calibration.warning:
+    st.warning(calibration.warning)
+
+dm = st.session_state.data_manager = FRAPDataManager(calibration=calibration) if st.session_state.data_manager is None else st.session_state.data_manager
+dm.calibration = calibration # Ensure calibration object is always up to date
 
 with st.sidebar:
     st.header("Data Management")
@@ -1376,30 +1358,28 @@ with tab1:
                     pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
                     effective_radius_um=bleach_radius*pixel_size
 
-                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
-                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
-
-                    # Binding interpretation: k_off = k
-                    k_off=primary_rate
-
-                    # Molecular weight estimation (relative to GFP)
-                    gfp_d=25.0  # μm²/s
-                    gfp_mw=27.0  # kDa
-                    apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
+                    kinetics = CoreFRAPAnalysis.interpret_kinetics(
+                        primary_rate,
+                        bleach_radius_um=effective_radius_um,
+                        calibration=dm.calibration
+                    )
 
                     # Validate calculated values
-                    if diffusion_coeff > 100:
+                    if kinetics['diffusion_coefficient'] > 100:
                         st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
-                    if apparent_mw > 10000:
+                    if kinetics['apparent_mw'] > 10000:
                         st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
 
                     col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
                     with col_bio1:
-                        st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+                        st.metric("App. D (μm²/s)",f"{kinetics['diffusion_coefficient']:.3f}")
                     with col_bio2:
-                        st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+                        st.metric("k_off (s⁻¹)",f"{kinetics['k_off']:.4f}")
                     with col_bio3:
-                        st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+                        mw_str = f"{kinetics['apparent_mw']:.1f}"
+                        if np.isfinite(kinetics['apparent_mw_ci_low']):
+                            mw_str += f" ({kinetics['apparent_mw_ci_low']:.1f} - {kinetics['apparent_mw_ci_high']:.1f})"
+                        st.metric("App. MW (kDa)", mw_str)
                     with col_bio4:
                         immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
                         st.metric("Immobile (%)",f"{immobile_frac:.1f}")
@@ -1550,11 +1530,10 @@ with tab2:
                         k_val = mean_vals.get(rate_key, 0)
 
                         # Get dual interpretation
-                        kinetic_interp = interpret_kinetics(
+                        kinetic_interp = CoreFRAPAnalysis.interpret_kinetics(
                             k_val,
                             bleach_radius_um=effective_radius_um,
-                            gfp_d=25.0,  # GFP reference
-                            gfp_mw=27.0
+                            calibration=dm.calibration
                         )
 
                         summary_data.append([
@@ -1702,11 +1681,10 @@ with tab2:
 
                         # For the primary rate constant (usually fast component)
                         primary_rate = features.get('rate_constant_fast', features.get('rate_constant', 0))
-                        kinetic_interp = interpret_kinetics(
+                        kinetic_interp = CoreFRAPAnalysis.interpret_kinetics(
                             primary_rate,
                             bleach_radius_um=effective_radius_um,
-                            gfp_d=25.0,
-                            gfp_mw=27.0
+                            calibration=dm.calibration
                         )
 
                         sparkline_svg = ""
@@ -2489,11 +2467,10 @@ with tab5:
                                     pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
                                     effective_radius_um = bleach_radius * pixel_size
 
-                                    kinetic_interp = interpret_kinetics(
+                                    kinetic_interp = CoreFRAPAnalysis.interpret_kinetics(
                                         primary_rate,
                                         bleach_radius_um=effective_radius_um,
-                                        gfp_d=25.0,
-                                        gfp_mw=27.0
+                                        calibration=dm.calibration
                                     )
 
                                     group_export.append({
@@ -2505,6 +2482,8 @@ with tab5:
                                         'k_off_per_second': kinetic_interp['k_off'],
                                         'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
                                         'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                        'Apparent_MW_CI_low': kinetic_interp['apparent_mw_ci_low'],
+                                        'Apparent_MW_CI_high': kinetic_interp['apparent_mw_ci_high'],
                                         'Model': row.get('model', 'Unknown'),
                                         'R²': row.get('r2', np.nan)
                                     })
@@ -2561,12 +2540,11 @@ with tab5:
                                 file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
 
                                 primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
-                                kinetic_interp = interpret_kinetics(
+                                kinetic_interp = CoreFRAPAnalysis.interpret_kinetics(
                                     primary_rate,
                                     bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) *
                                                    st.session_state.settings.get('default_pixel_size', 1.0),
-                                    gfp_d=25.0,
-                                    gfp_mw=27.0
+                                    calibration=dm.calibration
                                 )
 
                                 export_data.append({
@@ -2578,6 +2556,8 @@ with tab5:
                                     'k_off_per_second': kinetic_interp['k_off'],
                                     'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
                                     'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                    'Apparent_MW_CI_low': kinetic_interp['apparent_mw_ci_low'],
+                                    'Apparent_MW_CI_high': kinetic_interp['apparent_mw_ci_high'],
                                     'Model': row.get('model', 'Unknown'),
                                     'R_squared': row.get('r2', np.nan)
                                 })
@@ -2663,6 +2643,20 @@ with tab5:
 
 with tab6:
     st.subheader("Application Settings")
+    st.markdown("### Molecular Weight Calibration")
+    st.markdown("Define standards to calibrate diffusion coefficients to apparent molecular weight.")
+
+    edited_standards = st.data_editor(
+        pd.DataFrame(st.session_state.calibration_standards),
+        num_rows="dynamic",
+        key="standards_editor"
+    )
+
+    if st.button("Apply Calibration Standards"):
+        st.session_state.calibration_standards = edited_standards.to_dict('records')
+        st.success("Calibration standards updated.")
+        st.rerun()
+
     st.markdown("### General Settings")
     col_gen1,col_gen2=st.columns(2)
     with col_gen1:
@@ -2746,22 +2740,14 @@ with tab6:
     confidence_intervals = False # Hardcode to false
     bootstrap_samples = 1000
 
-if st.button("Apply Settings", type="primary"):
-    st.session_state.settings.update({
-        'default_criterion': default_criterion, 'default_gfp_diffusion': default_gfp_diffusion, 'default_gfp_rg': default_gfp_rg,
-        'default_bleach_radius': default_bleach_radius, 'default_pixel_size': default_pixel_size,
-        'default_scaling_alpha': default_scaling_alpha, 'default_target_mw': default_target_mw, 'decimal_places': decimal_places,
-        'fitting_method': fitting_method, 'max_iterations': max_iterations,
-        'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
-        'bootstrap_samples': bootstrap_samples
-    })
-    st.success("Settings applied successfully.")
-    st.rerun()
-
-st.markdown("### Data Management")
-if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-    if st.button("Clear All Data", type="secondary"):
-        st.session_state.data_manager = FRAPDataManager()
-        st.session_state.selected_group_name = None
-        st.success("All data cleared successfully.")
+    if st.button("Apply Settings", type="primary"):
+        st.session_state.settings.update({
+            'default_criterion': default_criterion, 'default_gfp_diffusion': default_gfp_diffusion, 'default_gfp_rg': default_gfp_rg,
+            'default_bleach_radius': default_bleach_radius, 'default_pixel_size': default_pixel_size,
+            'default_scaling_alpha': default_scaling_alpha, 'default_target_mw': default_target_mw, 'decimal_places': decimal_places,
+            'fitting_method': fitting_method, 'max_iterations': max_iterations,
+            'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
+            'bootstrap_samples': bootstrap_samples
+        })
+        st.success("Settings applied successfully.")
         st.rerun()
