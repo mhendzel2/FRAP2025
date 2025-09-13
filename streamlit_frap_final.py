@@ -18,7 +18,7 @@ from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
-from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 import zipfile
 import tempfile
 import shutil
@@ -434,7 +434,8 @@ if 'settings' not in st.session_state:
     st.session_state.settings = {
         'default_criterion': 'aic', 'default_bleach_radius': 1.0, 'default_pixel_size': 0.3,
         'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
-        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
+        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2,
+        'confidence_intervals': False, 'bootstrap_samples': 1000
     }
 if "data_manager" not in st.session_state:
     st.session_state.data_manager = None
@@ -587,6 +588,25 @@ class FRAPDataManager:
                     params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
                     # Validate the analysis results
                     params = validate_analysis_results(params)
+
+                    if st.session_state.settings.get('confidence_intervals', False):
+                        t_fit, intensity_fit, _ = CoreFRAPAnalysis.get_post_bleach_data(time, intensity)
+                        effective_radius_um = st.session_state.settings.get('default_bleach_radius', 1.0) * st.session_state.settings.get('default_pixel_size', 1.0)
+                        n_bootstrap = st.session_state.settings.get('bootstrap_samples', 1000)
+
+                        ci_results = CoreFRAPAnalysis.run_bootstrap_analysis(
+                            best_fit, t_fit, intensity_fit,
+                            bleach_radius_um=effective_radius_um,
+                            n_bootstrap=n_bootstrap
+                        )
+                        if ci_results:
+                            for param, value in ci_results.items():
+                                if '_median' in param:
+                                    base_param = param.replace('_median', '')
+                                    params[base_param] = value
+                                else:
+                                    params[param] = value
+
                 else:
                     params = {}
                     logger.error(f"No valid fit found for {file_name}")
@@ -1113,15 +1133,22 @@ with tab1:
                 col1,col2,col3,col4=st.columns(4)
                 with col1:
                     # Ensure mobile fraction is displayed correctly
-                    display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
-                    st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
+                    display_mobile = max(0, min(100, mobile_frac))
+                    if 'mobile_fraction_median' in features:
+                        mf_median = features['mobile_fraction_median']
+                        mf_low = features['mobile_fraction_ci_low']
+                        mf_high = features['mobile_fraction_ci_high']
+                        st.metric("Mobile Fraction", f"{mf_median:.1f}%", f"95% CI: [{mf_low:.1f} - {mf_high:.1f}]")
+                    else:
+                        st.metric("Mobile Fraction", f"{display_mobile:.1f}%")
+
                 with col2:
-                    half_time = features.get('half_time_fast',features.get('half_time',0))
-                    st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
+                    half_time = features.get('half_time_fast', features.get('half_time', 0))
+                    st.metric("Half-time", f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
                 with col3:
-                    st.metric("R²",f"{r2:.3f}")
+                    st.metric("R²", f"{r2:.3f}")
                 with col4:
-                    st.metric("Model",best_fit['model'].title())
+                    st.metric("Model", best_fit['model'].title())
 
                 # Additional goodness-of-fit metrics
                 col5,col6,col7,col8=st.columns(4)
@@ -1393,16 +1420,25 @@ with tab1:
                     if apparent_mw > 10000:
                         st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
 
-                    col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
+                    col_bio1, col_bio2, col_bio3, col_bio4 = st.columns(4)
                     with col_bio1:
-                        st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+                        if 'D_median' in features:
+                            st.metric("App. D (μm²/s)", f"{features['D_median']:.3f}", f"95% CI: [{features['D_ci_low']:.3f} - {features['D_ci_high']:.3f}]")
+                        else:
+                            st.metric("App. D (μm²/s)", f"{diffusion_coeff:.3f}")
                     with col_bio2:
-                        st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+                        if 'koff_median' in features:
+                            st.metric("k_off (s⁻¹)", f"{features['koff_median']:.4f}", f"95% CI: [{features['koff_ci_low']:.4f} - {features['koff_ci_high']:.4f}]")
+                        else:
+                            st.metric("k_off (s⁻¹)", f"{k_off:.4f}")
                     with col_bio3:
-                        st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+                        if 'app_mw_median' in features:
+                            st.metric("App. MW (kDa)", f"{features['app_mw_median']:.1f}", f"95% CI: [{features['app_mw_ci_low']:.1f} - {features['app_mw_ci_high']:.1f}]")
+                        else:
+                            st.metric("App. MW (kDa)", f"{apparent_mw:.1f}")
                     with col_bio4:
                         immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
-                        st.metric("Immobile (%)",f"{immobile_frac:.1f}")
+                        st.metric("Immobile (%)", f"{immobile_frac:.1f}")
 
                 else:
                     # More informative error message with diagnostic information
@@ -1716,7 +1752,7 @@ with tab2:
                                  features.get('roi_centroid_y', [])
                              )
 
-                        all_files_data.append({
+                        row_data = {
                             'File Name': file_data['name'],
                             'Status': 'Outlier' if path in excluded_paths else 'Included',
                             'Mobile (%)': features.get('mobile_fraction', np.nan),
@@ -1729,7 +1765,29 @@ with tab2:
                             'Model': features.get('model', 'Unknown'),
                             'R²': features.get('r2', np.nan),
                             'Centroid Drift': sparkline_svg
-                        })
+                        }
+
+                        if 'mobile_fraction_median' in features:
+                            row_data['Mobile (%)'] = features['mobile_fraction_median']
+                            row_data['Mobile (%)_ci_low'] = features['mobile_fraction_ci_low']
+                            row_data['Mobile (%)_ci_high'] = features['mobile_fraction_ci_high']
+
+                        if 'koff_median' in features:
+                            row_data['k_off (1/s)'] = features['koff_median']
+                            row_data['k_off_ci_low'] = features['koff_ci_low']
+                            row_data['k_off_ci_high'] = features['koff_ci_high']
+
+                        if 'D_median' in features:
+                            row_data['App. D (μm²/s)'] = features['D_median']
+                            row_data['D_ci_low'] = features['D_ci_low']
+                            row_data['D_ci_high'] = features['D_ci_high']
+
+                        if 'app_mw_median' in features:
+                            row_data['App. MW (kDa)'] = features['app_mw_median']
+                            row_data['app_mw_ci_low'] = features['app_mw_ci_low']
+                            row_data['app_mw_ci_high'] = features['app_mw_ci_high']
+
+                        all_files_data.append(row_data)
 
                     detailed_df = pd.DataFrame(all_files_data)
 
@@ -1747,7 +1805,15 @@ with tab2:
                             'k_off (1/s)': '{:.4f}'.format,
                             'App. D (μm²/s)': '{:.3f}'.format,
                             'App. MW (kDa)': '{:.1f}'.format,
-                            'R²': '{:.3f}'.format
+                            'R²': '{:.3f}'.format,
+                            'Mobile (%)_ci_low': '{:.1f}'.format,
+                            'Mobile (%)_ci_high': '{:.1f}'.format,
+                            'k_off_ci_low': '{:.4f}'.format,
+                            'k_off_ci_high': '{:.4f}'.format,
+                            'D_ci_low': '{:.3f}'.format,
+                            'D_ci_high': '{:.3f}'.format,
+                            'app_mw_ci_low': '{:.1f}'.format,
+                            'app_mw_ci_high': '{:.1f}'.format
                         })
                         st.markdown(html, unsafe_allow_html=True)
 
@@ -2728,23 +2794,21 @@ with tab6:
             help="Constrain parameters to physically reasonable ranges"
         )
 
-    # confidence_intervals = st.checkbox(
-    #     "Calculate Confidence Intervals",
-    #     value=False,
-    #     help="Calculate confidence intervals for fitted parameters (computationally intensive)"
-    # )
+    confidence_intervals = st.checkbox(
+        "Calculate Confidence Intervals",
+        value=st.session_state.settings.get('confidence_intervals', False),
+        help="Calculate confidence intervals for fitted parameters (computationally intensive)"
+    )
 
-    # bootstrap_samples = st.number_input(
-    #     "Bootstrap Samples for CI",
-    #     value=1000,
-    #     min_value=100,
-    #     max_value=10000,
-    #     step=100,
-    #     help="Number of bootstrap samples for confidence interval calculation",
-    #     disabled=not confidence_intervals
-    # )
-    confidence_intervals = False # Hardcode to false
-    bootstrap_samples = 1000
+    bootstrap_samples = st.number_input(
+        "Bootstrap Samples for CI",
+        value=st.session_state.settings.get('bootstrap_samples', 1000),
+        min_value=100,
+        max_value=10000,
+        step=100,
+        help="Number of bootstrap samples for confidence interval calculation",
+        disabled=not confidence_intervals
+    )
 
 if st.button("Apply Settings", type="primary"):
     st.session_state.settings.update({
@@ -2752,7 +2816,8 @@ if st.button("Apply Settings", type="primary"):
         'default_bleach_radius': default_bleach_radius, 'default_pixel_size': default_pixel_size,
         'default_scaling_alpha': default_scaling_alpha, 'default_target_mw': default_target_mw, 'decimal_places': decimal_places,
         'fitting_method': fitting_method, 'max_iterations': max_iterations,
-        'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
+        'parameter_bounds': parameter_bounds,
+        'confidence_intervals': confidence_intervals,
         'bootstrap_samples': bootstrap_samples
     })
     st.success("Settings applied successfully.")

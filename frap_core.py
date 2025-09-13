@@ -13,6 +13,7 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from sklearn.cluster import AgglomerativeClustering
+import bootstrap
 
 # ---------------------------------------------------------------------- #
 #  PUBLIC HELPER – post‑bleach extraction with recovery extrapolation    #
@@ -1602,3 +1603,18 @@ class FRAPAnalysisCore:
                 'success': False,
                 'error': str(e)
             }
+
+    @staticmethod
+    def run_bootstrap_analysis(best_fit, t_fit, intensity_fit, bleach_radius_um, n_bootstrap=1000, gfp_mw=27.0, gfp_d=25.0):
+        """
+        Wrapper to call the bootstrap analysis.
+        """
+        return bootstrap.run_bootstrap(
+            best_fit,
+            t_fit,
+            intensity_fit,
+            bleach_radius_um,
+            n_bootstrap=n_bootstrap,
+            gfp_mw=gfp_mw,
+            gfp_d=gfp_d
+        )
