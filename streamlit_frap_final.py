@@ -469,7 +469,6 @@ st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
 
 dm = st.session_state.data_manager
-st.info(f"DEBUG: dm before sidebar is: {type(dm)}")
 
 with st.sidebar:
     st.header("Data Management")
