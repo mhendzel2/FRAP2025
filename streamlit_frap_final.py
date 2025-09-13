@@ -580,14 +580,13 @@ class FRAPDataManager:
                         if pre_bleach_mean > 0:
                             intensity = intensity / pre_bleach_mean
 
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                analysis_results = CoreFRAPAnalysis.analyze_frap_data(processed_df)
+                fits = analysis_results['fits']
+                best_fit = analysis_results['best_fit']
+                params = analysis_results['features']
+                model_selection = analysis_results['model_selection']
 
-                if best_fit:
-                    params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                    # Validate the analysis results
-                    params = validate_analysis_results(params)
-                else:
+                if not best_fit:
                     params = {}
                     logger.error(f"No valid fit found for {file_name}")
 
@@ -604,7 +603,8 @@ class FRAPDataManager:
 
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
-                    'fits':fits,'best_fit':best_fit,'features':params
+                    'fits':fits,'best_fit':best_fit,'features':params,
+                    'model_selection':model_selection
                 }
                 logger.info(f"Loaded: {file_name}")
                 return True
@@ -1129,14 +1129,32 @@ with tab1:
                     aic_val = best_fit.get('aic', np.nan)
                     st.metric("AIC",f"{aic_val:.1f}" if np.isfinite(aic_val) else "N/A")
                 with col6:
-                    adj_r2_val = best_fit.get('adj_r2', np.nan)
-                    st.metric("Adj. R²",f"{adj_r2_val:.3f}" if np.isfinite(adj_r2_val) else "N/A")
+                    aicc_val = best_fit.get('aicc', np.nan)
+                    st.metric("AICc",f"{aicc_val:.1f}" if np.isfinite(aicc_val) else "N/A")
                 with col7:
                     bic_val = best_fit.get('bic', np.nan)
                     st.metric("BIC",f"{bic_val:.1f}" if np.isfinite(bic_val) else "N/A")
                 with col8:
                     red_chi2_val = best_fit.get('red_chi2', np.nan)
                     st.metric("Red. χ²",f"{red_chi2_val:.3f}" if np.isfinite(red_chi2_val) else "N/A")
+
+                # Model selection table
+                st.markdown("### Model Selection")
+                model_selection_results = file_data.get('model_selection')
+                if model_selection_results and model_selection_results['all_models']:
+                    selection_df = pd.DataFrame(model_selection_results['all_models'])
+                    selection_df = selection_df[['model', 'aicc', 'bic', 'delta_aicc', 'delta_bic', 'r2']]
+                    selection_df = selection_df.rename(columns={'model': 'Model', 'aicc': 'AICc', 'bic': 'BIC',
+                                                                'delta_aicc': 'ΔAICc', 'delta_bic': 'ΔBIC', 'r2': 'R²'})
+
+                    # Highlight best model
+                    best_model_name = model_selection_results['best']['model']
+                    def highlight_best(s):
+                        return ['background-color: #d4edda' if s.Model == best_model_name else '' for _ in s]
+
+                    st.dataframe(selection_df.style.apply(highlight_best, axis=1).format({
+                        'AICc': '{:.2f}', 'BIC': '{:.2f}', 'ΔAICc': '{:.2f}', 'ΔBIC': '{:.2f}', 'R²': '{:.3f}'
+                    }))
 
                 # Add data quality assessment
                 st.markdown("### Data Quality Assessment")

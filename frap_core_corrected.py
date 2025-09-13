@@ -464,29 +464,6 @@ class FRAPAnalysisCore:
         return A * (1 - np.exp(-k * t)) + C
 
     @staticmethod
-    def two_component(t, A1, k1, A2, k2, C):
-        """
-        Two component exponential recovery model
-        
-        Parameters:
-        -----------
-        t : numpy.ndarray
-            Time points
-        A1, A2 : float
-            Amplitudes for each component
-        k1, k2 : float
-            Rate constants for each component
-        C : float
-            Offset
-            
-        Returns:
-        --------
-        numpy.ndarray
-            Model values at each time point
-        """
-        return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + C
-
-    @staticmethod
     def three_component(t, A1, k1, A2, k2, A3, k3, C):
         """
         Three component exponential recovery model
@@ -508,6 +485,57 @@ class FRAPAnalysisCore:
             Model values at each time point
         """
         return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + A3 * (1 - np.exp(-k3 * t)) + C
+
+    @staticmethod
+    def anomalous_diffusion(t, A, tau, beta, C):
+        """
+        Anomalous diffusion model (stretched exponential)
+        I(t) = A * (1 - exp(-(t/τ)^β)) + C
+        
+        Parameters:
+        -----------
+        t : numpy.ndarray
+            Time points
+        A : float
+            Amplitude
+        tau : float
+            Characteristic time
+        beta : float
+            Anomalous diffusion exponent (0 < beta <= 1)
+        C : float
+            Offset
+
+        Returns:
+        --------
+        numpy.ndarray
+            Model values at each time point
+        """
+        # Ensure t is non-negative for the power law
+        t_safe = np.maximum(t, 0)
+        return A * (1 - np.exp(-(t_safe / tau)**beta)) + C
+
+    @staticmethod
+    def two_component_binding(t, A1, k1, A2, k2, C):
+        """
+        Two component exponential recovery model (binding kinetics)
+
+        Parameters:
+        -----------
+        t : numpy.ndarray
+            Time points
+        A1, A2 : float
+            Amplitudes for each component
+        k1, k2 : float
+            Rate constants for each component
+        C : float
+            Offset
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Model values at each time point
+        """
+        return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + C
 
     @staticmethod
     def compute_r_squared(y, y_fit):
@@ -583,6 +611,35 @@ class FRAPAnalysisCore:
             return np.inf  # Not enough data points
             
         return n * np.log(rss / n) + 2 * n_params
+
+    @staticmethod
+    def compute_aicc(rss, n, n_params):
+        """
+        Calculate corrected Akaike Information Criterion (AICc)
+
+        Parameters:
+        -----------
+        rss : float
+            Residual sum of squares
+        n : int
+            Number of data points
+        n_params : int
+            Number of parameters in the model
+
+        Returns:
+        --------
+        float
+            AICc value
+        """
+        if n <= n_params + 1:
+            return np.inf  # Not enough data points for AICc
+
+        aic = FRAPAnalysisCore.compute_aic(rss, n, n_params)
+
+        # Correction term
+        correction = (2 * n_params * (n_params + 1)) / (n - n_params - 1)
+
+        return aic + correction
 
     @staticmethod
     def compute_bic(rss, n, n_params):
@@ -712,14 +769,15 @@ class FRAPAnalysisCore:
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
                 fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic, 'aicc': aicc,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
                 logging.error(f"Single-component fit failed: {e}")
                 
-            # Two Component Fit.
+            # Two Component Binding Fit.
             try:
                 A1_0 = A0 / 2
                 k1_0 = k0 * 2
@@ -727,19 +785,20 @@ class FRAPAnalysisCore:
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
-                fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
+                popt, _ = curve_fit(FRAPAnalysisCore.two_component_binding, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
+                fitted = FRAPAnalysisCore.two_component_binding(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_double))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_double))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_double))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_double))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_double))
-                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
+                fits.append({'model': 'two_component_binding', 'func': FRAPAnalysisCore.two_component_binding, 'params': popt,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic, 'aicc': aicc,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
-                logging.error(f"Two-component fit failed: {e}")
+                logging.error(f"Two-component binding fit failed: {e}")
                 
             # Three Component Fit.
             try:
@@ -758,12 +817,41 @@ class FRAPAnalysisCore:
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_triple))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_triple))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_triple))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_triple))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_triple))
-                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
+                fits.append({'model': 'three_component', 'func': FRAPAnalysisCore.three_component, 'params': popt,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic, 'aicc': aicc,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
                 logging.error(f"Three-component fit failed: {e}")
+
+            # Anomalous Diffusion Fit
+            try:
+                # Initial guesses: A0, tau0, beta0, C0
+                tau0 = time_span / 2
+                beta0 = 0.8  # Start with a subdiffusive guess
+                p0_anomalous = [A0, tau0, beta0, C0]
+                bounds_anomalous = ([0, 1e-6, 1e-3, -np.inf], [np.inf, np.inf, 1.0, np.inf]) # beta <= 1
+
+                popt, _ = curve_fit(FRAPAnalysisCore.anomalous_diffusion, t_fit, intensity_fit, p0=p0_anomalous, bounds=bounds_anomalous)
+                fitted = FRAPAnalysisCore.anomalous_diffusion(t_fit, *popt)
+                rss = np.sum((intensity_fit - fitted)**2)
+                r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+                adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_anomalous))
+                aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_anomalous))
+                bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_anomalous))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_anomalous))
+                red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_anomalous))
+
+                model_name = 'anomalous_diffusion'
+                if popt[2] < 1.0: # beta < 1
+                    model_name = 'anomalous_diffusion_subdiffusive'
+
+                fits.append({'model': model_name, 'func': FRAPAnalysisCore.anomalous_diffusion, 'params': popt,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic, 'aicc': aicc,
+                             'red_chi2': red_chi2, 'fitted_values': fitted})
+            except Exception as e:
+                logging.error(f"Anomalous diffusion fit failed: {e}")
                 
             return fits
             
@@ -772,7 +860,7 @@ class FRAPAnalysisCore:
             return []
 
     @staticmethod
-    def select_best_fit(fits, criterion='aic'):
+    def select_best_fit(fits, criterion='aicc'):
         """
         Select the best fit model based on the specified criterion
         
@@ -781,7 +869,7 @@ class FRAPAnalysisCore:
         fits : list
             List of dictionaries containing model fitting results
         criterion : str
-            Criterion for model selection ('aic', 'bic', 'adj_r2', 'r2', or 'red_chi2')
+            Criterion for model selection ('aicc', 'aic', 'bic', 'adj_r2', 'r2', or 'red_chi2')
             
         Returns:
         --------
@@ -791,7 +879,9 @@ class FRAPAnalysisCore:
         if not fits:
             return None
             
-        if criterion == 'aic':
+        if criterion == 'aicc':
+            best = min(fits, key=lambda f: f.get('aicc', np.inf) if not np.isnan(f.get('aicc', np.inf)) else np.inf)
+        elif criterion == 'aic':
             best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
         elif criterion == 'bic':
             best = min(fits, key=lambda f: f['bic'] if not np.isnan(f['bic']) else np.inf)
@@ -802,9 +892,73 @@ class FRAPAnalysisCore:
         elif criterion == 'red_chi2':
             best = min(fits, key=lambda f: f['red_chi2'] if not np.isnan(f['red_chi2']) else np.inf)
         else:
-            best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
+            best = min(fits, key=lambda f: f.get('aicc', np.inf) if not np.isnan(f.get('aicc', np.inf)) else np.inf)
             
         return best
+
+    @staticmethod
+    def select_best_and_runner_up(fits, primary_criterion='aicc', secondary_criterion='bic'):
+        """
+        Selects the best and runner-up models, calculating delta scores.
+
+        Parameters:
+        -----------
+        fits : list
+            List of dictionaries containing model fitting results.
+        primary_criterion : str
+            The main criterion for ranking ('aicc' or 'bic').
+        secondary_criterion : str
+            The secondary criterion for reporting.
+
+        Returns:
+        --------
+        dict
+            A dictionary containing the best model, runner-up, and all models with delta scores.
+            e.g., {'best': best_model, 'runner_up': runner_up_model, 'all_models': [...]}
+        """
+        if not fits:
+            return {'best': None, 'runner_up': None, 'all_models': []}
+
+        # Sort fits by primary criterion (ascending)
+        sorted_fits = sorted(fits, key=lambda f: f.get(primary_criterion, np.inf))
+
+        best_fit = sorted_fits[0]
+        runner_up = sorted_fits[1] if len(sorted_fits) > 1 else None
+
+        # Get the minimum values for delta calculation
+        min_primary = best_fit.get(primary_criterion, np.inf)
+
+        # Find the best model by the secondary criterion to calculate its delta
+        best_secondary_fit = min(fits, key=lambda f: f.get(secondary_criterion, np.inf))
+        min_secondary = best_secondary_fit.get(secondary_criterion, np.inf)
+
+        # Calculate deltas for all models
+        all_models_with_deltas = []
+        for fit in fits:
+            fit_copy = fit.copy()
+            fit_copy[f'delta_{primary_criterion}'] = fit.get(primary_criterion, np.inf) - min_primary
+            fit_copy[f'delta_{secondary_criterion}'] = fit.get(secondary_criterion, np.inf) - min_secondary
+
+            # Labeling for anomalous diffusion
+            if 'anomalous' in fit_copy['model'] and 'params' in fit_copy and len(fit_copy['params']) > 2:
+                beta = fit_copy['params'][2]
+                if beta < 1.0:
+                    fit_copy['model_label'] = 'subdiffusive'
+                else:
+                    fit_copy['model_label'] = 'normal_diffusion_limit'
+            else:
+                fit_copy['model_label'] = fit_copy['model']
+
+            all_models_with_deltas.append(fit_copy)
+
+        # Sort again by primary criterion for final report
+        all_models_with_deltas = sorted(all_models_with_deltas, key=lambda f: f[f'delta_{primary_criterion}'])
+
+        return {
+            'best': best_fit,
+            'runner_up': runner_up,
+            'all_models': all_models_with_deltas
+        }
 
     @staticmethod
     def compute_diffusion_coefficient(rate_constant, bleach_spot_radius=1.0):
@@ -1166,9 +1320,31 @@ class FRAPAnalysisCore:
                 features['half_time_fast'] = features['half_time']
                 features['proportion_of_mobile_fast'] = 100.0 if np.isfinite(features['mobile_fraction']) else np.nan
                 features['proportion_of_total_fast'] = features['mobile_fraction']
-            elif model == 'double':
+            elif model.startswith('anomalous_diffusion'):
+                if len(params) < 4:
+                    logging.error(f"extract_clustering_features: anomalous_diffusion model requires 4 parameters, got {len(params)}")
+                    return None
+                A, tau, beta, C = params[:4]
+                if not all(np.isfinite([A, tau, beta, C])):
+                    logging.warning("extract_clustering_features: non-finite parameters in anomalous_diffusion model")
+                endpoint = A + C if np.isfinite(A) and np.isfinite(C) else np.nan
+                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
+                plateau_reached = True # Placeholder, logic can be improved
+                features['mobile_fraction'] = mobile_fraction
+                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
+                features['plateau_reached'] = plateau_reached
+                features['amplitude'] = A
+                features['tau'] = tau
+                features['beta'] = beta
+                features['offset'] = C
+                features['half_time'] = tau * (np.log(2))**(1/beta) if beta > 0 and np.isfinite(beta) else np.nan
+                if beta < 1.0:
+                    features['model_label'] = 'subdiffusive'
+                else:
+                    features['model_label'] = 'anomalous_diffusion'
+            elif model == 'two_component_binding':
                 if len(params) < 5:
-                    logging.error(f"extract_clustering_features: double model requires 5 parameters, got {len(params)}")
+                    logging.error(f"extract_clustering_features: two_component_binding model requires 5 parameters, got {len(params)}")
                     return None
                 A1, k1, A2, k2, C = params[:5]
                 total_amp = A1 + A2 if np.isfinite(A1) and np.isfinite(A2) else np.nan
@@ -1213,9 +1389,9 @@ class FRAPAnalysisCore:
                 else:
                     features['proportion_of_total_fast'] = np.nan
                     features['proportion_of_total_slow'] = np.nan
-            elif model == 'triple':
+            elif model == 'three_component':
                 if len(params) < 7:
-                    logging.error(f"extract_clustering_features: triple model requires 7 parameters, got {len(params)}")
+                    logging.error(f"extract_clustering_features: three_component model requires 7 parameters, got {len(params)}")
                     return None
                 A1, k1, A2, k2, A3, k3, C = params[:7]
                 total_amp = (A1 + A2 + A3) if all(np.isfinite([A1, A2, A3])) else np.nan
@@ -1401,7 +1577,7 @@ class FRAPAnalysisCore:
         """
         import pandas as pd
         if df is None or len(df) == 0:
-            return {'fits': [], 'best_fit': None, 'features': None}
+            return {'fits': [], 'best_fit': None, 'features': None, 'model_selection': None}
         if time_col not in df.columns:
             raise ValueError(f"Missing time column '{time_col}'")
         if intensity_col not in df.columns:
@@ -1414,9 +1590,19 @@ class FRAPAnalysisCore:
         time = df[time_col].to_numpy(dtype=float)
         intensity = df[intensity_col].to_numpy(dtype=float)
         fits = FRAPAnalysisCore.fit_all_models(time, intensity)
-        best = FRAPAnalysisCore.select_best_fit(fits) if fits else None
+
+        # Perform model selection
+        model_selection_results = FRAPAnalysisCore.select_best_and_runner_up(fits)
+        best = model_selection_results['best']
+
         features = FRAPAnalysisCore.extract_clustering_features(best) if best else None
-        return {'fits': fits, 'best_fit': best, 'features': features}
+
+        return {
+            'fits': fits,
+            'best_fit': best,
+            'features': features,
+            'model_selection': model_selection_results
+        }
 
     @staticmethod
     def fit_group_models(traces, model='single'):
