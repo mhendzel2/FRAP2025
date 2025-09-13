@@ -396,12 +396,9 @@ if 'settings' not in st.session_state:
     }
 if "data_manager" not in st.session_state:
     st.session_state.data_manager = FRAPDataManager()
-    st.info("DEBUG: Initialized data_manager.")
+
 if 'selected_group_name' not in st.session_state:
     st.session_state.selected_group_name = None
-
-st.info(f"DEBUG: data_manager at top level is: {type(st.session_state.data_manager)}")
-
 # --- Plotting Helper Functions ---
 def plot_all_curves(group_files_data):
     fig = go.Figure()
