@@ -39,7 +39,7 @@ from microirradiation_image_analysis import MicroirradiationImageAnalyzer, ROIEx
 # Import existing FRAP infrastructure for combined analysis
 from frap_manager import FRAPDataManager
 from frap_pdf_reports import generate_pdf_report
-from frap_core_corrected import FRAPAnalysisCore
+from frap_core import FRAPAnalysisCore
 
 # Page configuration
 st.set_page_config(

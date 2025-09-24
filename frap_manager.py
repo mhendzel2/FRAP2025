@@ -7,7 +7,7 @@ import zipfile
 import tempfile
 import shutil
 import logging
-from frap_core_corrected import FRAPAnalysisCore
+from frap_core import FRAPAnalysisCore
 from frap_image_analysis import FRAPImageAnalyzer
 
 logger = logging.getLogger(__name__)

@@ -15,7 +15,7 @@ from typing import Tuple, List, Dict, Optional
 import os
 from pathlib import Path
 from frap_utils import import_imagej_roi
-from frap_core_corrected import FRAPAnalysisCore
+from frap_core import FRAPAnalysisCore
 
 class FRAPImageAnalyzer:
     """

@@ -30,7 +30,7 @@ def require_cv2():
     return cv2
 
 from image_motion import register_global, track_spot, stabilize_roi
-from frap_core_corrected import FRAPAnalysisCore
+from frap_core import FRAPAnalysisCore
 
 
 def make_spot_frame(h, w, cx, cy, amp=200.0, sx=3.0, sy=3.0, base=800.0):
