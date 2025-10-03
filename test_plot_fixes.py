@@ -15,7 +15,7 @@ import os
 # Add the current directory to path to import modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from frap_core_corrected import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 
 def create_synthetic_frap_data():
     """Create synthetic FRAP data for testing"""

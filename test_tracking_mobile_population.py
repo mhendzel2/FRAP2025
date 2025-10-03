@@ -9,7 +9,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from frap_image_analysis import FRAPImageAnalyzer
-from frap_core_corrected import FRAPAnalysisCore as Core
+from frap_core import FRAPAnalysisCore as Core
 
 
 def create_drifting_stack(n_frames=20, size=64, radius=5, drift_per_frame=1):
