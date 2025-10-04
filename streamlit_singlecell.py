@@ -22,6 +22,10 @@ from frap_data_model import DataIO
 from frap_visualizations import (
     plot_spaghetti, plot_heatmap, plot_pairplot, plot_qc_dashboard
 )
+from frap_data_loader import (
+    render_data_loader, load_from_directory, export_current_cohort,
+    export_traces, check_data_quality
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -179,6 +183,14 @@ def render_left_rail():
         
         if st.button("📂 Load Data", use_container_width=True):
             st.session_state.show_data_loader = True
+        
+        # Show data loader modal
+        if st.session_state.get('show_data_loader', False):
+            with st.expander("📂 Data Loader", expanded=True):
+                render_data_loader()
+                if st.button("✕ Close", key="close_loader"):
+                    st.session_state.show_data_loader = False
+                    st.rerun()
         
         if st.button("💾 Save Cohort", use_container_width=True):
             st.session_state.show_save_cohort = True
@@ -1011,29 +1023,33 @@ def render_export_panel():
         st.markdown("### Quick Exports")
         
         if st.button("📊 Export Current Cohort (CSV)", use_container_width=True):
-            df = build_cohort_query()
-            csv = df.to_csv(index=False)
-            st.download_button(
-                "Download CSV",
-                csv,
-                "cohort_export.csv",
-                "text/csv",
-                key="download_cohort_csv"
-            )
+            try:
+                data, filename = export_current_cohort(format='csv')
+                st.download_button(
+                    "⬇ Download CSV",
+                    data,
+                    filename,
+                    "text/csv",
+                    key="download_cohort_csv",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Export failed: {e}")
         
         if st.button("📈 Export All Traces (CSV)", use_container_width=True):
-            cohort_cells = build_cohort_query()['cell_id'].unique()
-            traces = st.session_state.roi_traces[
-                st.session_state.roi_traces['cell_id'].isin(cohort_cells)
-            ]
-            csv = traces.to_csv(index=False)
-            st.download_button(
-                "Download Traces CSV",
-                csv,
-                "traces_export.csv",
-                "text/csv",
-                key="download_traces_csv"
-            )
+            try:
+                cohort_cells = build_cohort_query()['cell_id'].unique()
+                data, filename = export_traces(cohort_cells, format='csv')
+                st.download_button(
+                    "⬇ Download Traces CSV",
+                    data,
+                    filename,
+                    "text/csv",
+                    key="download_traces_csv",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"Export failed: {e}")
     
     with col2:
         st.markdown("### Report Generation")
