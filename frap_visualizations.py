@@ -9,6 +9,7 @@ import seaborn as sns
 from scipy.cluster.hierarchy import dendrogram, linkage
 from scipy.stats import zscore
 from typing import Optional, Union
+from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
