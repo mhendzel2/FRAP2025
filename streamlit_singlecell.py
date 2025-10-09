@@ -26,6 +26,7 @@ from frap_data_loader import (
     render_data_loader, load_from_directory, export_current_cohort,
     export_traces, check_data_quality
 )
+from frap_singlecell_reports import build_report
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1054,11 +1055,58 @@ def render_export_panel():
     with col2:
         st.markdown("### Report Generation")
         
-        if st.button("📄 Generate PDF Report", use_container_width=True):
-            st.info("PDF report generation coming soon...")
+        report_format = st.radio("Format", ["PDF", "HTML"], horizontal=True)
+        report_name = st.text_input("Report filename", value=f"frap_report_{datetime.now().strftime('%Y%m%d')}")
         
-        if st.button("🌐 Generate HTML Report", use_container_width=True):
-            st.info("HTML report generation coming soon...")
+        if st.button(f"📄 Generate {report_format} Report", use_container_width=True):
+            cohort_df = build_cohort_query()
+            
+            if cohort_df.empty:
+                st.error("No data in cohort to report")
+            else:
+                with st.spinner(f"Generating {report_format} report..."):
+                    try:
+                        # Get statistics if available
+                        stats_results = None
+                        if 'condition' in cohort_df.columns and cohort_df['condition'].nunique() >= 2:
+                            stats_results = analyze(
+                                cohort_df,
+                                params=['mobile_frac', 'k', 't_half'],
+                                n_bootstrap=200  # Reduced for UI speed
+                            )
+                        
+                        # Generate report
+                        output_file = f"{report_name}.{report_format.lower()}"
+                        
+                        success = build_report(
+                            cohort_df,
+                            stats_results=stats_results,
+                            figures=None,  # Add figures later
+                            output_path=output_file,
+                            format=report_format.lower(),
+                            title=f"FRAP Analysis Report - {st.session_state.active_cohort}",
+                            recipe=st.session_state.recipe
+                        )
+                        
+                        if success:
+                            st.success(f"✓ Report generated: {output_file}")
+                            
+                            # Offer download
+                            with open(output_file, 'rb') as f:
+                                file_data = f.read()
+                                st.download_button(
+                                    f"⬇ Download {report_format}",
+                                    file_data,
+                                    output_file,
+                                    mime='application/pdf' if report_format == 'PDF' else 'text/html',
+                                    use_container_width=True
+                                )
+                        else:
+                            st.error("Report generation failed. Check console for errors.")
+                    
+                    except Exception as e:
+                        st.error(f"Error generating report: {e}")
+                        logger.exception("Report generation error")
     
     # Figure presets
     st.markdown("### Figure Presets")
