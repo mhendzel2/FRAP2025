@@ -8,7 +8,11 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import linear_sum_assignment
 from skimage.filters import threshold_otsu, sobel
-from skimage.morphology import opening, disk, watershed
+from skimage.morphology import opening, disk
+try:
+    from skimage.segmentation import watershed
+except ImportError:
+    from skimage.morphology import watershed
 from skimage.feature import peak_local_max
 from skimage.measure import label, regionprops
 from typing import Optional

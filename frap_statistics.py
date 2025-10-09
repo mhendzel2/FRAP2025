@@ -357,6 +357,7 @@ def multi_parameter_analysis(
     group_col: str = "condition",
     batch_col: str = "exp_id",
     fdr_method: str = "fdr_bh",
+    alpha: float = 0.05,
     n_bootstrap: int = 1000,
     random_state: int = 0
 ) -> pd.DataFrame:
@@ -374,7 +375,9 @@ def multi_parameter_analysis(
     batch_col : str
         Batch column
     fdr_method : str
-        FDR correction method
+        FDR correction method ('fdr_bh', 'fdr_by', 'bonferroni', 'holm')
+    alpha : float
+        Significance level (default 0.05)
     n_bootstrap : int
         Bootstrap iterations
     random_state : int
@@ -426,18 +429,26 @@ def multi_parameter_analysis(
     
     # FDR correction
     if len(results_df) > 1:
-        reject, pvals_corrected, _, _ = multipletests(
+        reject, pvals_corrected, alpha_sidak, alpha_bonf = multipletests(
             results_df['p'].values,
-            alpha=0.05,
+            alpha=alpha,
             method=fdr_method
         )
         results_df['q'] = pvals_corrected
         results_df['significant'] = reject
+        results_df['alpha_bonf'] = alpha_bonf
     else:
         results_df['q'] = results_df['p']
-        results_df['significant'] = results_df['p'] < 0.05
+        results_df['significant'] = results_df['p'] < alpha
+        results_df['alpha_bonf'] = alpha
     
-    logger.info(f"Completed analysis of {len(params)} parameters with FDR correction")
+    # Add log values for volcano plots
+    results_df['log2_fold_change'] = np.log2(np.abs(results_df['beta']) + 1e-10) * np.sign(results_df['beta'])
+    results_df['neg_log10_p'] = -np.log10(results_df['p'] + 1e-300)
+    results_df['neg_log10_q'] = -np.log10(results_df['q'] + 1e-300)
+    
+    logger.info(f"Completed analysis of {len(params)} parameters with {fdr_method} correction")
+    logger.info(f"Significant tests: {results_df['significant'].sum()} / {len(results_df)}")
     
     return results_df
 
