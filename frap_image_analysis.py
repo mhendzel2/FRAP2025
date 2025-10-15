@@ -454,6 +454,16 @@ class FRAPImageAnalyzer:
             displacements_px = [d['displacement_px'] for d in trace]
             mean_shift_um = np.mean(displacements_px) * self.pixel_size if self.pixel_size else np.nan
             df['mean_framewise_shift_um'] = mean_shift_um
+
+            # Save the ROI trace to a JSON file
+            os.makedirs('traces', exist_ok=True)
+            # Sanitize filename
+            base_filename = "".join(c for c in os.path.basename(self.file_name) if c.isalnum() or c in ('.', '_')).rstrip()
+            trace_path = f"traces/trace_{base_filename}_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}.json"
+            with open(trace_path, 'w') as f:
+                import json
+                json.dump(trace, f)
+            df['roi_centroid_trace_path'] = trace_path
         else:
             # Fill with NaNs if stabilization was not run or failed
             df['roi_centroid_x'] = np.nan
@@ -461,6 +471,7 @@ class FRAPImageAnalyzer:
             df['roi_radius_per_frame'] = np.nan
             df['total_drift_um'] = np.nan
             df['mean_framewise_shift_um'] = np.nan
+            df['roi_centroid_trace_path'] = ""
 
         df['motion_qc_flag'] = motion_qc_flag
         df['motion_qc_reason'] = motion_qc_reason

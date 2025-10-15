@@ -128,7 +128,22 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
     logging.warning("openpyxl not available - .xlsx file support may be limited")
 
+from typing import Optional
+import re
+
 class FRAPAnalysisCore:
+    @staticmethod
+    def parse_fov_id(filename: str) -> Optional[int]:
+        """
+        Parse the Field of View (FOV) ID from a filename.
+        Looks for patterns like 'fov1', 'fld2', 'FOV_3', etc.
+        """
+        # Case-insensitive search for fov, fld, field, or view followed by a number
+        match = re.search(r'(?i)(?:fov|fld|field|view)[_-]?(\d+)', filename)
+        if match:
+            return int(match.group(1))
+        return None
+
     @staticmethod
     def get_post_bleach_data(time, intensity):
         """
@@ -609,6 +624,56 @@ class FRAPAnalysisCore:
         return n * np.log(rss / n) + n_params * np.log(n)
 
     @staticmethod
+    def compute_aicc(aic, n, n_params):
+        """
+        Calculate corrected Akaike Information Criterion (AICc).
+        """
+        if n - n_params - 1 <= 0:
+            return np.inf  # Avoid division by zero
+
+        correction = (2 * n_params**2 + 2 * n_params) / (n - n_params - 1)
+        return aic + correction
+
+    @staticmethod
+    def compute_confidence_intervals(popt, pcov, n, n_params, alpha=0.05):
+        """
+        Calculate confidence intervals for fitted parameters.
+
+        Parameters:
+        -----------
+        popt : array
+            Optimal parameters from curve_fit.
+        pcov : 2D array
+            Covariance matrix from curve_fit.
+        n : int
+            Number of data points.
+        n_params : int
+            Number of parameters.
+        alpha : float
+            Significance level (e.g., 0.05 for 95% CI).
+
+        Returns:
+        --------
+        dict
+            Dictionary with '_ci_low' and '_ci_high' for each parameter.
+        """
+        from scipy.stats import t
+
+        perr = np.sqrt(np.diag(pcov))
+        dof = n - n_params
+        if dof <= 0:
+            return {f'param_{i}_ci': (np.nan, np.nan) for i in range(len(popt))}
+
+        t_val = t.ppf(1.0 - alpha / 2.0, dof)
+        ci = {}
+        for i, (param, std_err) in enumerate(zip(popt, perr)):
+            lower = param - t_val * std_err
+            upper = param + t_val * std_err
+            ci[f'param_{i}'] = (lower, upper)
+
+        return ci
+
+    @staticmethod
     def compute_reduced_chi_squared(y, y_fit, n_params, error_variance=1):
         """
         Calculate reduced chi-squared statistic
@@ -705,17 +770,19 @@ class FRAPAnalysisCore:
             try:
                 p0 = [A0, k0, C0]
                 bounds = ([0, 1e-6, -np.inf], [np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
+                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
                 fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
+                aicc = FRAPAnalysisCore.compute_aicc(aic, n, len(p0))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
-                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0))
+                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Single-component fit failed: {e}")
                 
@@ -727,17 +794,19 @@ class FRAPAnalysisCore:
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
+                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
                 fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_double))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_double))
+                aicc = FRAPAnalysisCore.compute_aicc(aic, n, len(p0_double))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_double))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_double))
-                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_double))
+                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Two-component fit failed: {e}")
                 
@@ -751,17 +820,19 @@ class FRAPAnalysisCore:
                 k3_0 = k0 / 3
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
                 bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
+                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
                 fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_triple))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_triple))
+                aicc = FRAPAnalysisCore.compute_aicc(aic, n, len(p0_triple))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_triple))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_triple))
-                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_triple))
+                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Three-component fit failed: {e}")
                 
@@ -772,39 +843,114 @@ class FRAPAnalysisCore:
             return []
 
     @staticmethod
-    def select_best_fit(fits, criterion='aic'):
+    def select_best_fit(fits, criterion='aicc'):
         """
-        Select the best fit model based on the specified criterion
+        Select the best fit model and compute delta AIC/BIC values.
         
         Parameters:
         -----------
         fits : list
-            List of dictionaries containing model fitting results
+            List of dictionaries containing model fitting results. This list is modified in place.
         criterion : str
-            Criterion for model selection ('aic', 'bic', 'adj_r2', 'r2', or 'red_chi2')
+            Criterion for model selection ('aicc', 'aic', 'bic', 'adj_r2').
             
         Returns:
         --------
         dict or None
-            Dictionary containing the best fit model information
+            Dictionary containing the best fit model information.
         """
         if not fits:
             return None
-            
-        if criterion == 'aic':
-            best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
+
+        # Select best model
+        if criterion == 'aicc':
+            best = min(fits, key=lambda f: f.get('aicc', np.inf))
+        elif criterion == 'aic':
+            best = min(fits, key=lambda f: f.get('aic', np.inf))
         elif criterion == 'bic':
-            best = min(fits, key=lambda f: f['bic'] if not np.isnan(f['bic']) else np.inf)
+            best = min(fits, key=lambda f: f.get('bic', np.inf))
         elif criterion == 'adj_r2':
-            best = max(fits, key=lambda f: f['adj_r2'] if not np.isnan(f['adj_r2']) else -np.inf)
-        elif criterion == 'r2':
-            best = max(fits, key=lambda f: f['r2'] if not np.isnan(f['r2']) else -np.inf)
-        elif criterion == 'red_chi2':
-            best = min(fits, key=lambda f: f['red_chi2'] if not np.isnan(f['red_chi2']) else np.inf)
+            best = max(fits, key=lambda f: f.get('adj_r2', -np.inf))
         else:
-            best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
+            best = min(fits, key=lambda f: f.get('aicc', np.inf)) # Default to aicc
+
+        best_aicc = best.get('aicc', np.inf)
+        best_bic = best.get('bic', np.inf)
+
+        # Add delta values to all fits
+        for fit in fits:
+            fit['delta_aicc'] = fit.get('aicc', np.inf) - best_aicc
+            fit['delta_bic'] = fit.get('bic', np.inf) - best_bic
             
         return best
+
+    @staticmethod
+    def perform_quality_control(raw_df, processed_df, best_fit, features):
+        """
+        Perform a series of quality control checks.
+        """
+        from scipy.spatial.distance import mahalanobis
+        import pandas as pd
+
+        qc_results = {}
+
+        # 1. Pre-fit QC
+        prefit_pass = True
+        prefit_reasons = []
+        if len(raw_df) < 10:
+            prefit_pass = False
+            prefit_reasons.append("Insufficient data points (<10)")
+
+        intensity_cols = [c for c in raw_df.columns if 'roi' in c.lower()]
+        if raw_df[intensity_cols].isnull().values.any():
+            prefit_pass = False
+            prefit_reasons.append("NaN values in raw data")
+
+        qc_results['qc_prefit_pass'] = prefit_pass
+        qc_results['qc_prefit_reason'] = ", ".join(prefit_reasons) if prefit_reasons else "OK"
+
+        # 2. Fit QC
+        fit_pass = True
+        fit_reasons = []
+        if not best_fit:
+            fit_pass = False
+            fit_reasons.append("No best fit found")
+        else:
+            if best_fit.get('r2', 0) < 0.8:
+                fit_pass = False
+                fit_reasons.append(f"Low R-squared ({best_fit.get('r2', 0):.2f})")
+            # Check for extreme parameter values if CIs are available
+            if 'ci' in best_fit:
+                for param, (low, high) in best_fit['ci'].items():
+                    if np.isinf(low) or np.isinf(high):
+                        fit_pass = False
+                        fit_reasons.append(f"Unbounded CI for {param}")
+
+        qc_results['qc_fit_pass'] = fit_pass
+        qc_results['qc_fit_reason'] = ", ".join(fit_reasons) if fit_reasons else "OK"
+
+        # 3. Feature QC
+        feat_pass = True
+        feat_reasons = []
+        if not features:
+            feat_pass = False
+            feat_reasons.append("No features extracted")
+        else:
+            if features.get('mobile_fraction', 0) > 110:
+                feat_pass = False
+                feat_reasons.append("Mobile fraction > 110%")
+            if features.get('mobile_fraction', 0) < 0:
+                feat_pass = False
+                feat_reasons.append("Mobile fraction < 0%")
+
+        qc_results['qc_feat_pass'] = feat_pass
+        qc_results['qc_feat_reason'] = ", ".join(feat_reasons) if feat_reasons else "OK"
+
+        # 4. Mahalanobis distance (placeholder, requires a population)
+        # This will be calculated later when we have a group of files.
+        qc_results['qc_mahalanobis'] = np.nan
+
+        return qc_results
 
     @staticmethod
     def compute_diffusion_coefficient(rate_constant, bleach_spot_radius=1.0):
@@ -1083,217 +1229,80 @@ class FRAPAnalysisCore:
         return details
 
     @staticmethod
-    def extract_clustering_features(best_fit):
+    def package_analysis_results(best_fit, bleach_spot_radius_um, gfp_d=25.0, gfp_mw=27.0):
         """
-        Extract features for clustering from the best fit model with CORRECTED formulas
-        and proper handling of extrapolated recovery curves.
-        
-        Parameters:
-        -----------
-        best_fit : dict
-            Dictionary containing the best fit model information
-            
-        Returns:
-        --------
-        dict or None
-            Dictionary containing features for clustering
+        Packages all analysis results into a single dictionary.
+        This includes base parameters, confidence intervals, and derived biophysical values.
         """
         if best_fit is None:
-            logging.warning("extract_clustering_features: best_fit is None")
+            logging.warning("package_analysis_results: best_fit is None")
             return None
-        
-        # Validate best_fit structure
-        if not isinstance(best_fit, dict):
-            logging.error(f"extract_clustering_features: best_fit is not a dict, got {type(best_fit)}")
-            return None
-            
-        if 'model' not in best_fit or 'params' not in best_fit:
-            logging.error(f"extract_clustering_features: best_fit missing required keys. Available keys: {list(best_fit.keys())}")
-            return None
-            
+
         model = best_fit['model']
         params = best_fit['params']
-        
-        # Validate params
-        if params is None:
-            logging.error("extract_clustering_features: params is None")
-            return None
-            
-        if not isinstance(params, (list, tuple, np.ndarray)) or len(params) == 0:
-            logging.error(f"extract_clustering_features: invalid params type or empty. Got {type(params)} with length {len(params) if hasattr(params, '__len__') else 'unknown'}")
-            return None
-        
-        features = {}
-        
-        # Default bleach spot radius in μm (will be replaced with user input in real application)
-        default_spot_radius = 1.0  # μm
-        
-        # GFP reference values
-        D_GFP = 25.0  # μm²/s (default reference value)
-        Rg_GFP = 2.82  # nm
-        MW_GFP = 27.0  # kDa
-        
-        try:
-            if model == 'single':
-                if len(params) < 3:
-                    logging.error(f"extract_clustering_features: single model requires 3 parameters, got {len(params)}")
-                    return None
-                A, k, C = params[:3]
-                if not np.isfinite(A) or not np.isfinite(k) or not np.isfinite(C):
-                    logging.warning("extract_clustering_features: non-finite parameters in single model")
-                endpoint = (A + C) if np.isfinite(A) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['amplitude'] = A
-                features['rate_constant'] = k
-                features['k_off'] = k
-                features['offset'] = C
-                features['half_time'] = np.log(2) / k if k > 0 and np.isfinite(k) else np.nan
-                diffusion_coef = (default_spot_radius**2 * k) / 4.0 if k > 0 and np.isfinite(k) else np.nan
-                features['diffusion_coefficient'] = diffusion_coef
-                features['radius_of_gyration'] = Rg_GFP * (D_GFP / diffusion_coef) if diffusion_coef > 0 and np.isfinite(diffusion_coef) else np.nan
-                rg = features['radius_of_gyration']
-                features['molecular_weight_estimate'] = MW_GFP * (rg / Rg_GFP)**3 if not np.isnan(rg) and rg > 0 else np.nan
-                features['rate_constant_fast'] = k
-                features['half_time_fast'] = features['half_time']
-                features['proportion_of_mobile_fast'] = 100.0 if np.isfinite(features['mobile_fraction']) else np.nan
-                features['proportion_of_total_fast'] = features['mobile_fraction']
-            elif model == 'double':
-                if len(params) < 5:
-                    logging.error(f"extract_clustering_features: double model requires 5 parameters, got {len(params)}")
-                    return None
-                A1, k1, A2, k2, C = params[:5]
-                total_amp = A1 + A2 if np.isfinite(A1) and np.isfinite(A2) else np.nan
-                components = []
-                if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1, 'fast'))
-                if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2, 'slow'))
-                if not components:
-                    return None
-                components.sort(reverse=True, key=lambda x: x[0])
-                while len(components) < 2:
-                    components.append((np.nan, np.nan, 'missing'))
-                k_fast, A_fast, _ = components[0]
-                k_slow, A_slow, _ = components[1]
-                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['rate_constant_fast'] = k_fast
-                features['rate_constant_slow'] = k_slow
-                features['k_off_fast'] = k_fast
-                features['k_off_slow'] = k_slow
-                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
-                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
-                if total_amp > 0 and np.isfinite(total_amp):
-                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_mobile_fast'] = np.nan
-                    features['proportion_of_mobile_slow'] = np.nan
-                if np.isfinite(endpoint) and endpoint > 0:
-                    features['proportion_of_total_fast'] = (A_fast / endpoint * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / endpoint * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_total_fast'] = np.nan
-                    features['proportion_of_total_slow'] = np.nan
-            elif model == 'triple':
-                if len(params) < 7:
-                    logging.error(f"extract_clustering_features: triple model requires 7 parameters, got {len(params)}")
-                    return None
-                A1, k1, A2, k2, A3, k3, C = params[:7]
-                total_amp = (A1 + A2 + A3) if all(np.isfinite([A1, A2, A3])) else np.nan
-                components = []
-                if np.isfinite(k1) and np.isfinite(A1):
-                    components.append((k1, A1, 'fast'))
-                if np.isfinite(k2) and np.isfinite(A2):
-                    components.append((k2, A2, 'medium'))
-                if np.isfinite(k3) and np.isfinite(A3):
-                    components.append((k3, A3, 'slow'))
-                if not components:
-                    return None
-                components.sort(reverse=True, key=lambda x: x[0])
-                while len(components) < 3:
-                    components.append((np.nan, np.nan, 'missing'))
-                k_fast, A_fast, _ = components[0]
-                k_med, A_med, _ = components[1]
-                k_slow, A_slow, _ = components[2]
-                endpoint = total_amp + C if np.isfinite(total_amp) and np.isfinite(C) else np.nan
-                mobile_fraction = endpoint * 100.0 if np.isfinite(endpoint) else np.nan
-                plateau_reached = True
-                fitted_vals = best_fit.get('fitted_values')
-                if isinstance(fitted_vals, (list, np.ndarray)) and len(fitted_vals) >= 3:
-                    if (fitted_vals[-1] - fitted_vals[-3]) > 0.01:
-                        mobile_fraction = np.nan
-                        plateau_reached = False
-                features['mobile_fraction'] = mobile_fraction
-                features['immobile_fraction'] = 100.0 - mobile_fraction if np.isfinite(mobile_fraction) else np.nan
-                features['plateau_reached'] = plateau_reached
-                features['rate_constant_fast'] = k_fast
-                features['rate_constant_medium'] = k_med
-                features['rate_constant_slow'] = k_slow
-                features['k_off_fast'] = k_fast
-                features['k_off_medium'] = k_med
-                features['k_off_slow'] = k_slow
-                features['half_time_fast'] = np.log(2) / k_fast if k_fast > 0 and np.isfinite(k_fast) else np.nan
-                features['half_time_medium'] = np.log(2) / k_med if k_med > 0 and np.isfinite(k_med) else np.nan
-                features['half_time_slow'] = np.log(2) / k_slow if k_slow > 0 and np.isfinite(k_slow) else np.nan
-                if total_amp > 0 and np.isfinite(total_amp):
-                    features['proportion_of_mobile_fast'] = (A_fast / total_amp * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_mobile_medium'] = (A_med / total_amp * 100.0) if np.isfinite(A_med) else np.nan
-                    features['proportion_of_mobile_slow'] = (A_slow / total_amp * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_mobile_fast'] = np.nan
-                    features['proportion_of_mobile_medium'] = np.nan
-                    features['proportion_of_mobile_slow'] = np.nan
-                if np.isfinite(endpoint) and endpoint > 0:
-                    features['proportion_of_total_fast'] = (A_fast / endpoint * 100.0) if np.isfinite(A_fast) else np.nan
-                    features['proportion_of_total_medium'] = (A_med / endpoint * 100.0) if np.isfinite(A_med) else np.nan
-                    features['proportion_of_total_slow'] = (A_slow / endpoint * 100.0) if np.isfinite(A_slow) else np.nan
-                else:
-                    features['proportion_of_total_fast'] = np.nan
-                    features['proportion_of_total_medium'] = np.nan
-                    features['proportion_of_total_slow'] = np.nan
+        ci_dict = best_fit.get('ci', {})
+        results = {}
+
+        # --- Basic Fit Information ---
+        results['model_name'] = model
+        results['aicc'] = best_fit.get('aicc', np.nan)
+        results['bic'] = best_fit.get('bic', np.nan)
+        results['delta_aicc'] = best_fit.get('delta_aicc', np.nan)
+        results['delta_bic'] = best_fit.get('delta_bic', np.nan)
+        results['r_squared'] = best_fit.get('r2', np.nan)
+
+        # --- Parameter Extraction ---
+        if model == 'single':
+            A, k, C = params
+            k_ci_low, k_ci_high = ci_dict.get('param_1', (np.nan, np.nan))
+        elif model == 'double':
+            A1, k1, A2, k2, C = params
+            # Assume faster component (k1 vs k2) is the primary one
+            if k1 > k2:
+                k, k_ci_low, k_ci_high = k1, ci_dict.get('param_1', (np.nan, np.nan))[0], ci_dict.get('param_1', (np.nan, np.nan))[1]
             else:
-                logging.error(f"extract_clustering_features: unknown model type: {model}")
-                return None
-        except Exception as e:
-            logging.error(f"extract_clustering_features: error processing {model} model: {e}")
-            return None
-            
-        # Add model information and quality metrics to features
-        features['model'] = model
-        features['r2'] = best_fit.get('r2', np.nan)
-        features['aic'] = best_fit.get('aic', np.nan)
-        features['bic'] = best_fit.get('bic', np.nan)
+                k, k_ci_low, k_ci_high = k2, ci_dict.get('param_3', (np.nan, np.nan))[0], ci_dict.get('param_3', (np.nan, np.nan))[1]
+        elif model == 'triple':
+            A1, k1, A2, k2, A3, k3, C = params
+            # Get the fastest component
+            ks = [(k1, 'param_1'), (k2, 'param_3'), (k3, 'param_5')]
+            ks.sort(key=lambda x: x[0], reverse=True)
+            k = ks[0][0]
+            k_ci_low, k_ci_high = ci_dict.get(ks[0][1], (np.nan, np.nan))
+        else:
+            return None # Should not happen
+
+        # --- Mobile Fractions ---
+        total_amplitude = sum(p for i, p in enumerate(params) if i % 2 == 0 and i < len(params) -1)
+        offset = params[-1]
+        mobile_fraction = total_amplitude + offset
+        results['mobile_fraction'] = mobile_fraction
+        results['immobile_fraction'] = 1.0 - mobile_fraction
+
+        # --- Koff (Binding) Parameters ---
+        results['k'] = k
+        results['koff'] = k
+        results['koff_ci_low'] = k_ci_low
+        results['koff_ci_high'] = k_ci_high
+
+        # --- Diffusion Parameters with Error Propagation ---
+        D = (bleach_spot_radius_um**2 * k) / 4.0
+        D_ci_low = (bleach_spot_radius_um**2 * k_ci_low) / 4.0
+        D_ci_high = (bleach_spot_radius_um**2 * k_ci_high) / 4.0
+        results['D_um2_s'] = D
+        results['D_ci_low'] = D_ci_low
+        results['D_ci_high'] = D_ci_high
+
+        # --- Apparent MW Parameters with Error Propagation ---
+        # MW = C * D^-3, so MW_low is from D_high and vice-versa
+        app_mw = gfp_mw * (gfp_d / D)**3 if D > 0 else np.nan
+        app_mw_ci_low = gfp_mw * (gfp_d / D_ci_high)**3 if D_ci_high > 0 else np.nan
+        app_mw_ci_high = gfp_mw * (gfp_d / D_ci_low)**3 if D_ci_low > 0 else np.nan
+        results['app_mw_kDa'] = app_mw
+        results['app_mw_ci_low'] = app_mw_ci_low
+        results['app_mw_ci_high'] = app_mw_ci_high
         
-        # Add available rate constant names for easier access
-        rate_constants = []
-        for key in features:
-            if 'rate_constant' in key and key != 'rate_constant' and np.isfinite(features.get(key, np.nan)):
-                rate_constants.append(features[key])
-        
-        if rate_constants:
-            features['rate_constant_fast'] = max(rate_constants) if 'rate_constant_fast' not in features else features['rate_constant_fast']
-            features['rate_constant_slow'] = min(rate_constants) if 'rate_constant_slow' not in features else features['rate_constant_slow']
-        
-        return features
+        return results
 
     @staticmethod
     def perform_clustering(features_df, n_clusters=2, method='kmeans'):
@@ -1383,7 +1392,7 @@ class FRAPAnalysisCore:
         return features_df.loc[list(outlier_indices), 'file_path'].tolist() if outlier_indices else []
 
     @staticmethod
-    def analyze_frap_data(df, intensity_col='normalized', time_col='time'):
+    def analyze_frap_data(df, intensity_col='normalized', time_col='time', bleach_spot_radius_um=1.0):
         """Lightweight analysis pipeline returning best fit and feature dict.
 
         Parameters
@@ -1394,6 +1403,8 @@ class FRAPAnalysisCore:
             Column name containing normalized intensities (fallback to 'intensity').
         time_col : str
             Column name containing time values.
+        bleach_spot_radius_um : float
+            The radius of the bleach spot in micrometers.
 
         Returns
         -------
@@ -1415,7 +1426,7 @@ class FRAPAnalysisCore:
         intensity = df[intensity_col].to_numpy(dtype=float)
         fits = FRAPAnalysisCore.fit_all_models(time, intensity)
         best = FRAPAnalysisCore.select_best_fit(fits) if fits else None
-        features = FRAPAnalysisCore.extract_clustering_features(best) if best else None
+        features = FRAPAnalysisCore.package_analysis_results(best, bleach_spot_radius_um) if best else None
         return {'fits': fits, 'best_fit': best, 'features': features}
 
     @staticmethod

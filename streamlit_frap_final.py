@@ -326,14 +326,15 @@ The kinetic rates can be interpreted in two ways:
 - ✅ Included in population analysis
 - ❌ Excluded as outlier
 
-| File | Status | Mobile (%) | Rate (k) | k_off (1/s) | App. D (μm²/s) | App. MW (kDa) | Model | R² |
-|------|--------|------------|----------|-------------|----------------|---------------|-------|-----|
+| File | Status | Mobile (%) | Rate (k) | D (μm²/s) | MW (kDa) | Model | R² | QC Pass |
+|------|--------|------------|----------|-----------|----------|-------|----|---------|
 """
 
     # Add detailed results
     for _, row in detailed_df.iterrows():
         status_icon = "✅" if row['Status'] == 'Included' else "❌"
-        report_str += f"| {row['File Name']} | {status_icon} | {row['Mobile (%)']:.1f} | {row['Primary Rate (k)']:.4f} | {row['k_off (1/s)']:.4f} | {row['App. D (μm²/s)']:.3f} | {row['App. MW (kDa)']:.1f} | {row['Model']} | {row['R²']:.3f} |\n"
+        qc_pass_icon = "✅" if row.get('qc_fit_pass', False) else "❌"
+        report_str += f"| {row['File Name']} | {status_icon} | {row['Mobile (%)']:.1f} | {row['Primary Rate (k)']:.4f} | {row['App. D (μm²/s)']:.3f} | {row['App. MW (kDa)']:.1f} | {row['Model']} | {row['R²']:.3f} | {qc_pass_icon} |\n"
 
     report_str += """
 ---
@@ -513,29 +514,6 @@ def create_sparkline(x_coords, y_coords):
 
 # --- Core Analysis and Data Logic ---
 
-def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensures that the analysis results dictionary contains all required keys.
-    Missing keys are added with a value of np.nan.
-    """
-    if params is None:
-        return {}
-
-    required_keys = [
-        'mobile_fraction', 'immobile_fraction', 'rate_constant', 'half_time',
-        'rate_constant_fast', 'rate_constant_medium', 'rate_constant_slow',
-        'half_time_fast', 'half_time_medium', 'half_time_slow',
-        'proportion_of_mobile_fast', 'proportion_of_mobile_medium', 'proportion_of_mobile_slow',
-        'proportion_of_total_fast', 'proportion_of_total_medium', 'proportion_of_total_slow',
-        'model', 'r2'
-    ]
-
-    for key in required_keys:
-        if key not in params:
-            params[key] = np.nan
-
-    return params
-
 class FRAPDataManager:
     def __init__(self):
         self.files,self.groups = {},{}
@@ -584,9 +562,21 @@ class FRAPDataManager:
                 best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
 
                 if best_fit:
-                    params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
-                    # Validate the analysis results
-                    params = validate_analysis_results(params)
+                    # Get bleach radius from settings to pass to packaging function
+                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                    effective_radius_um = bleach_radius * pixel_size
+
+                    params = CoreFRAPAnalysis.package_analysis_results(best_fit, effective_radius_um)
+
+                    # Perform QC checks
+                    raw_df = CoreFRAPAnalysis.load_data(file_path)
+                    qc_results = CoreFRAPAnalysis.perform_quality_control(raw_df, processed_df, best_fit, params)
+                    params.update(qc_results)
+
+                    # Parse FOV ID
+                    params['fov_id'] = CoreFRAPAnalysis.parse_fov_id(file_name)
+
                 else:
                     params = {}
                     logger.error(f"No valid fit found for {file_name}")
@@ -601,6 +591,9 @@ class FRAPDataManager:
                             params[col] = processed_df[col].tolist()
                         else:
                             params[col] = processed_df[col].iloc[0]
+
+                    # Set default for inclusion in stats
+                    params['include_for_group_stats'] = True
 
                 self.files[file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
@@ -1731,25 +1724,57 @@ with tab2:
                             'Centroid Drift': sparkline_svg
                         })
 
+                    # Add new fields to the detailed dataframe
+                    for item in all_files_data:
+                        path = next((p for p, d in dm.files.items() if d['name'] == item['File Name']), None)
+                        if path:
+                            features = dm.files[path].get('features', {})
+                            item['include_for_group_stats'] = features.get('include_for_group_stats', True)
+                            item['koff_ci_low'] = features.get('koff_ci_low', np.nan)
+                            item['koff_ci_high'] = features.get('koff_ci_high', np.nan)
+                            item['D_ci_low'] = features.get('D_ci_low', np.nan)
+                            item['D_ci_high'] = features.get('D_ci_high', np.nan)
+                            item['app_mw_ci_low'] = features.get('app_mw_ci_low', np.nan)
+                            item['app_mw_ci_high'] = features.get('app_mw_ci_high', np.nan)
+                            item['aicc'] = features.get('aicc', np.nan)
+                            item['bic'] = features.get('bic', np.nan)
+                            item['delta_aicc'] = features.get('delta_aicc', np.nan)
+                            item['delta_bic'] = features.get('delta_bic', np.nan)
+                            item['qc_fit_pass'] = features.get('qc_fit_pass', False)
+                            item['qc_fit_reason'] = features.get('qc_fit_reason', 'N/A')
+                            item['fov_id'] = features.get('fov_id', 'N/A')
+                            item['roi_mean_shift_um'] = features.get('roi_mean_shift_um', np.nan)
+                            item['roi_centroid_trace_path'] = features.get('roi_centroid_trace_path', '')
+
                     detailed_df = pd.DataFrame(all_files_data)
 
-                    # Style the dataframe with outliers highlighted
-                    def highlight_outliers(row):
-                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
-
                     with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
-                        # Convert dataframe to HTML and embed SVG sparklines
-                        html = detailed_df.to_html(escape=False, index=False, formatters={
-                            'Mobile (%)': '{:.1f}'.format,
-                            'Immobile (%)': '{:.1f}'.format,
-                            'Primary Rate (k)': '{:.4f}'.format,
-                            'Half-time (s)': '{:.2f}'.format,
-                            'k_off (1/s)': '{:.4f}'.format,
-                            'App. D (μm²/s)': '{:.3f}'.format,
-                            'App. MW (kDa)': '{:.1f}'.format,
-                            'R²': '{:.3f}'.format
-                        })
-                        st.markdown(html, unsafe_allow_html=True)
+                        edited_df = st.data_editor(
+                            detailed_df,
+                            column_config={
+                                "include_for_group_stats": st.column_config.CheckboxColumn(
+                                    "Include in Stats",
+                                    default=True,
+                                ),
+                                "File Name": st.column_config.TextColumn(width="medium"),
+                                "roi_centroid_trace_path": st.column_config.LinkColumn("Trace Path"),
+                            },
+                            disabled=[col for col in detailed_df.columns if col != "include_for_group_stats"],
+                            hide_index=True,
+                        )
+
+                        # Logic to update the main data manager state when the user edits the dataframe
+                        for index, row in edited_df.iterrows():
+                            file_name = row['File Name']
+                            # Find the corresponding file path in the data manager
+                            file_path = next((p for p, d in dm.files.items() if d['name'] == file_name), None)
+                            if file_path:
+                                # Update the include_for_group_stats value in the session state
+                                current_val = dm.files[file_path]['features'].get('include_for_group_stats', True)
+                                new_val = row['include_for_group_stats']
+                                if current_val != new_val:
+                                    dm.files[file_path]['features']['include_for_group_stats'] = new_val
+                                    st.rerun() # Rerun to reflect changes immediately
 
                         # Summary statistics
                         included_data = detailed_df[detailed_df['Status'] == 'Included']
@@ -2496,18 +2521,36 @@ with tab5:
                                         gfp_mw=27.0
                                     )
 
-                                    group_export.append({
+                                    row_data = {
                                         'File_Name': file_name,
                                         'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
                                         'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
-                                        'Rate_Constant_k': primary_rate,
-                                        'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
-                                        'k_off_per_second': kinetic_interp['k_off'],
-                                        'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
-                                        'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
-                                        'Model': row.get('model', 'Unknown'),
-                                        'R²': row.get('r2', np.nan)
-                                    })
+                                        'k_off': primary_rate,
+                                        'koff_ci_low': row.get('koff_ci_low', np.nan),
+                                        'koff_ci_high': row.get('koff_ci_high', np.nan),
+                                        'D_um2_s': kinetic_interp['diffusion_coefficient'],
+                                        'D_ci_low': row.get('D_ci_low', np.nan),
+                                        'D_ci_high': row.get('D_ci_high', np.nan),
+                                        'app_mw_kDa': kinetic_interp['apparent_mw'],
+                                        'app_mw_ci_low': row.get('app_mw_ci_low', np.nan),
+                                        'app_mw_ci_high': row.get('app_mw_ci_high', np.nan),
+                                        'model_name': row.get('model', 'Unknown'),
+                                        'R_squared': row.get('r2', np.nan),
+                                        'aicc': row.get('aicc', np.nan),
+                                        'bic': row.get('bic', np.nan),
+                                        'delta_aicc': row.get('delta_aicc', np.nan),
+                                        'delta_bic': row.get('delta_bic', np.nan),
+                                        'qc_prefit_pass': row.get('qc_prefit_pass', False),
+                                        'qc_prefit_reason': row.get('qc_prefit_reason', ''),
+                                        'qc_fit_pass': row.get('qc_fit_pass', False),
+                                        'qc_fit_reason': row.get('qc_fit_reason', ''),
+                                        'qc_feat_pass': row.get('qc_feat_pass', False),
+                                        'qc_feat_reason': row.get('qc_feat_reason', ''),
+                                        'fov_id': row.get('fov_id', np.nan),
+                                        'roi_mean_shift_um': row.get('roi_mean_shift_um', np.nan),
+                                        'roi_centroid_trace_path': row.get('roi_centroid_trace_path', '')
+                                    }
+                                    group_export.append(row_data)
 
                                 summary_data[f'Group_{group_name}'] = group_export
 
@@ -2573,13 +2616,30 @@ with tab5:
                                     'File_Name': file_name,
                                     'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
                                     'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
-                                    'Rate_Constant_k': primary_rate,
-                                    'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
-                                    'k_off_per_second': kinetic_interp['k_off'],
-                                    'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
-                                    'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
-                                    'Model': row.get('model', 'Unknown'),
-                                    'R_squared': row.get('r2', np.nan)
+                                    'k_off': primary_rate,
+                                    'koff_ci_low': row.get('koff_ci_low', np.nan),
+                                    'koff_ci_high': row.get('koff_ci_high', np.nan),
+                                    'D_um2_s': kinetic_interp['diffusion_coefficient'],
+                                    'D_ci_low': row.get('D_ci_low', np.nan),
+                                    'D_ci_high': row.get('D_ci_high', np.nan),
+                                    'app_mw_kDa': kinetic_interp['apparent_mw'],
+                                    'app_mw_ci_low': row.get('app_mw_ci_low', np.nan),
+                                    'app_mw_ci_high': row.get('app_mw_ci_high', np.nan),
+                                    'model_name': row.get('model', 'Unknown'),
+                                    'R_squared': row.get('r2', np.nan),
+                                    'aicc': row.get('aicc', np.nan),
+                                    'bic': row.get('bic', np.nan),
+                                    'delta_aicc': row.get('delta_aicc', np.nan),
+                                    'delta_bic': row.get('delta_bic', np.nan),
+                                    'qc_prefit_pass': row.get('qc_prefit_pass', False),
+                                    'qc_prefit_reason': row.get('qc_prefit_reason', ''),
+                                    'qc_fit_pass': row.get('qc_fit_pass', False),
+                                    'qc_fit_reason': row.get('qc_fit_reason', ''),
+                                    'qc_feat_pass': row.get('qc_feat_pass', False),
+                                    'qc_feat_reason': row.get('qc_feat_reason', ''),
+                                    'fov_id': row.get('fov_id', np.nan),
+                                    'roi_mean_shift_um': row.get('roi_mean_shift_um', np.nan),
+                                    'roi_centroid_trace_path': row.get('roi_centroid_trace_path', '')
                                 })
 
                             export_df = pd.DataFrame(export_data)
