@@ -61,12 +61,12 @@ echo                   Launching Classic FRAP Analysis UI
 echo ================================================================================
 echo.
 call :CHECK_PYTHON
-call :CHECK_FILES streamlit_frap_final.py
+call :CHECK_FILES streamlit_frap_final_clean.py
 call :CHECK_STREAMLIT
 echo [INFO] Starting Classic FRAP Analysis UI...
 echo [INFO] URL: http://localhost:8502
 echo.
-streamlit run streamlit_frap_final.py --server.port=8502 --server.address=localhost --browser.gatherUsageStats=false
+streamlit run streamlit_frap_final_clean.py --server.port=8502 --server.address=localhost --browser.gatherUsageStats=false
 goto MENU
 
 :MICROIRRADIATION

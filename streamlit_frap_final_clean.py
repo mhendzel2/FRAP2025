@@ -496,7 +496,7 @@ with st.sidebar:
             with st.spinner(f"Processing groups from '{uploaded_zip.name}'..."):
                 if 'data_manager' in st.session_state:
                     # Clear any existing progress messages
-                    success = dm.load_groups_from_zip_archive(uploaded_zip)
+                    success = dm.load_groups_from_zip_archive(uploaded_zip, settings=st.session_state.settings)
                     if success:
                         # Show successful groups
                         if dm.groups:
