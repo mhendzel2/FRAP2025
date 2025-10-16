@@ -27,8 +27,8 @@ python --version
 echo.
 
 REM Check if we're in the correct directory
-if not exist "streamlit_frap_final_clean.py" (
-    echo [ERROR] Cannot find streamlit_frap_final_clean.py
+if not exist "streamlit_frap.py" (
+    echo [ERROR] Cannot find streamlit_frap.py
     echo.
     echo Please run this script from the FRAP2025 directory
     pause
@@ -36,7 +36,7 @@ if not exist "streamlit_frap_final_clean.py" (
 )
 
 echo [INFO] Checking required files...
-if exist "streamlit_frap_final_clean.py" echo   [OK] streamlit_frap_final_clean.py
+if exist "streamlit_frap.py" echo   [OK] streamlit_frap.py
 if exist "frap_core.py" echo   [OK] frap_core.py
 if exist "frap_data_model.py" echo   [OK] frap_data_model.py
 echo.
@@ -79,7 +79,7 @@ echo ===========================================================================
 echo.
 
 REM Launch Streamlit with optimal settings
-streamlit run streamlit_frap_final_clean.py ^
+streamlit run streamlit_frap.py ^
     --server.port=8502 ^
     --server.address=localhost ^
     --browser.gatherUsageStats=false ^
@@ -92,7 +92,7 @@ if %errorlevel% neq 0 (
     echo Troubleshooting:
     echo 1. Make sure all dependencies are installed: pip install -r requirements.txt
     echo 2. Check that no other application is using port 8502
-    echo 3. Try running: python -m streamlit run streamlit_frap_final_clean.py
+    echo 3. Try running: python -m streamlit run streamlit_frap.py
     echo.
     pause
     exit /b 1
