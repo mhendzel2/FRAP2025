@@ -2661,21 +2661,69 @@ with tab3:
                 )
 
             with col_vis2:
-                plot_type = st.selectbox("Visualization Type:", ["Box Plot", "Violin Plot", "Bar Plot (Mean ± SEM)"])
+                plot_type = st.selectbox("Visualization Type:", 
+                                        ["Estimation Plot", "Box Plot", "Violin Plot", "Bar Plot (Mean ± SEM)"])
 
             # Create visualization
-            if plot_type == "Box Plot":
+            if plot_type == "Estimation Plot":
+                st.markdown("""
+                **Estimation Plot Benefits:**
+                - Shows all raw data points (transparency)
+                - Displays mean with 95% confidence interval
+                - Visualizes effect sizes (right panel)
+                - More informative than traditional bar charts
+                """)
+                
+                from frap_plots import FRAPPlots
+                fig = FRAPPlots.plot_estimation_plot(
+                    data_df=combined_df,
+                    group_col='group',
+                    value_col=param_to_plot,
+                    group_names=list(dm.groups.keys()),
+                    title=f'Estimation Plot: {param_to_plot.replace("_", " ").title()}',
+                    height=600
+                )
+                
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.markdown("""
+                    **How to Read This Plot:**
+                    - **Left Panel**: 
+                      - Small circles = individual measurements (jittered for visibility)
+                      - Large diamonds = group means
+                      - Error bars = 95% confidence intervals
+                    - **Right Panel**: 
+                      - Shows differences from reference group (first group)
+                      - Diamonds = mean difference
+                      - Error bars = 95% CI of the difference
+                      - Dashed line at zero = no difference
+                    """)
+                else:
+                    st.error("Failed to generate estimation plot")
+                    
+            elif plot_type == "Box Plot":
                 fig = px.box(
                     combined_df, x='group', y=param_to_plot, color='group',
                     title=f'Distribution of {param_to_plot} Across Groups',
                     points="all"
                 )
+                fig.update_xaxes(title="Experimental Group")
+                fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
+                fig.update_layout(showlegend=False, height=500)
+                st.plotly_chart(fig, use_container_width=True)
+                
             elif plot_type == "Violin Plot":
                 fig = px.violin(
                     combined_df, x='group', y=param_to_plot, color='group',
                     title=f'Distribution of {param_to_plot} Across Groups',
                     box=True, points="all"
                 )
+                fig.update_xaxes(title="Experimental Group")
+                fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
+                fig.update_layout(showlegend=False, height=500)
+                st.plotly_chart(fig, use_container_width=True)
+                
             else:  # Bar Plot
                 group_stats = combined_df.groupby('group')[param_to_plot].agg(['mean', 'sem']).reset_index()
                 fig = px.bar(
@@ -2683,11 +2731,10 @@ with tab3:
                     error_y='sem',
                     title=f'Mean {param_to_plot} Across Groups (±SEM)'
                 )
-
-            fig.update_xaxes(title="Experimental Group")
-            fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
-            fig.update_layout(showlegend=False, height=500)
-            st.plotly_chart(fig, use_container_width=True)
+                fig.update_xaxes(title="Experimental Group")
+                fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
+                fig.update_layout(showlegend=False, height=500)
+                st.plotly_chart(fig, use_container_width=True)
 
             st.markdown("### Statistical Testing")
 

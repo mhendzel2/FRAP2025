@@ -1113,3 +1113,268 @@ class FRAPPlots:
             import traceback
             logger.error(traceback.format_exc())
             return None
+    
+    @staticmethod
+    def plot_estimation_plot(data_df, group_col='group', value_col='value', 
+                            group_names=None, title="Estimation Plot", height=600):
+        """
+        Create an estimation plot showing raw data, means, and confidence intervals.
+        
+        An estimation plot is superior to traditional bar charts because it shows:
+        1. All raw data points (transparency about sample distribution)
+        2. Mean with confidence interval (statistical precision)
+        3. Effect size visualization (magnitude of differences)
+        
+        Parameters:
+        -----------
+        data_df : pd.DataFrame
+            DataFrame with group and value columns
+        group_col : str
+            Column name containing group labels
+        value_col : str
+            Column name containing numeric values
+        group_names : list, optional
+            Specific groups to plot (default: all groups)
+        title : str
+            Plot title
+        height : int
+            Plot height in pixels
+            
+        Returns:
+        --------
+        plotly.graph_objects.Figure
+            Estimation plot figure
+        """
+        try:
+            import scipy.stats as stats
+            
+            if group_names is None:
+                group_names = data_df[group_col].unique().tolist()
+            
+            # Filter data
+            plot_data = data_df[data_df[group_col].isin(group_names)].copy()
+            
+            # Create figure with two subplots: raw data on left, mean differences on right
+            fig = make_subplots(
+                rows=1, cols=2,
+                column_widths=[0.6, 0.4],
+                subplot_titles=["Raw Data with Mean ± 95% CI", "Mean Differences"],
+                horizontal_spacing=0.15
+            )
+            
+            # Color palette
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                     '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+            
+            # Calculate statistics for each group
+            group_stats = {}
+            for i, group_name in enumerate(group_names):
+                group_data = plot_data[plot_data[group_col] == group_name][value_col].dropna()
+                
+                if len(group_data) > 0:
+                    mean_val = group_data.mean()
+                    sem_val = group_data.sem()
+                    n = len(group_data)
+                    
+                    # 95% confidence interval
+                    if n > 1:
+                        ci_95 = stats.t.ppf(0.975, n-1) * sem_val
+                    else:
+                        ci_95 = 0
+                    
+                    group_stats[group_name] = {
+                        'data': group_data,
+                        'mean': mean_val,
+                        'sem': sem_val,
+                        'ci_95': ci_95,
+                        'n': n,
+                        'color': colors[i % len(colors)]
+                    }
+            
+            # Left panel: Raw data with means and CIs
+            x_offset = 0
+            x_spacing = 1.5
+            
+            for i, group_name in enumerate(group_names):
+                if group_name not in group_stats:
+                    continue
+                
+                stats_dict = group_stats[group_name]
+                x_pos = x_offset + i * x_spacing
+                
+                # Add jittered raw data points
+                np.random.seed(42)  # For reproducibility
+                jitter = np.random.normal(0, 0.1, len(stats_dict['data']))
+                x_jittered = [x_pos] * len(stats_dict['data']) + jitter
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_jittered,
+                        y=stats_dict['data'].values,
+                        mode='markers',
+                        name=f'{group_name} (raw)',
+                        marker=dict(
+                            size=8,
+                            color=stats_dict['color'],
+                            opacity=0.4,
+                            line=dict(width=0.5, color='white')
+                        ),
+                        showlegend=True,
+                        hovertemplate=f'<b>{group_name}</b><br>Value: %{{y:.3f}}<extra></extra>'
+                    ),
+                    row=1, col=1
+                )
+                
+                # Add mean with CI error bar
+                fig.add_trace(
+                    go.Scatter(
+                        x=[x_pos + 0.4],
+                        y=[stats_dict['mean']],
+                        error_y=dict(
+                            type='data',
+                            array=[stats_dict['ci_95']],
+                            visible=True,
+                            thickness=3,
+                            width=8
+                        ),
+                        mode='markers',
+                        name=f'{group_name} (mean ± 95% CI)',
+                        marker=dict(
+                            size=16,
+                            color=stats_dict['color'],
+                            symbol='diamond',
+                            line=dict(width=2, color='black')
+                        ),
+                        showlegend=True,
+                        hovertemplate=f'<b>{group_name} Mean</b><br>' + 
+                                     f'Value: {stats_dict["mean"]:.3f}<br>' +
+                                     f'95% CI: ±{stats_dict["ci_95"]:.3f}<br>' +
+                                     f'N: {stats_dict["n"]}<extra></extra>'
+                    ),
+                    row=1, col=1
+                )
+            
+            # Right panel: Effect size visualization (pairwise mean differences)
+            if len(group_names) >= 2:
+                # For simplicity, show differences relative to first group
+                reference_group = group_names[0]
+                
+                if reference_group in group_stats:
+                    ref_mean = group_stats[reference_group]['mean']
+                    
+                    y_positions = []
+                    differences = []
+                    ci_errors = []
+                    labels = []
+                    marker_colors = []
+                    
+                    for i, group_name in enumerate(group_names[1:], 1):
+                        if group_name not in group_stats:
+                            continue
+                        
+                        # Calculate difference
+                        diff = group_stats[group_name]['mean'] - ref_mean
+                        
+                        # Pooled SEM for difference
+                        sem_diff = np.sqrt(
+                            group_stats[reference_group]['sem']**2 + 
+                            group_stats[group_name]['sem']**2
+                        )
+                        
+                        # 95% CI for difference
+                        n_ref = group_stats[reference_group]['n']
+                        n_comp = group_stats[group_name]['n']
+                        df = n_ref + n_comp - 2
+                        ci_diff = stats.t.ppf(0.975, df) * sem_diff if df > 0 else 0
+                        
+                        y_positions.append(i)
+                        differences.append(diff)
+                        ci_errors.append(ci_diff)
+                        labels.append(f'{group_name} - {reference_group}')
+                        marker_colors.append(group_stats[group_name]['color'])
+                    
+                    # Add difference plot
+                    if len(differences) > 0:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=differences,
+                                y=y_positions,
+                                error_x=dict(
+                                    type='data',
+                                    array=ci_errors,
+                                    visible=True,
+                                    thickness=3,
+                                    width=8
+                                ),
+                                mode='markers',
+                                name='Mean Difference',
+                                marker=dict(
+                                    size=16,
+                                    color=marker_colors,
+                                    symbol='diamond',
+                                    line=dict(width=2, color='black')
+                                ),
+                                showlegend=False,
+                                hovertemplate='<b>%{text}</b><br>' +
+                                             'Difference: %{x:.3f}<br>' +
+                                             '95% CI: ±%{error_x.array:.3f}<extra></extra>',
+                                text=labels
+                            ),
+                            row=1, col=2
+                        )
+                        
+                        # Add zero line
+                        fig.add_vline(
+                            x=0, 
+                            line_dash="dash", 
+                            line_color="gray",
+                            row=1, col=2
+                        )
+                        
+                        # Update y-axis for right panel
+                        fig.update_yaxes(
+                            ticktext=labels,
+                            tickvals=y_positions,
+                            row=1, col=2
+                        )
+            
+            # Update layout
+            fig.update_xaxes(
+                title_text="Group",
+                ticktext=group_names,
+                tickvals=[i * x_spacing for i in range(len(group_names))],
+                row=1, col=1
+            )
+            
+            fig.update_yaxes(
+                title_text=value_col.replace('_', ' ').title(),
+                row=1, col=1
+            )
+            
+            fig.update_xaxes(
+                title_text="Difference from Control",
+                zeroline=True,
+                row=1, col=2
+            )
+            
+            fig.update_layout(
+                title=title,
+                height=height,
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    xanchor="left",
+                    x=1.15
+                ),
+                hovermode='closest'
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"Error creating estimation plot: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
