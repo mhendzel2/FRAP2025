@@ -533,10 +533,14 @@ def compare_recovery_profiles(group1_data: Dict, group2_data: Dict,
         intensity_diff = i2_common - i1_common
         max_diff = np.max(np.abs(intensity_diff))
         max_diff_time = t_common[np.argmax(np.abs(intensity_diff))]
+        mean_diff = np.mean(np.abs(intensity_diff))
+        rmsd = np.sqrt(np.mean(intensity_diff**2))
     else:
         intensity_diff = np.array([])
         max_diff = np.nan
         max_diff_time = np.nan
+        mean_diff = np.nan
+        rmsd = np.nan
     
     results = {
         'group1_name': group1_name,
@@ -557,7 +561,9 @@ def compare_recovery_profiles(group1_data: Dict, group2_data: Dict,
             'time_common': t_common,
             'intensity_diff': intensity_diff,
             'max_difference': max_diff,
-            'max_difference_time': max_diff_time
+            'max_difference_time': max_diff_time,
+            'mean_difference': mean_diff,
+            'rmsd': rmsd
         }
     }
     

@@ -2804,24 +2804,27 @@ with tab2:
                                     
                                     col_prof1, col_prof2, col_prof3 = st.columns(3)
                                     
+                                    # Fix: Access metrics from 'comparison' sub-dictionary
+                                    comparison_metrics = profile_comparison['comparison']
+                                    
                                     with col_prof1:
                                         st.metric(
                                             "Max Difference",
-                                            f"{profile_comparison['max_difference']:.3f}",
+                                            f"{comparison_metrics['max_difference']:.3f}",
                                             help="Maximum absolute difference between averaged profiles"
                                         )
                                     
                                     with col_prof2:
                                         st.metric(
                                             "Mean Difference",
-                                            f"{profile_comparison['mean_difference']:.3f}",
+                                            f"{comparison_metrics['mean_difference']:.3f}",
                                             help="Average absolute difference across all time points"
                                         )
                                     
                                     with col_prof3:
                                         st.metric(
                                             "RMSD",
-                                            f"{profile_comparison['rmsd']:.3f}",
+                                            f"{comparison_metrics['rmsd']:.3f}",
                                             help="Root mean square deviation between profiles"
                                         )
                                     
