@@ -2118,6 +2118,360 @@ with tab2:
     else:
         st.info("Create and/or select a group from the sidebar to begin analysis.")
 
+    # Add holistic group comparison section
+    if len(dm.groups) >= 2:
+        st.markdown("---")
+        st.markdown("## 🔬 Holistic Group Comparison")
+        st.markdown("""
+        **Compare groups accounting for population distributions and weighted kinetics.**
+        
+        This analysis goes beyond comparing individual components by:
+        - **Averaging recovery profiles** directly (model-independent)
+        - **Analyzing population distributions** (% in diffusion/binding/intermediate regimes)
+        - **Computing weighted kinetics** (accounting for component abundance)
+        - **Providing biological interpretation** (e.g., "lost binding capability")
+        """)
+
+        with st.expander("📖 Why Holistic Comparison?", expanded=False):
+            st.markdown("""
+            **Traditional component-wise comparison can be misleading:**
+            
+            ❌ "Group 2 has faster kinetics" → Misses that it lost binding entirely
+            
+            ✅ "Group 2 lost binding population, shifted to pure diffusion" → Reveals biological mechanism
+            
+            **Example:**
+            - **WT:** 60% binding (slow), 40% diffusion (fast)
+            - **Mutant:** 18% binding, 82% diffusion
+            
+            The mutant didn't "get faster" - it lost the ability to bind chromatin!
+            """)
+
+        # Import holistic comparison module
+        try:
+            from frap_group_comparison import (
+                HolisticGroupComparator,
+                compute_average_recovery_profile,
+                compare_recovery_profiles
+            )
+
+            # Group selection for comparison
+            st.markdown("### Select Groups to Compare")
+            
+            available_groups = list(dm.groups.keys())
+            
+            col_select1, col_select2 = st.columns(2)
+            
+            with col_select1:
+                selected_groups_holistic = st.multiselect(
+                    "Choose groups (select 2 for pairwise comparison):",
+                    options=available_groups,
+                    default=available_groups[:2] if len(available_groups) >= 2 else available_groups,
+                    help="Select multiple groups to compare their population distributions and kinetics"
+                )
+            
+            with col_select2:
+                st.markdown("**Comparison Options:**")
+                show_profile_comparison = st.checkbox(
+                    "Show averaged recovery profiles",
+                    value=True,
+                    help="Compare directly averaged curves (model-independent)"
+                )
+                show_interpretation = st.checkbox(
+                    "Show biological interpretation",
+                    value=True,
+                    help="Generate narrative interpretation of differences"
+                )
+
+            if len(selected_groups_holistic) >= 2:
+                st.markdown("---")
+                
+                # Initialize comparator
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                comparator = HolisticGroupComparator(
+                    bleach_radius_um=bleach_radius * pixel_size,
+                    pixel_size=pixel_size
+                )
+
+                # Prepare features for each selected group
+                group_features = {}
+                group_data_raw = {}
+                
+                for group_name in selected_groups_holistic:
+                    features_df = dm.groups[group_name].get('features_df')
+                    if features_df is not None and not features_df.empty:
+                        group_features[group_name] = features_df
+                    
+                    # Get raw intensity data for profile comparison
+                    group_files = dm.groups[group_name].get('files', [])
+                    group_data_raw[group_name] = {
+                        fp: dm.files[fp] for fp in group_files if fp in dm.files
+                    }
+
+                # Multi-group population distribution table
+                if group_features:
+                    st.markdown("### 📊 Population Distribution Comparison")
+                    st.markdown("**How are kinetic components distributed across diffusion/binding regimes?**")
+                    
+                    try:
+                        comparison_df = comparator.compare_groups(group_features)
+                        
+                        # Display with enhanced formatting
+                        st.dataframe(
+                            comparison_df.style.format({
+                                'n_cells': '{:.0f}',
+                                'mobile_fraction_mean': '{:.1f}%',
+                                'mobile_fraction_sem': '{:.1f}%',
+                                'weighted_k_fast': '{:.3f}',
+                                'weighted_k_slow': '{:.3f}',
+                                'population_diffusion': '{:.1f}%',
+                                'population_intermediate': '{:.1f}%',
+                                'population_binding': '{:.1f}%'
+                            }),
+                            use_container_width=True
+                        )
+                        
+                        # Visualize population distributions
+                        st.markdown("#### Population Distribution Visualization")
+                        
+                        import plotly.graph_objects as go
+                        from plotly.subplots import make_subplots
+                        
+                        fig_pop = go.Figure()
+                        
+                        x_groups = comparison_df['group'].tolist()
+                        
+                        fig_pop.add_trace(go.Bar(
+                            name='Diffusion (k > 1.0 s⁻¹)',
+                            x=x_groups,
+                            y=comparison_df['population_diffusion'].tolist(),
+                            marker_color='rgb(55, 83, 109)'
+                        ))
+                        
+                        fig_pop.add_trace(go.Bar(
+                            name='Intermediate (0.1 < k < 1.0 s⁻¹)',
+                            x=x_groups,
+                            y=comparison_df['population_intermediate'].tolist(),
+                            marker_color='rgb(26, 118, 255)'
+                        ))
+                        
+                        fig_pop.add_trace(go.Bar(
+                            name='Binding (k < 0.1 s⁻¹)',
+                            x=x_groups,
+                            y=comparison_df['population_binding'].tolist(),
+                            marker_color='rgb(50, 171, 96)'
+                        ))
+                        
+                        fig_pop.update_layout(
+                            barmode='stack',
+                            title='Kinetic Population Distribution by Group',
+                            xaxis_title='Group',
+                            yaxis_title='Population (%)',
+                            height=500,
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="right",
+                                x=1
+                            )
+                        )
+                        
+                        st.plotly_chart(fig_pop, use_container_width=True)
+                        
+                    except Exception as e:
+                        st.error(f"Error computing population comparison: {e}")
+
+                # Pairwise statistical comparison (if exactly 2 groups selected)
+                if len(selected_groups_holistic) == 2:
+                    st.markdown("---")
+                    st.markdown("### 📈 Pairwise Statistical Comparison")
+                    
+                    group1_name, group2_name = selected_groups_holistic[0], selected_groups_holistic[1]
+                    
+                    if group1_name in group_features and group2_name in group_features:
+                        try:
+                            # Perform statistical comparison
+                            stats_results = comparator.statistical_comparison(
+                                group_features[group1_name],
+                                group_features[group2_name],
+                                group1_name=group1_name,
+                                group2_name=group2_name
+                            )
+                            
+                            # Display results in organized columns
+                            col_stat1, col_stat2 = st.columns(2)
+                            
+                            with col_stat1:
+                                st.markdown("#### Mobile Fraction")
+                                mf1 = stats_results['mobile_fraction_comparison']['group1_mean']
+                                mf2 = stats_results['mobile_fraction_comparison']['group2_mean']
+                                sem1 = stats_results['mobile_fraction_comparison']['group1_sem']
+                                sem2 = stats_results['mobile_fraction_comparison']['group2_sem']
+                                p_val = stats_results['mobile_fraction_comparison']['p_value']
+                                
+                                st.metric(group1_name, f"{mf1:.1f}% ± {sem1:.1f}%")
+                                st.metric(group2_name, f"{mf2:.1f}% ± {sem2:.1f}%")
+                                
+                                if p_val < 0.05:
+                                    st.success(f"✓ Significant difference (p={p_val:.4f})")
+                                else:
+                                    st.info(f"✗ No significant difference (p={p_val:.4f})")
+                            
+                            with col_stat2:
+                                st.markdown("#### Population Shifts")
+                                pop_comp = stats_results['population_comparison']
+                                
+                                diff_shift = pop_comp['diffusion_shift']
+                                bind_shift = pop_comp['binding_shift']
+                                
+                                st.metric(
+                                    "Diffusion Shift",
+                                    f"{diff_shift:+.1f}%",
+                                    delta=f"{diff_shift:.1f}%",
+                                    delta_color="normal" if diff_shift > 0 else "inverse"
+                                )
+                                
+                                st.metric(
+                                    "Binding Shift",
+                                    f"{bind_shift:+.1f}%",
+                                    delta=f"{bind_shift:.1f}%",
+                                    delta_color="normal" if bind_shift > 0 else "inverse"
+                                )
+                            
+                            # Biological interpretation
+                            if show_interpretation:
+                                st.markdown("---")
+                                st.markdown("### 🧬 Biological Interpretation")
+                                
+                                interpretation = comparator.interpret_differences(stats_results)
+                                st.markdown(interpretation)
+                        
+                        except Exception as e:
+                            st.error(f"Error in statistical comparison: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+
+                # Averaged recovery profile comparison
+                if show_profile_comparison and len(selected_groups_holistic) >= 2:
+                    st.markdown("---")
+                    st.markdown("### 📉 Averaged Recovery Profile Comparison")
+                    st.markdown("**Direct comparison of averaged curves (no model assumptions)**")
+                    
+                    try:
+                        fig_profiles = go.Figure()
+                        
+                        colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 
+                                 'rgb(214, 39, 40)', 'rgb(148, 103, 189)', 'rgb(140, 86, 75)']
+                        
+                        for idx, group_name in enumerate(selected_groups_holistic):
+                            if group_name in group_data_raw and group_data_raw[group_name]:
+                                try:
+                                    t_avg, i_avg, i_sem = compute_average_recovery_profile(
+                                        group_data_raw[group_name]
+                                    )
+                                    
+                                    color = colors[idx % len(colors)]
+                                    
+                                    # Plot mean with error bars
+                                    fig_profiles.add_trace(go.Scatter(
+                                        x=t_avg,
+                                        y=i_avg,
+                                        mode='lines',
+                                        name=group_name,
+                                        line=dict(color=color, width=3),
+                                        showlegend=True
+                                    ))
+                                    
+                                    # Add SEM as shaded area
+                                    fig_profiles.add_trace(go.Scatter(
+                                        x=np.concatenate([t_avg, t_avg[::-1]]),
+                                        y=np.concatenate([i_avg + i_sem, (i_avg - i_sem)[::-1]]),
+                                        fill='toself',
+                                        fillcolor=color.replace('rgb', 'rgba').replace(')', ', 0.2)'),
+                                        line=dict(color='rgba(255,255,255,0)'),
+                                        name=f'{group_name} (±SEM)',
+                                        showlegend=False,
+                                        hoverinfo='skip'
+                                    ))
+                                    
+                                except Exception as e:
+                                    st.warning(f"Could not compute average profile for {group_name}: {e}")
+                        
+                        fig_profiles.update_layout(
+                            title='Averaged Recovery Profiles Comparison',
+                            xaxis_title='Time (s)',
+                            yaxis_title='Normalized Intensity',
+                            height=500,
+                            hovermode='x unified',
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="right",
+                                x=1
+                            )
+                        )
+                        
+                        st.plotly_chart(fig_profiles, use_container_width=True)
+                        
+                        # Quantitative profile comparison for 2 groups
+                        if len(selected_groups_holistic) == 2:
+                            group1_name, group2_name = selected_groups_holistic[0], selected_groups_holistic[1]
+                            
+                            if (group1_name in group_data_raw and group2_name in group_data_raw and
+                                group_data_raw[group1_name] and group_data_raw[group2_name]):
+                                try:
+                                    profile_comparison = compare_recovery_profiles(
+                                        group_data_raw[group1_name],
+                                        group_data_raw[group2_name],
+                                        group1_name=group1_name,
+                                        group2_name=group2_name
+                                    )
+                                    
+                                    st.markdown("#### Profile Comparison Metrics")
+                                    
+                                    col_prof1, col_prof2, col_prof3 = st.columns(3)
+                                    
+                                    with col_prof1:
+                                        st.metric(
+                                            "Max Difference",
+                                            f"{profile_comparison['max_difference']:.3f}",
+                                            help="Maximum absolute difference between averaged profiles"
+                                        )
+                                    
+                                    with col_prof2:
+                                        st.metric(
+                                            "Mean Difference",
+                                            f"{profile_comparison['mean_difference']:.3f}",
+                                            help="Average absolute difference across all time points"
+                                        )
+                                    
+                                    with col_prof3:
+                                        st.metric(
+                                            "RMSD",
+                                            f"{profile_comparison['rmsd']:.3f}",
+                                            help="Root mean square deviation between profiles"
+                                        )
+                                    
+                                except Exception as e:
+                                    st.warning(f"Could not compute profile comparison metrics: {e}")
+                    
+                    except Exception as e:
+                        st.error(f"Error plotting averaged profiles: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+            elif len(selected_groups_holistic) == 1:
+                st.info("Select at least 2 groups to enable holistic comparison.")
+            else:
+                st.warning("Please select groups to compare.")
+
+        except ImportError as e:
+            st.error(f"Could not import holistic comparison module: {e}")
+            st.info("Make sure `frap_group_comparison.py` is in the same directory as this script.")
+
 with tab3:
     st.header("📊 Multi-Group Statistical Comparison")
     st.markdown("Compare kinetic parameters across multiple experimental conditions")

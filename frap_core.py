@@ -930,9 +930,12 @@ class FRAPAnalysisCore:
         if model == 'single' and len(params) >= 3:
             A, k, C = params
             endpoint = A + C
+            # Mobile fraction is the endpoint (final plateau) in a normalized curve
+            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
             features.update({
                 'amplitude': A, 'rate_constant': k, 'offset': C,
-                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'mobile_fraction': mobile_fraction,
                 'rate_constant_fast': k,
                 'proportion_of_mobile_fast': 100.0
             })
@@ -948,8 +951,12 @@ class FRAPAnalysisCore:
             k_fast, A_fast = components[0]
             k_slow, A_slow = components[1]
 
+            # Mobile fraction is the endpoint (final plateau) in a normalized curve
+            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
+            
             features.update({
-                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'mobile_fraction': mobile_fraction,
                 'rate_constant_fast': k_fast,
                 'rate_constant_slow': k_slow,
                 'proportion_of_mobile_fast': (A_fast / total_amp) * 100 if total_amp > 0 else 0,
@@ -969,8 +976,12 @@ class FRAPAnalysisCore:
             k_med, A_med = components[1]
             k_slow, A_slow = components[2]
 
+            # Mobile fraction is the endpoint (final plateau) in a normalized curve
+            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
+            
             features.update({
-                'mobile_fraction': endpoint * 100 if np.isfinite(endpoint) else np.nan,
+                'mobile_fraction': mobile_fraction,
                 'rate_constant_fast': k_fast,
                 'rate_constant_medium': k_med,
                 'rate_constant_slow': k_slow,
