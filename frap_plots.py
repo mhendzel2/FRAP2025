@@ -1378,3 +1378,96 @@ class FRAPPlots:
             import traceback
             logger.error(traceback.format_exc())
             return None
+
+    @staticmethod
+    def plot_aligned_curves(aligned_results: dict, height: int = 500):
+        """
+        Plots multiple, time-aligned, and interpolated FRAP curves.
+        
+        This visualization shows curves that have been properly aligned to t=0 
+        (bleach event) and interpolated onto a common time axis, enabling direct
+        comparison of recovery kinetics even when experiments used different
+        sampling rates.
+
+        Parameters
+        ----------
+        aligned_results : dict
+            The output from FRAPAnalysisCore.align_and_interpolate_curves()
+            Expected keys: 'common_time', 'interpolated_curves'
+        height : int
+            The height of the plot in pixels. Default: 500
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            A Plotly figure showing all aligned recovery curves with legend
+        """
+        if not aligned_results or not aligned_results.get('interpolated_curves'):
+            logger.warning("No data available for aligned plot")
+            return go.Figure().update_layout(
+                title="No data available for aligned plot",
+                annotations=[{
+                    'text': 'No valid curves to display',
+                    'xref': 'paper',
+                    'yref': 'paper',
+                    'showarrow': False,
+                    'font': {'size': 16}
+                }]
+            )
+
+        fig = go.Figure()
+        common_time = aligned_results['common_time']
+
+        # Plot each aligned curve
+        for i, curve in enumerate(aligned_results['interpolated_curves']):
+            fig.add_trace(go.Scatter(
+                x=common_time,
+                y=curve['intensity'],
+                mode='lines',
+                name=curve['name'],
+                line=dict(width=1.5),
+                opacity=0.8,
+                hovertemplate='<b>%{fullData.name}</b><br>' +
+                             'Time: %{x:.2f} s<br>' +
+                             'Intensity: %{y:.3f}<br>' +
+                             '<extra></extra>'
+            ))
+
+        # Add a horizontal line at y=1 (pre-bleach normalized level)
+        fig.add_hline(
+            y=1, 
+            line_width=1, 
+            line_dash="dash", 
+            line_color="gray",
+            annotation_text="Pre-bleach level",
+            annotation_position="right"
+        )
+
+        fig.update_layout(
+            title="Time-Aligned and Interpolated FRAP Recovery Curves",
+            xaxis_title="Time Since Bleach (s)",
+            yaxis_title="Normalized Intensity",
+            height=height,
+            xaxis=dict(
+                range=[0, None],  # Ensure x-axis starts at 0
+                showgrid=True,
+                gridcolor='lightgray'
+            ),
+            yaxis=dict(
+                range=[0, None],  # Ensure y-axis starts at 0
+                showgrid=True,
+                gridcolor='lightgray'
+            ),
+            legend=dict(
+                title="File",
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02
+            ),
+            hovermode='closest',
+            template='plotly_white'
+        )
+        
+        return fig

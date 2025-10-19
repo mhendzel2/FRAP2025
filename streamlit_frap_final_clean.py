@@ -2478,6 +2478,67 @@ with tab2:
                 st.markdown("##### Average Recovery Curve")
                 avg_fig = plot_average_curve(plot_data)
                 st.plotly_chart(avg_fig, use_container_width=True)
+                
+                # Step 8: Time-Aligned Curves
+                st.markdown("---")
+                st.markdown("### Step 8: Visualize Aligned Group Curves")
+                st.markdown("""
+                This plot shows all included curves from the group, **aligned to the bleach point (t=0)** 
+                and **interpolated onto a common time axis** to correct for different sampling rates between experiments.
+                
+                **Why is this important?**
+                - Different experiments may use different frame rates or time intervals
+                - Direct comparison requires all curves to be on the same time scale
+                - Alignment ensures accurate visualization of recovery kinetics
+                """)
+                
+                if st.button("Generate Aligned Curves Plot", type="secondary", key="align_curves_btn"):
+                    with st.spinner("Aligning and interpolating curves..."):
+                        # Get the data for included files
+                        included_files_df = group.get('features_df')
+                        if included_files_df is not None and not included_files_df.empty:
+                            
+                            curves_to_align = []
+                            for file_path in included_files_df['file_path']:
+                                if file_path in dm.files:
+                                    file_data = dm.files[file_path]
+                                    curves_to_align.append({
+                                        'name': file_data['name'],
+                                        'time': file_data['time'],
+                                        'intensity': file_data['intensity']
+                                    })
+                            
+                            if curves_to_align:
+                                try:
+                                    # Call the new alignment and plotting functions
+                                    from frap_core import FRAPAnalysisCore
+                                    from frap_plots import FRAPPlots
+                                    
+                                    # Align and interpolate curves
+                                    aligned_results = FRAPAnalysisCore.align_and_interpolate_curves(curves_to_align)
+                                    
+                                    # Check if alignment was successful
+                                    if aligned_results['interpolated_curves']:
+                                        # Create and display the plot
+                                        aligned_fig = FRAPPlots.plot_aligned_curves(aligned_results)
+                                        st.plotly_chart(aligned_fig, use_container_width=True)
+                                        
+                                        # Show summary statistics
+                                        st.success(f"✓ Successfully aligned {len(aligned_results['interpolated_curves'])} curves")
+                                        st.info(f"📊 Common time axis: 0 to {aligned_results['common_time'][-1]:.2f} seconds ({len(aligned_results['common_time'])} points)")
+                                    else:
+                                        st.warning("⚠️ No curves could be aligned. Check that your data has valid bleach events.")
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ Error during curve alignment: {e}")
+                                    import traceback
+                                    with st.expander("🔍 Error Details"):
+                                        st.code(traceback.format_exc())
+                            else:
+                                st.warning("No valid curves to align.")
+                        else:
+                            st.warning("No included files in this group to generate the plot.")
+                            
             else:
                 st.warning("No data to display. All files may have been excluded as outliers.")
     else:

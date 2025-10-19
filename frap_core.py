@@ -233,6 +233,81 @@ class FRAPAnalysisCore:
         return t_post, i_post, i_min
 
     @staticmethod
+    def align_and_interpolate_curves(list_of_curves: list, num_points: int = 200) -> dict:
+        """
+        Aligns multiple FRAP curves to a common time axis (t=0 at bleach) and
+        interpolates them for direct comparison.
+        
+        This function properly handles different sampling rates between experiments
+        by time-shifting each curve to start at the bleach event and interpolating
+        all curves onto a uniform time grid.
+
+        Parameters
+        ----------
+        list_of_curves : list[dict]
+            A list of dictionaries, where each dict represents a curve and has
+            'time', 'intensity', and 'name' keys.
+        num_points : int
+            The number of points for the common interpolated time axis. Default: 200
+
+        Returns
+        -------
+        dict
+            A dictionary containing:
+            - 'common_time': np.ndarray - The common time axis starting at t=0
+            - 'interpolated_curves': list[dict] - List of aligned curves with 'name' and 'intensity'
+        """
+        aligned_data = []
+        max_time = 0
+
+        # First pass: align each curve to t=0 and find the max recovery time
+        for curve in list_of_curves:
+            try:
+                # Use the existing function to get time-shifted post-bleach data
+                t_post, i_post, _ = FRAPAnalysisCore.get_post_bleach_data(
+                    curve['time'], curve['intensity']
+                )
+                aligned_data.append({
+                    'name': curve['name'], 
+                    'time': t_post, 
+                    'intensity': i_post
+                })
+                if len(t_post) > 0 and t_post[-1] > max_time:
+                    max_time = t_post[-1]
+            except (ValueError, IndexError) as e:
+                # Skip curves that fail pre-processing (e.g., bleach at frame 0)
+                logging.warning(f"Skipping curve '{curve.get('name', 'unknown')}' during alignment: {e}")
+                continue
+
+        if not aligned_data:
+            logging.warning("No valid curves to align - all curves failed preprocessing")
+            return {'common_time': np.array([]), 'interpolated_curves': []}
+
+        # Create a high-resolution common time axis
+        common_time_axis = np.linspace(0, max_time, num_points)
+        interpolated_curves = []
+
+        # Second pass: interpolate each aligned curve onto the common time axis
+        for data in aligned_data:
+            # Use numpy's interpolation function
+            # Handle edge cases by extending the last value for times beyond the data
+            interp_intensity = np.interp(
+                common_time_axis, 
+                data['time'], 
+                data['intensity'], 
+                right=data['intensity'][-1]
+            )
+            interpolated_curves.append({
+                'name': data['name'],
+                'intensity': interp_intensity
+            })
+
+        return {
+            'common_time': common_time_axis,
+            'interpolated_curves': interpolated_curves
+        }
+
+    @staticmethod
     def motion_compensate_stack(stack: np.ndarray,
                                 init_center: tuple[float, float],
                                 radius: float,
