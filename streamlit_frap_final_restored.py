@@ -665,7 +665,7 @@ class FRAPDataManager:
     def load_groups_from_zip_archive(self, zip_file):
         """
         Loads files from a ZIP archive containing subfolders, where each subfolder
-        is treated as a new group. Gracefully handles unreadable files.
+        containing data files is treated as a new group. Handles deeply nested structures.
         """
         success_count = 0
         error_count = 0
@@ -687,82 +687,97 @@ class FRAPDataManager:
                     st.error(f"Error extracting ZIP file: {e}")
                     return False
 
-                # Walk through the extracted directory to find subfolders (groups)
-                # Only process the first level of subdirectories
+                # Walk through ALL directories to find folders containing data files
+                folders_with_data = {}
+                
                 for root, dirs, files in os.walk(temp_dir):
-                    # Process subfolders as groups (only at the top level)
-                    for group_name in dirs:
-                        if group_name.startswith('__'): # Ignore system folders like __MACOSX
+                    # Check if this folder contains data files
+                    data_files = [f for f in files if not f.startswith('.') and 
+                                 os.path.splitext(f)[1].lower() in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']]
+                    
+                    if data_files:
+                        # This folder has data files - it should become a group
+                        folder_name = os.path.basename(root)
+                        
+                        # Skip system folders
+                        if folder_name.startswith('__') or folder_name.startswith('.'):
                             continue
+                        
+                        # Store folder info
+                        folders_with_data[root] = {
+                            'name': folder_name,
+                            'files': data_files
+                        }
 
-                        self.create_group(group_name)
-                        groups_created.append(group_name)
-                        group_path = os.path.join(root, group_name)
+                # Process each folder with data files
+                for folder_path, folder_info in folders_with_data.items():
+                    group_name = folder_info['name']
+                    
+                    # Create group
+                    self.create_group(group_name)
+                    groups_created.append(group_name)
+                    
+                    # Process each data file in this folder
+                    for file_in_group in folder_info['files']:
+                        file_path_in_temp = os.path.join(folder_path, file_in_group)
 
-                        for file_in_group in os.listdir(group_path):
-                            file_path_in_temp = os.path.join(group_path, file_in_group)
+                        if os.path.isfile(file_path_in_temp):
+                            try:
+                                file_ext = os.path.splitext(file_in_group)[1].lower()
+                                file_name = os.path.basename(file_in_group)
 
-                            if os.path.isfile(file_path_in_temp) and not file_in_group.startswith('.'):
-                                try:
-                                    file_ext = os.path.splitext(file_in_group)[1].lower()
-                                    file_name = os.path.basename(file_in_group)
+                                with open(file_path_in_temp, 'rb') as f:
+                                    file_content = f.read()
+                                if not file_content:
+                                    continue
 
-                                    if file_ext not in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']:
-                                        continue
+                                content_hash = hash(file_content)
 
-                                    with open(file_path_in_temp, 'rb') as f:
-                                        file_content = f.read()
-                                    if not file_content:
-                                        continue
+                                if file_ext in ['.tif', '.tiff']:
+                                    base_name = os.path.splitext(file_name)[0]
+                                    tp = f"data/{base_name}_{content_hash}.csv"
+                                else:
+                                    tp = f"data/{file_name}_{content_hash}"
 
-                                    content_hash = hash(file_content)
+                                if tp not in self.files:
+                                    os.makedirs(os.path.dirname(tp), exist_ok=True)
 
                                     if file_ext in ['.tif', '.tiff']:
-                                        base_name = os.path.splitext(file_name)[0]
-                                        tp = f"data/{base_name}_{content_hash}.csv"
+                                        analyzer = FRAPImageAnalyzer()
+                                        if not analyzer.load_image_stack(file_path_in_temp):
+                                            raise ValueError("Failed to load image stack.")
+
+                                        settings = st.session_state.settings
+                                        analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
+                                        analyzer.time_interval = settings.get('default_time_interval', 1.0)
+
+                                        bleach_frame, bleach_coords = analyzer.detect_bleach_event()
+                                        if bleach_frame is None or bleach_coords is None:
+                                            raise ValueError("Failed to detect bleach event automatically.")
+
+                                        bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
+                                        analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
+                                        intensity_df = analyzer.extract_intensity_profiles()
+                                        intensity_df = intensity_df.rename(columns={'Time': 'time'})
+                                        intensity_df.to_csv(tp, index=False)
                                     else:
-                                        tp = f"data/{file_name}_{content_hash}"
+                                        shutil.copy(file_path_in_temp, tp)
 
-                                    if tp not in self.files:
-                                        os.makedirs(os.path.dirname(tp), exist_ok=True)
-
-                                        if file_ext in ['.tif', '.tiff']:
-                                            analyzer = FRAPImageAnalyzer()
-                                            if not analyzer.load_image_stack(file_path_in_temp):
-                                                raise ValueError("Failed to load image stack.")
-
-                                            settings = st.session_state.settings
-                                            analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
-                                            analyzer.time_interval = settings.get('default_time_interval', 1.0)
-
-                                            bleach_frame, bleach_coords = analyzer.detect_bleach_event()
-                                            if bleach_frame is None or bleach_coords is None:
-                                                raise ValueError("Failed to detect bleach event automatically.")
-
-                                            bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
-                                            analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
-                                            intensity_df = analyzer.extract_intensity_profiles()
-                                            intensity_df = intensity_df.rename(columns={'Time': 'time'})
-                                            intensity_df.to_csv(tp, index=False)
-                                        else:
-                                            shutil.copy(file_path_in_temp, tp)
-
-                                        if self.load_file(tp, file_name):
-                                            self.add_file_to_group(group_name, tp)
-                                            success_count += 1
-                                        else:
-                                            raise ValueError("Failed to load data from file.")
-                                    else:
+                                    if self.load_file(tp, file_name):
                                         self.add_file_to_group(group_name, tp)
+                                        success_count += 1
+                                    else:
+                                        raise ValueError("Failed to load data from file.")
+                                else:
+                                    # File already exists, just add to group
+                                    self.add_file_to_group(group_name, tp)
+                                    success_count += 1
 
-                                except Exception as e:
-                                    error_count += 1
-                                    error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
-                                    logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
-                                if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
-                                    os.remove(tp)
-                    # Only process the first level of subdirectories, don't descend further
-                    break
+                            except Exception as e:
+                                error_count += 1
+                                error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
+                                logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
+                            
         except Exception as e:
             logger.error(f"Error processing ZIP archive with subfolders: {e}")
             st.error(f"An unexpected error occurred: {e}")
