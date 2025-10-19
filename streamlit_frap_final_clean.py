@@ -1458,6 +1458,216 @@ with tab1:
                     with col_bio4:
                         immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
                         st.metric("Immobile (%)",f"{immobile_frac:.1f}")
+                
+                # Advanced Kinetic Models Section
+                st.markdown("---")
+                st.markdown("### 🔬 Advanced Kinetic Models")
+                st.markdown("""
+                Go beyond standard exponential models with advanced kinetic analysis:
+                - **Anomalous Diffusion**: For crowded/heterogeneous environments
+                - **Reaction-Diffusion**: Separate diffusion from binding kinetics
+                """)
+                
+                if st.checkbox("Run Advanced Kinetic Analysis", key="run_advanced_models"):
+                    from frap_core import ADVANCED_FITTING_AVAILABLE
+                    
+                    if not ADVANCED_FITTING_AVAILABLE:
+                        st.error("⚠️ Advanced fitting requires the `lmfit` library")
+                        st.code("pip install lmfit", language="bash")
+                        st.markdown("[Install lmfit documentation](https://lmfit.github.io/lmfit-py/)")
+                    else:
+                        with st.spinner("Fitting advanced models... (this may take 30-60 seconds)"):
+                            bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                            pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                            
+                            advanced_results = CoreFRAPAnalysis.fit_advanced_models(
+                                file_data['time'],
+                                file_data['intensity'],
+                                bleach_radius,
+                                pixel_size
+                            )
+                        
+                        if advanced_results:
+                            st.success(f"✅ Successfully fitted {len(advanced_results)} advanced model(s)")
+                            
+                            # Model selection tabs
+                            model_names = [r['model_name'].replace('_', ' ').title() for r in advanced_results]
+                            adv_tabs = st.tabs(model_names)
+                            
+                            for tab, result in zip(adv_tabs, advanced_results):
+                                with tab:
+                                    # Model quality metrics
+                                    col_qual1, col_qual2, col_qual3, col_qual4 = st.columns(4)
+                                    
+                                    with col_qual1:
+                                        st.metric("R²", f"{result['r2']:.4f}")
+                                    with col_qual2:
+                                        st.metric("AIC", f"{result['aic']:.1f}")
+                                    with col_qual3:
+                                        st.metric("BIC", f"{result['bic']:.1f}")
+                                    with col_qual4:
+                                        # Compare with standard model
+                                        r2_standard = best_fit.get('r2', 0)
+                                        improvement = result['r2'] - r2_standard
+                                        st.metric("R² vs Standard", f"{improvement:+.4f}")
+                                    
+                                    # Biological interpretation
+                                    st.markdown("#### 🧬 Biological Interpretation")
+                                    
+                                    interp = result['interpretation']
+                                    
+                                    if 'anomalous' in result['model_name']:
+                                        col_int1, col_int2, col_int3 = st.columns(3)
+                                        
+                                        with col_int1:
+                                            st.metric("Mobile Fraction", f"{interp['mobile_fraction']:.1f}%")
+                                            st.metric("β (Anomalous Exponent)", f"{interp['beta']:.3f}")
+                                        
+                                        with col_int2:
+                                            st.metric("τ (Char. Time)", f"{interp['tau']:.2f} s")
+                                            st.metric("Effective D", f"{interp['effective_D']:.3f} μm²/s")
+                                        
+                                        with col_int3:
+                                            st.metric("Diffusion Type", interp['diffusion_type'])
+                                            st.metric("Anomaly Strength", f"{interp['anomaly_strength']:.3f}")
+                                        
+                                        # Explanation
+                                        st.markdown("**What does β tell you?**")
+                                        beta = interp['beta']
+                                        if beta < 0.7:
+                                            st.warning(f"**Subdiffusion (β={beta:.2f})**: Protein movement is significantly hindered by obstacles, crowding, or transient interactions. This suggests a complex, heterogeneous environment.")
+                                        elif beta < 0.95:
+                                            st.info(f"**Mild Subdiffusion (β={beta:.2f})**: Some hindrance to free diffusion, but not severe. May indicate moderate crowding or weak interactions.")
+                                        elif beta <= 1.05:
+                                            st.success(f"**Normal Diffusion (β≈1)**: Protein diffuses freely without significant obstacles. Classic Brownian motion.")
+                                        else:
+                                            st.info(f"**Superdiffusion (β={beta:.2f})**: Faster than normal diffusion, possibly due to active transport or directed motion.")
+                                    
+                                    elif 'reaction_diffusion' in result['model_name']:
+                                        col_int1, col_int2 = st.columns(2)
+                                        
+                                        with col_int1:
+                                            st.metric("Mobile Fraction", f"{interp['mobile_fraction']:.1f}%")
+                                            st.metric("Immobile Fraction", f"{interp['immobile_fraction']:.1f}%")
+                                            
+                                            if 'bound_fraction' in interp:
+                                                st.metric("Bound (of Mobile)", f"{interp['bound_fraction']:.1f}%")
+                                                st.metric("Free (of Mobile)", f"{interp['free_fraction']:.1f}%")
+                                        
+                                        with col_int2:
+                                            if 'k_on' in interp:
+                                                st.metric("k_on (Binding Rate)", f"{interp['k_on']:.4f} s⁻¹")
+                                                st.metric("k_off (Unbinding Rate)", f"{interp['k_off']:.4f} s⁻¹")
+                                                st.metric("K_d (Dissociation)", f"{interp['K_d']:.4f}")
+                                            else:
+                                                st.metric("k_eff (Effective Rate)", f"{interp['effective_k']:.4f} s⁻¹")
+                                                st.metric("Residence Time", f"{interp['residence_time']:.2f} s")
+                                            
+                                            if 'diffusion_coeff' in interp:
+                                                st.metric("D (Free Diffusion)", f"{interp['diffusion_coeff']:.3f} μm²/s")
+                                            else:
+                                                st.metric("D_app (Apparent)", f"{interp['apparent_D']:.3f} μm²/s")
+                                        
+                                        # Interpretation
+                                        st.markdown("**Binding vs. Diffusion:**")
+                                        if 'bound_fraction' in interp:
+                                            bound_pct = interp['bound_fraction']
+                                            if bound_pct > 70:
+                                                st.warning(f"**Binding-Dominated ({bound_pct:.0f}%)**: Protein spends most time bound to chromatin/structures. Slow recovery driven by unbinding kinetics.")
+                                            elif bound_pct > 40:
+                                                st.info(f"**Mixed Regime ({bound_pct:.0f}%)**: Significant contributions from both binding and diffusion. Protein alternates between bound and free states.")
+                                            else:
+                                                st.success(f"**Diffusion-Dominated ({100-bound_pct:.0f}% free)**: Protein is mostly freely diffusing. Fast recovery with minimal binding.")
+                                    
+                                    # Plot the fit
+                                    st.markdown("#### 📈 Model Fit Visualization")
+                                    
+                                    fig_adv = go.Figure()
+                                    
+                                    # Get post-bleach data for proper alignment
+                                    t_post, i_post, bleach_idx = CoreFRAPAnalysis.get_post_bleach_data(
+                                        file_data['time'], 
+                                        file_data['intensity']
+                                    )
+                                    
+                                    # Plot data
+                                    fig_adv.add_trace(go.Scatter(
+                                        x=t_post,
+                                        y=i_post,
+                                        mode='markers',
+                                        name='Data',
+                                        marker=dict(size=6, color='blue', opacity=0.6)
+                                    ))
+                                    
+                                    # Plot advanced fit
+                                    fig_adv.add_trace(go.Scatter(
+                                        x=t_post,
+                                        y=result['fitted_values'],
+                                        mode='lines',
+                                        name=f'{result["model_name"].replace("_", " ").title()} Fit',
+                                        line=dict(color='green', width=3)
+                                    ))
+                                    
+                                    # Plot standard fit for comparison
+                                    if 'fitted_values' in best_fit:
+                                        fig_adv.add_trace(go.Scatter(
+                                            x=t_post,
+                                            y=best_fit['fitted_values'],
+                                            mode='lines',
+                                            name=f'Standard {best_fit["model"].title()} Fit',
+                                            line=dict(color='red', width=2, dash='dash'),
+                                            opacity=0.5
+                                        ))
+                                    
+                                    fig_adv.update_layout(
+                                        title=f'{result["model_name"].replace("_", " ").title()} Model Fit',
+                                        xaxis_title='Time (s)',
+                                        yaxis_title='Normalized Intensity',
+                                        height=400,
+                                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                                    )
+                                    
+                                    st.plotly_chart(fig_adv, use_container_width=True)
+                                    
+                                    # Residuals
+                                    st.markdown("#### Residuals Analysis")
+                                    
+                                    fig_res = go.Figure()
+                                    fig_res.add_trace(go.Scatter(
+                                        x=t_post,
+                                        y=result['residuals'],
+                                        mode='markers',
+                                        marker=dict(size=5, color='purple'),
+                                        name='Residuals'
+                                    ))
+                                    fig_res.add_hline(y=0, line_dash="dash", line_color="gray")
+                                    fig_res.update_layout(
+                                        title='Residuals (should be randomly scattered)',
+                                        xaxis_title='Time (s)',
+                                        yaxis_title='Residual',
+                                        height=250
+                                    )
+                                    st.plotly_chart(fig_res, use_container_width=True)
+                                    
+                                    # Parameter details
+                                    with st.expander("📊 View All Parameters & Errors"):
+                                        st.markdown("**Fitted Parameters:**")
+                                        params_df_data = []
+                                        for param_name, param_value in result['params'].items():
+                                            error = result['param_errors'].get(param_name, None)
+                                            params_df_data.append({
+                                                'Parameter': param_name,
+                                                'Value': f"{param_value:.6f}",
+                                                'Std Error': f"{error:.6f}" if error is not None else "Fixed"
+                                            })
+                                        st.dataframe(pd.DataFrame(params_df_data), use_container_width=True)
+                        
+                        else:
+                            st.warning("❌ Could not fit advanced models. This may be due to:")
+                            st.markdown("- Insufficient data points")
+                            st.markdown("- Poor data quality (high noise)")
+                            st.markdown("- Inappropriate model for this dataset")
+                            st.markdown("Try standard exponential models first to ensure data quality.")
 
                 else:
                     # More informative error message with diagnostic information

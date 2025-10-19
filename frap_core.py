@@ -139,6 +139,18 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
     logging.warning("openpyxl not available - .xlsx file support may be limited")
 
+# Try to import advanced fitting module
+try:
+    from frap_advanced_fitting import (
+        fit_all_advanced_models, 
+        select_best_advanced_model,
+        LMFIT_AVAILABLE
+    )
+    ADVANCED_FITTING_AVAILABLE = LMFIT_AVAILABLE
+except ImportError:
+    ADVANCED_FITTING_AVAILABLE = False
+    logging.warning("Advanced fitting module not available - install lmfit for advanced models")
+
 class FRAPAnalysisCore:
     @staticmethod
     def get_post_bleach_data(time, intensity):
@@ -1314,3 +1326,54 @@ class FRAPAnalysisCore:
                 'success': False,
                 'error': str(e)
             }
+    
+    @staticmethod
+    def fit_advanced_models(time, intensity, bleach_radius_um, pixel_size=1.0):
+        """
+        Fit advanced kinetic models to FRAP data using lmfit.
+        
+        This method provides sophisticated models for complex biological phenomena:
+        - Anomalous diffusion (subdiffusion in crowded environments)
+        - Reaction-diffusion kinetics (binding + diffusion)
+        
+        Parameters:
+        -----------
+        time : np.ndarray
+            Time points
+        intensity : np.ndarray
+            Normalized intensity values
+        bleach_radius_um : float
+            Bleach spot radius in microns
+        pixel_size : float
+            Pixel size in microns (default: 1.0)
+            
+        Returns:
+        --------
+        list of dict
+            Results for each successfully fitted advanced model, or empty list if unavailable
+            
+        Notes:
+        ------
+        Requires lmfit library: pip install lmfit
+        """
+        if not ADVANCED_FITTING_AVAILABLE:
+            logging.warning("Advanced fitting not available - install lmfit")
+            return []
+        
+        try:
+            # Get post-bleach data
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            
+            # Convert bleach radius to physical units
+            effective_radius_um = bleach_radius_um * pixel_size
+            
+            # Fit all advanced models
+            results = fit_all_advanced_models(t_fit, intensity_fit, effective_radius_um)
+            
+            return results
+            
+        except Exception as e:
+            logging.error(f"Advanced model fitting failed: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return []
