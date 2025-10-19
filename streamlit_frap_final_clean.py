@@ -1686,9 +1686,14 @@ with tab1:
                     # Display available parameters for debugging
                     with st.expander("🔍 Debug Information"):
                         st.write("**Available parameters:**")
-                        for key, value in params.items():
-                            if 'rate' in key.lower() or 'constant' in key.lower():
-                                st.write(f"- {key}: {value}")
+                        # Fix: Check if params is a dict before calling .items()
+                        if isinstance(params, dict):
+                            for key, value in params.items():
+                                if 'rate' in key.lower() or 'constant' in key.lower():
+                                    st.write(f"- {key}: {value}")
+                        else:
+                            st.write(f"Parameters is not a dict (type: {type(params).__name__})")
+                            st.write(f"Value: {params}")
                         st.write("**Model information:**")
                         if best_fit:
                             st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
@@ -2665,19 +2670,24 @@ with tab2:
                             
                             with col_stat1:
                                 st.markdown("#### Mobile Fraction")
-                                mf1 = stats_results['mobile_fraction_comparison']['group1_mean']
-                                mf2 = stats_results['mobile_fraction_comparison']['group2_mean']
-                                sem1 = stats_results['mobile_fraction_comparison']['group1_sem']
-                                sem2 = stats_results['mobile_fraction_comparison']['group2_sem']
-                                p_val = stats_results['mobile_fraction_comparison']['p_value']
-                                
-                                st.metric(group1_name, f"{mf1:.1f}% ± {sem1:.1f}%")
-                                st.metric(group2_name, f"{mf2:.1f}% ± {sem2:.1f}%")
-                                
-                                if p_val < 0.05:
-                                    st.success(f"✓ Significant difference (p={p_val:.4f})")
+                                # Fix: Correct key structure from statistical_comparison()
+                                if 'mobile_fraction' in stats_results['tests']:
+                                    mf_test = stats_results['tests']['mobile_fraction']
+                                    mf1 = mf_test['mean_group1']
+                                    mf2 = mf_test['mean_group2']
+                                    sem1 = mf_test['sem_group1']
+                                    sem2 = mf_test['sem_group2']
+                                    p_val = mf_test['p_value']
+                                    
+                                    st.metric(group1_name, f"{mf1:.1f}% ± {sem1:.1f}%")
+                                    st.metric(group2_name, f"{mf2:.1f}% ± {sem2:.1f}%")
+                                    
+                                    if p_val < 0.05:
+                                        st.success(f"✓ Significant difference (p={p_val:.4f})")
+                                    else:
+                                        st.info(f"✗ No significant difference (p={p_val:.4f})")
                                 else:
-                                    st.info(f"✗ No significant difference (p={p_val:.4f})")
+                                    st.warning("Mobile fraction comparison not available")
                             
                             with col_stat2:
                                 st.markdown("#### Population Shifts")
