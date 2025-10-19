@@ -860,3 +860,256 @@ class FRAPPlots:
             import traceback
             logger.error(traceback.format_exc())
             return None
+
+    @staticmethod
+    def plot_comprehensive_fit(time, intensity, fit_result, file_name="", height=800):
+        """
+        Create a comprehensive multi-panel plot showing:
+        - Top panel: Recovery curve with fitted line
+        - Middle panel: Residuals
+        - Bottom panel: Individual fit components (for multi-component fits)
+        
+        Parameters:
+        -----------
+        time : np.ndarray
+            Time points
+        intensity : np.ndarray
+            Normalized intensity values
+        fit_result : dict
+            Dictionary containing fit results with keys:
+            - 'model': Model type ('single', 'double', 'triple')
+            - 'params': Fitted parameters
+            - 'r2': R-squared value
+        file_name : str
+            Name of the file being analyzed
+        height : int
+            Total height of the plot
+            
+        Returns:
+        --------
+        plotly.graph_objects.Figure
+            Multi-panel Plotly figure
+        """
+        try:
+            from frap_fitting import single_exp_model, double_exp_model, triple_exp_model
+            
+            model_type = fit_result.get('model', 'single')
+            params = fit_result.get('params')
+            r2 = fit_result.get('r2', 0)
+            
+            if params is None:
+                logger.error("No parameters found in fit_result")
+                return None
+            
+            # Determine number of panels based on model
+            if model_type in ['double', 'triple']:
+                n_rows = 3
+                row_heights = [0.5, 0.25, 0.25]
+                subplot_titles = ["Recovery Curve with Fit", "Residuals", "Individual Components"]
+            else:
+                n_rows = 2
+                row_heights = [0.7, 0.3]
+                subplot_titles = ["Recovery Curve with Fit", "Residuals"]
+            
+            # Create subplots
+            fig = make_subplots(
+                rows=n_rows,
+                cols=1,
+                row_heights=row_heights,
+                subplot_titles=subplot_titles,
+                vertical_spacing=0.08,
+                shared_xaxes=True
+            )
+            
+            # Generate fitted curve
+            t_fit = np.linspace(time.min(), time.max(), 200)
+            
+            if model_type == 'single':
+                A, k, C = params
+                y_fit = single_exp_model(t_fit, A, k, C)
+                residuals = intensity - single_exp_model(time, A, k, C)
+                
+                # Panel 1: Data and fit
+                fig.add_trace(
+                    go.Scatter(x=time, y=intensity, mode='markers', name='Data',
+                              marker=dict(size=8, color='#3b82f6', line=dict(width=1, color='white'))),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=y_fit, mode='lines', name='Single Exp Fit',
+                              line=dict(color='#ef4444', width=3)),
+                    row=1, col=1
+                )
+                
+                # Add annotation with parameters
+                half_time = np.log(2) / k if k > 0 else np.nan
+                mobile_frac = (1 - (A + C)) * 100 if np.isfinite(A + C) else np.nan
+                annotation_text = (f"<b>Single Exponential</b><br>"
+                                 f"R² = {r2:.4f}<br>"
+                                 f"Mobile Fraction = {mobile_frac:.1f}%<br>"
+                                 f"k = {k:.4f} s⁻¹<br>"
+                                 f"t½ = {half_time:.2f} s")
+                
+            elif model_type == 'double':
+                A1, k1, A2, k2, C = params
+                y_fit = double_exp_model(t_fit, A1, k1, A2, k2, C)
+                residuals = intensity - double_exp_model(time, A1, k1, A2, k2, C)
+                
+                # Panel 1: Data and fit
+                fig.add_trace(
+                    go.Scatter(x=time, y=intensity, mode='markers', name='Data',
+                              marker=dict(size=8, color='#3b82f6', line=dict(width=1, color='white'))),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=y_fit, mode='lines', name='Double Exp Fit',
+                              line=dict(color='#ef4444', width=3)),
+                    row=1, col=1
+                )
+                
+                # Panel 3: Individual components
+                y1 = A1 * (1 - np.exp(-k1 * t_fit))
+                y2 = A2 * (1 - np.exp(-k2 * t_fit))
+                
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=y1 + C, mode='lines', name=f'Fast Component (k={k1:.4f})',
+                              line=dict(color='#10b981', width=2, dash='dash')),
+                    row=3, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=y2 + C, mode='lines', name=f'Slow Component (k={k2:.4f})',
+                              line=dict(color='#f59e0b', width=2, dash='dash')),
+                    row=3, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=[C]*len(t_fit), mode='lines', name='Baseline',
+                              line=dict(color='#6b7280', width=1, dash='dot')),
+                    row=3, col=1
+                )
+                
+                # Add annotation with parameters
+                total_amp = A1 + A2
+                mobile_frac = (1 - (total_amp + C)) * 100 if np.isfinite(total_amp + C) else np.nan
+                fast_prop = (A1 / total_amp * 100) if total_amp > 0 else np.nan
+                slow_prop = (A2 / total_amp * 100) if total_amp > 0 else np.nan
+                fast_half = np.log(2) / k1 if k1 > 0 else np.nan
+                slow_half = np.log(2) / k2 if k2 > 0 else np.nan
+                
+                annotation_text = (f"<b>Double Exponential</b><br>"
+                                 f"R² = {r2:.4f}<br>"
+                                 f"Mobile Fraction = {mobile_frac:.1f}%<br>"
+                                 f"Fast: k={k1:.4f} s⁻¹, t½={fast_half:.2f}s ({fast_prop:.1f}%)<br>"
+                                 f"Slow: k={k2:.4f} s⁻¹, t½={slow_half:.2f}s ({slow_prop:.1f}%)")
+                
+            elif model_type == 'triple':
+                A1, k1, A2, k2, A3, k3, C = params
+                y_fit = triple_exp_model(t_fit, A1, k1, A2, k2, A3, k3, C)
+                residuals = intensity - triple_exp_model(time, A1, k1, A2, k2, A3, k3, C)
+                
+                # Panel 1: Data and fit
+                fig.add_trace(
+                    go.Scatter(x=time, y=intensity, mode='markers', name='Data',
+                              marker=dict(size=8, color='#3b82f6', line=dict(width=1, color='white'))),
+                    row=1, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=y_fit, mode='lines', name='Triple Exp Fit',
+                              line=dict(color='#ef4444', width=3)),
+                    row=1, col=1
+                )
+                
+                # Panel 3: Individual components
+                y1 = A1 * (1 - np.exp(-k1 * t_fit))
+                y2 = A2 * (1 - np.exp(-k2 * t_fit))
+                y3 = A3 * (1 - np.exp(-k3 * t_fit))
+                
+                # Sort components by rate for legend clarity
+                components = sorted([(k1, A1, y1, 'Component 1'), 
+                                   (k2, A2, y2, 'Component 2'),
+                                   (k3, A3, y3, 'Component 3')], 
+                                  reverse=True, key=lambda x: x[0])
+                
+                colors = ['#10b981', '#f59e0b', '#8b5cf6']
+                for i, (k, A, y, label) in enumerate(components):
+                    fig.add_trace(
+                        go.Scatter(x=t_fit, y=y + C, mode='lines', name=f'{label} (k={k:.4f})',
+                                  line=dict(color=colors[i], width=2, dash='dash')),
+                        row=3, col=1
+                    )
+                
+                fig.add_trace(
+                    go.Scatter(x=t_fit, y=[C]*len(t_fit), mode='lines', name='Baseline',
+                              line=dict(color='#6b7280', width=1, dash='dot')),
+                    row=3, col=1
+                )
+                
+                # Add annotation with parameters
+                total_amp = A1 + A2 + A3
+                mobile_frac = (1 - (total_amp + C)) * 100 if np.isfinite(total_amp + C) else np.nan
+                props = [(A / total_amp * 100) if total_amp > 0 else np.nan for A in [A1, A2, A3]]
+                halfs = [np.log(2) / k if k > 0 else np.nan for k in [k1, k2, k3]]
+                
+                annotation_text = (f"<b>Triple Exponential</b><br>"
+                                 f"R² = {r2:.4f}<br>"
+                                 f"Mobile Fraction = {mobile_frac:.1f}%<br>"
+                                 f"Comp1: k={k1:.4f}, t½={halfs[0]:.2f}s ({props[0]:.1f}%)<br>"
+                                 f"Comp2: k={k2:.4f}, t½={halfs[1]:.2f}s ({props[1]:.1f}%)<br>"
+                                 f"Comp3: k={k3:.4f}, t½={halfs[2]:.2f}s ({props[2]:.1f}%)")
+            
+            else:
+                logger.error(f"Unknown model type: {model_type}")
+                return None
+            
+            # Panel 2: Residuals
+            fig.add_trace(
+                go.Scatter(x=time, y=residuals, mode='markers', name='Residuals',
+                          marker=dict(size=6, color='#8b5cf6')),
+                row=2, col=1
+            )
+            fig.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray", row=2, col=1)
+            
+            # Add parameter annotation to top panel
+            fig.add_annotation(
+                x=0.02, y=0.98,
+                xref="x domain", yref="y domain",
+                text=annotation_text,
+                showarrow=False,
+                bgcolor="rgba(255, 255, 255, 0.9)",
+                bordercolor="gray",
+                borderwidth=1,
+                borderpad=8,
+                align="left",
+                font=dict(size=10),
+                row=1, col=1
+            )
+            
+            # Update layout
+            fig.update_xaxes(title_text="Time (s)", row=n_rows, col=1)
+            fig.update_yaxes(title_text="Normalized Intensity", row=1, col=1)
+            fig.update_yaxes(title_text="Residual", row=2, col=1)
+            
+            if n_rows == 3:
+                fig.update_yaxes(title_text="Component Intensity", row=3, col=1)
+            
+            fig.update_layout(
+                title=f"Comprehensive FRAP Analysis: {file_name}" if file_name else "Comprehensive FRAP Analysis",
+                height=height,
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="right",
+                    x=0.99,
+                    bgcolor="rgba(255, 255, 255, 0.8)"
+                ),
+                margin=dict(l=60, r=20, t=80, b=50)
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"Error creating comprehensive fit plot: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None

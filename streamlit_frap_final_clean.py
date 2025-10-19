@@ -1292,6 +1292,40 @@ with tab1:
                 - **Y-axis**: Starts at zero for proper scaling
                 """)
 
+                # Add comprehensive multi-panel plot option
+                st.markdown("---")
+                st.markdown("### 📊 Comprehensive Analysis View")
+                st.markdown("View recovery curve, residuals, and individual components in a single integrated plot")
+                
+                if st.button("🔍 Show Comprehensive Analysis Plot", key="comprehensive_plot_btn"):
+                    from frap_plots import FRAPPlots
+                    
+                    comprehensive_fig = FRAPPlots.plot_comprehensive_fit(
+                        time=t_fit,
+                        intensity=intensity_fit,
+                        fit_result=best_fit,
+                        file_name=file_data['name'],
+                        height=800
+                    )
+                    
+                    if comprehensive_fig:
+                        st.plotly_chart(comprehensive_fig, use_container_width=True)
+                        st.success("✅ Comprehensive analysis plot generated successfully!")
+                        
+                        st.markdown("""
+                        **Comprehensive Plot Features:**
+                        - **Top Panel**: Recovery curve with fitted model and parameter annotations
+                        - **Middle Panel**: Residuals plot showing fit quality (should be randomly scattered around zero)
+                        - **Bottom Panel**: Individual exponential components (for multi-component fits)
+                        
+                        This integrated view makes it easy to assess:
+                        - Overall fit quality
+                        - Presence of systematic errors in residuals
+                        - Contribution of each kinetic component
+                        """)
+                    else:
+                        st.error("Failed to generate comprehensive plot")
+
                 # Component-wise recovery analysis for multi-component fits
                 if best_fit['model'] in ['double', 'triple']:
                     st.markdown("### Component-wise Recovery Analysis")
@@ -1809,12 +1843,128 @@ with tab2:
                             st.error(f"Error generating report: {e}")
 
                 st.markdown("---")
-                st.markdown("### Step 5: Parameter Distribution Analysis")
-
-                # Parameter distribution visualization
+                st.markdown("### Step 5: Interactive Parameter Dashboard")
+                
+                # Interactive scatter plot linked to recovery curves
+                st.markdown("#### 🔍 Explore Data: Click Points to View Recovery Curves")
+                
                 numeric_cols = [col for col in filtered_df.select_dtypes(include=[np.number]).columns
                                if col not in ['file_path'] and not filtered_df[col].isna().all()]
+                
+                if numeric_cols and len(numeric_cols) >= 2:
+                    col_dash1, col_dash2 = st.columns([1, 1])
+                    
+                    with col_dash1:
+                        x_param = st.selectbox(
+                            "X-axis parameter:",
+                            numeric_cols,
+                            index=numeric_cols.index('mobile_fraction') if 'mobile_fraction' in numeric_cols else 0,
+                            key="dashboard_x"
+                        )
+                    
+                    with col_dash2:
+                        y_param = st.selectbox(
+                            "Y-axis parameter:",
+                            numeric_cols,
+                            index=numeric_cols.index('half_time_fast') if 'half_time_fast' in numeric_cols else (1 if len(numeric_cols) > 1 else 0),
+                            key="dashboard_y"
+                        )
+                    
+                    # Create scatter plot with file names for hover
+                    scatter_data = filtered_df.dropna(subset=[x_param, y_param]).copy()
+                    scatter_data['file_name'] = scatter_data['file_path'].apply(lambda x: dm.files[x]['name'] if x in dm.files else 'Unknown')
+                    scatter_data['point_index'] = range(len(scatter_data))
+                    
+                    if len(scatter_data) > 0:
+                        # Create interactive scatter plot
+                        fig_scatter = go.Figure()
+                        
+                        fig_scatter.add_trace(go.Scatter(
+                            x=scatter_data[x_param],
+                            y=scatter_data[y_param],
+                            mode='markers',
+                            marker=dict(
+                                size=10,
+                                color=scatter_data[y_param],
+                                colorscale='Viridis',
+                                showscale=True,
+                                line=dict(width=1, color='white')
+                            ),
+                            text=scatter_data['file_name'],
+                            customdata=scatter_data['file_path'],
+                            hovertemplate='<b>%{text}</b><br>' +
+                                        f'{x_param}: %{{x:.3f}}<br>' +
+                                        f'{y_param}: %{{y:.3f}}<br>' +
+                                        '<extra></extra>'
+                        ))
+                        
+                        fig_scatter.update_layout(
+                            title=f"Interactive Parameter Space: {x_param.replace('_', ' ').title()} vs {y_param.replace('_', ' ').title()}",
+                            xaxis_title=x_param.replace('_', ' ').title(),
+                            yaxis_title=y_param.replace('_', ' ').title(),
+                            height=500,
+                            hovermode='closest'
+                        )
+                        
+                        # Display scatter plot
+                        selected_points = st.plotly_chart(fig_scatter, use_container_width=True, key="scatter_dashboard", on_select="rerun")
+                        
+                        # Show recovery curves for selected points
+                        if selected_points and 'selection' in selected_points and 'points' in selected_points['selection']:
+                            selected_indices = selected_points['selection']['points']
+                            
+                            if len(selected_indices) > 0:
+                                st.markdown("##### 📈 Recovery Curves for Selected Points")
+                                
+                                # Create subplot for selected curves
+                                fig_selected = go.Figure()
+                                
+                                for idx_info in selected_indices[:10]:  # Limit to 10 curves
+                                    point_idx = idx_info.get('point_index', idx_info.get('pointIndex'))
+                                    if point_idx is not None and point_idx < len(scatter_data):
+                                        file_path = scatter_data.iloc[point_idx]['file_path']
+                                        
+                                        if file_path in dm.files:
+                                            file_data = dm.files[file_path]
+                                            file_name = file_data['name']
+                                            
+                                            time_data = file_data.get('time')
+                                            intensity_data = file_data.get('intensity')
+                                            
+                                            if time_data is not None and intensity_data is not None:
+                                                fig_selected.add_trace(go.Scatter(
+                                                    x=time_data,
+                                                    y=intensity_data,
+                                                    mode='lines+markers',
+                                                    name=file_name,
+                                                    marker=dict(size=4),
+                                                    line=dict(width=2),
+                                                    hovertemplate=f'<b>{file_name}</b><br>Time: %{{x:.2f}}s<br>Intensity: %{{y:.3f}}<extra></extra>'
+                                                ))
+                                
+                                fig_selected.update_layout(
+                                    title="Recovery Curves for Selected Points",
+                                    xaxis_title="Time (s)",
+                                    yaxis_title="Normalized Intensity",
+                                    height=400,
+                                    showlegend=True,
+                                    legend=dict(
+                                        orientation="v",
+                                        yanchor="middle",
+                                        y=0.5,
+                                        xanchor="left",
+                                        x=1.02
+                                    )
+                                )
+                                
+                                st.plotly_chart(fig_selected, use_container_width=True)
+                        else:
+                            st.info("💡 Click on points in the scatter plot above to view their recovery curves")
+                
+                st.markdown("---")
+                st.markdown("### Step 6: Parameter Distribution Analysis")
 
+                # Parameter distribution visualization
                 if numeric_cols:
                     selected_param = st.selectbox(
                         "Select parameter for distribution analysis:",
