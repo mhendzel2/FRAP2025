@@ -28,3 +28,5 @@ filterpy>=1.4.5
 pymc>=5.10.0
 pytest>=7.4.0
 pyarrow>=14.0.0
+emcee>=3.1.4  # MCMC sampler for Bayesian fitting
+corner>=2.2.2  # Corner plots for MCMC visualization

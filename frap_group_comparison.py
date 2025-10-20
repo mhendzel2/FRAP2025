@@ -494,7 +494,10 @@ def compute_average_recovery_profile(group_data: Dict[str, Dict],
 
 def compare_recovery_profiles(group1_data: Dict, group2_data: Dict,
                               group1_name: str = "Group 1", 
-                              group2_name: str = "Group 2") -> Dict:
+                              group2_name: str = "Group 2",
+                              use_advanced_fitting: bool = False,
+                              bleach_radius_um: float = 1.0,
+                              advanced_model: str = 'all') -> Dict:
     """
     Compare averaged recovery profiles between two groups.
     
@@ -511,6 +514,12 @@ def compare_recovery_profiles(group1_data: Dict, group2_data: Dict,
         Name of group 1
     group2_name : str
         Name of group 2
+    use_advanced_fitting : bool
+        If True, apply advanced curve fitting to mean profiles
+    bleach_radius_um : float
+        Bleach spot radius for advanced fitting
+    advanced_model : str
+        Which advanced model to use ('all', 'anomalous', etc.)
         
     Returns
     -------
@@ -566,5 +575,26 @@ def compare_recovery_profiles(group1_data: Dict, group2_data: Dict,
             'rmsd': rmsd
         }
     }
+    
+    # Add advanced fitting if requested
+    if use_advanced_fitting:
+        try:
+            from frap_advanced_fitting import compare_groups_advanced_fitting
+            
+            advanced_results = compare_groups_advanced_fitting(
+                t1, i1_mean, i1_sem,
+                t2, i2_mean, i2_sem,
+                group1_name, group2_name,
+                bleach_radius_um, advanced_model
+            )
+            
+            results['advanced_fitting'] = advanced_results
+            
+        except ImportError:
+            logger.warning("Advanced fitting module not available (lmfit not installed)")
+            results['advanced_fitting'] = {'success': False, 'error': 'lmfit not installed'}
+        except Exception as e:
+            logger.error(f"Advanced fitting failed: {e}")
+            results['advanced_fitting'] = {'success': False, 'error': str(e)}
     
     return results

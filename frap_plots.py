@@ -1471,3 +1471,208 @@ class FRAPPlots:
         )
         
         return fig
+
+    @staticmethod
+    def plot_advanced_group_comparison(comparison_results, height=600):
+        """
+        Plot advanced curve fitting comparison between groups.
+        
+        Parameters:
+        -----------
+        comparison_results : dict
+            Results from compare_recovery_profiles with advanced fitting
+        height : int
+            Height of the plot
+            
+        Returns:
+        --------
+        plotly.graph_objects.Figure
+            Plotly figure with data and fitted curves
+        """
+        try:
+            if 'advanced_fitting' not in comparison_results or not comparison_results['advanced_fitting']['success']:
+                logger.warning("No advanced fitting results available")
+                return None
+            
+            adv = comparison_results['advanced_fitting']
+            group1_name = adv['group1_name']
+            group2_name = adv['group2_name']
+            
+            # Get profile data
+            g1_prof = comparison_results['group1_profile']
+            g2_prof = comparison_results['group2_profile']
+            
+            # Get fitted curves
+            fit1 = adv['group1_fit']
+            fit2 = adv['group2_fit']
+            
+            fig = go.Figure()
+            
+            # Plot Group 1 data and fit
+            # Data with error bars
+            fig.add_trace(go.Scatter(
+                x=g1_prof['time'],
+                y=g1_prof['intensity_mean'],
+                error_y=dict(
+                    type='data',
+                    array=g1_prof['intensity_sem'],
+                    visible=True,
+                    color='rgba(31, 119, 180, 0.3)'
+                ),
+                mode='markers',
+                name=f'{group1_name} (data)',
+                marker=dict(size=6, color='#1f77b4'),
+                showlegend=True
+            ))
+            
+            # Fitted curve
+            if 'fitted_values' in fit1:
+                fig.add_trace(go.Scatter(
+                    x=g1_prof['time'],
+                    y=fit1['fitted_values'],
+                    mode='lines',
+                    name=f'{group1_name} (fit)',
+                    line=dict(color='#1f77b4', width=3),
+                    showlegend=True
+                ))
+            
+            # Plot Group 2 data and fit
+            # Data with error bars
+            fig.add_trace(go.Scatter(
+                x=g2_prof['time'],
+                y=g2_prof['intensity_mean'],
+                error_y=dict(
+                    type='data',
+                    array=g2_prof['intensity_sem'],
+                    visible=True,
+                    color='rgba(255, 127, 14, 0.3)'
+                ),
+                mode='markers',
+                name=f'{group2_name} (data)',
+                marker=dict(size=6, color='#ff7f0e'),
+                showlegend=True
+            ))
+            
+            # Fitted curve
+            if 'fitted_values' in fit2:
+                fig.add_trace(go.Scatter(
+                    x=g2_prof['time'],
+                    y=fit2['fitted_values'],
+                    mode='lines',
+                    name=f'{group2_name} (fit)',
+                    line=dict(color='#ff7f0e', width=3),
+                    showlegend=True
+                ))
+            
+            # Add vertical line at t=0
+            fig.add_vline(x=0, line_width=1, line_dash="dash", line_color="gray")
+            
+            # Create title with model info
+            model_name = adv['model_used'].replace('_', ' ').title()
+            r2_text = f"R²: {group1_name}={fit1.get('r2', 0):.3f}, {group2_name}={fit2.get('r2', 0):.3f}"
+            title_text = f"Advanced Fitting Comparison: {model_name}<br><sub>{r2_text}</sub>"
+            
+            fig.update_layout(
+                title=title_text,
+                xaxis_title="Time (s)",
+                yaxis_title="Normalized Intensity",
+                height=height,
+                template='plotly_white',
+                hovermode='closest',
+                legend=dict(
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    xanchor="right",
+                    x=1
+                )
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"Error plotting advanced group comparison: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    @staticmethod
+    def plot_parameter_comparison(comparison_results, height=500):
+        """
+        Create bar chart comparing fitted parameters between groups.
+        
+        Parameters:
+        -----------
+        comparison_results : dict
+            Results from compare_groups_advanced_fitting
+        height : int
+            Height of the plot
+            
+        Returns:
+        --------
+        plotly.graph_objects.Figure
+            Plotly figure with parameter comparison
+        """
+        try:
+            if 'advanced_fitting' not in comparison_results or not comparison_results['advanced_fitting']['success']:
+                return None
+            
+            adv = comparison_results['advanced_fitting']
+            param_comp = adv.get('metric_comparison', {})
+            
+            if not param_comp:
+                return None
+            
+            group1_name = adv['group1_name']
+            group2_name = adv['group2_name']
+            
+            # Prepare data for plotting
+            metrics = []
+            group1_vals = []
+            group2_vals = []
+            
+            for metric, data in param_comp.items():
+                if isinstance(data.get(group1_name), (int, float)):
+                    metrics.append(metric.replace('_', ' ').title())
+                    group1_vals.append(data[group1_name])
+                    group2_vals.append(data[group2_name])
+            
+            if not metrics:
+                return None
+            
+            fig = go.Figure()
+            
+            # Add bars for each group
+            fig.add_trace(go.Bar(
+                name=group1_name,
+                x=metrics,
+                y=group1_vals,
+                marker_color='#1f77b4',
+                text=[f'{v:.3f}' for v in group1_vals],
+                textposition='outside'
+            ))
+            
+            fig.add_trace(go.Bar(
+                name=group2_name,
+                x=metrics,
+                y=group2_vals,
+                marker_color='#ff7f0e',
+                text=[f'{v:.3f}' for v in group2_vals],
+                textposition='outside'
+            ))
+            
+            fig.update_layout(
+                title="Fitted Parameter Comparison",
+                xaxis_title="Parameter",
+                yaxis_title="Value",
+                height=height,
+                barmode='group',
+                template='plotly_white',
+                showlegend=True
+            )
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"Error plotting parameter comparison: {e}")
+            return None
