@@ -28,8 +28,8 @@ python --version
 echo.
 
 REM Check if we're in the correct directory
-if not exist "streamlit_singlecell.py" (
-    echo [ERROR] Cannot find streamlit_singlecell.py
+if not exist "streamlit_frap_final_clean.py" (
+    echo [ERROR] Cannot find streamlit_frap_final_clean.py
     echo.
     echo Please run this script from the FRAP2025 directory
     echo Current directory: %CD%
@@ -38,7 +38,7 @@ if not exist "streamlit_singlecell.py" (
 )
 
 echo [INFO] Checking required files...
-if exist "streamlit_singlecell.py" echo   [OK] streamlit_singlecell.py
+if exist "streamlit_frap_final_clean.py" echo   [OK] streamlit_frap_final_clean.py
 if exist "frap_singlecell_api.py" echo   [OK] frap_singlecell_api.py
 if exist "frap_data_model.py" echo   [OK] frap_data_model.py
 echo.
@@ -48,26 +48,15 @@ python -c "import streamlit" 2>nul
 if %errorlevel% neq 0 (
     echo [WARNING] Streamlit is not installed
     echo.
-    echo Would you like to install required dependencies now? (Y/N)
-    set /p install_deps="Enter choice: "
-    
-    if /i "%install_deps%"=="Y" (
-        echo.
-        echo [INFO] Installing dependencies from requirements.txt...
-        pip install -r requirements.txt
-        if %errorlevel% neq 0 (
-            echo [ERROR] Failed to install dependencies
-            pause
-            exit /b 1
-        )
-        echo [INFO] Dependencies installed successfully!
-        echo.
-    ) else (
-        echo [ERROR] Cannot launch without Streamlit installed
-        echo Please run: pip install -r requirements.txt
+    echo [INFO] Automatically installing required dependencies from requirements.txt...
+    pip install -r requirements.txt
+    if %errorlevel% neq 0 (
+        echo [ERROR] Failed to install dependencies
         pause
         exit /b 1
     )
+    echo [INFO] Dependencies installed successfully!
+    echo.
 )
 
 REM Create output directory if it doesn't exist
@@ -87,7 +76,7 @@ echo ===========================================================================
 echo.
 
 REM Launch Streamlit with optimal settings
-streamlit run streamlit_singlecell.py ^
+streamlit run streamlit_frap_final_clean.py ^
     --server.port=8501 ^
     --server.address=localhost ^
     --browser.gatherUsageStats=false ^
@@ -101,7 +90,7 @@ if %errorlevel% neq 0 (
     echo Troubleshooting:
     echo 1. Make sure all dependencies are installed: pip install -r requirements.txt
     echo 2. Check that no other application is using port 8501
-    echo 3. Try running: python -m streamlit run streamlit_singlecell.py
+    echo 3. Try running: python -m streamlit run streamlit_frap_final_clean.py
     echo.
     pause
     exit /b 1
