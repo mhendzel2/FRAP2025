@@ -2270,7 +2270,279 @@ with tab2:
                             st.warning("No valid data for selected parameter")
 
                 st.markdown("---")
-                st.markdown("### Step 6: Global Simultaneous Fitting")
+                st.markdown("### Step 6.5: Advanced Population Analysis")
+                st.markdown("**Post-fitting analysis to identify cell populations and biologically meaningful outliers**")
+                
+                with st.expander("🔬 Post-Fitting Population Discovery", expanded=False):
+                    st.markdown("""
+                    **Why post-fitting analysis?**
+                    
+                    Traditional outlier removal before fitting can mask biologically important information:
+                    - **Cell cycle differences** (G1/S/G2 phases may have different kinetics)
+                    - **Differentiation states** (partially differentiated cells)
+                    - **Microenvironmental effects** (edge vs. center cells)
+                    - **Technical outliers** that only become apparent after fitting
+                    
+                    **Analysis Methods:**
+                    1. **Clustering Analysis**: Identify distinct kinetic populations
+                    2. **Outlier Detection**: Find cells with unusual parameter combinations
+                    3. **Population Characterization**: Determine what makes each population unique
+                    4. **Biological Interpretation**: Suggest potential biological causes
+                    """)
+                    
+                    if filtered_df is not None and len(filtered_df) >= 10:  # Need enough cells for meaningful clustering
+                        try:
+                            # Population analysis using fitted parameters
+                            st.markdown("#### 🎯 Population Clustering Analysis")
+                            
+                            # Select parameters for clustering
+                            cluster_params = st.multiselect(
+                                "Select parameters for population analysis:",
+                                options=[col for col in filtered_df.select_dtypes(include=[np.number]).columns 
+                                        if col not in ['file_path'] and not filtered_df[col].isna().all()],
+                                default=['mobile_fraction', 'half_time_fast', 'half_time_slow'] if all(col in filtered_df.columns for col in ['mobile_fraction', 'half_time_fast', 'half_time_slow']) else [],
+                                help="Choose kinetic parameters to identify cell populations"
+                            )
+                            
+                            if len(cluster_params) >= 2:
+                                # Clustering analysis
+                                from sklearn.cluster import KMeans
+                                from sklearn.preprocessing import StandardScaler
+                                from sklearn.metrics import silhouette_score
+                                import numpy as np
+                                
+                                # Prepare data for clustering
+                                cluster_data = filtered_df[cluster_params].dropna()
+                                
+                                if len(cluster_data) >= 6:  # Minimum for clustering
+                                    scaler = StandardScaler()
+                                    scaled_data = scaler.fit_transform(cluster_data)
+                                    
+                                    # Determine optimal number of clusters
+                                    max_clusters = min(6, len(cluster_data) // 3)  # Reasonable max
+                                    silhouette_scores = []
+                                    inertias = []
+                                    
+                                    for k in range(2, max_clusters + 1):
+                                        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                                        cluster_labels = kmeans.fit_predict(scaled_data)
+                                        sil_score = silhouette_score(scaled_data, cluster_labels)
+                                        silhouette_scores.append(sil_score)
+                                        inertias.append(kmeans.inertia_)
+                                    
+                                    # Find optimal k (highest silhouette score)
+                                    optimal_k = int(np.argmax(silhouette_scores)) + 2
+                                    
+                                    col_cluster1, col_cluster2 = st.columns(2)
+                                    
+                                    with col_cluster1:
+                                        n_clusters = st.selectbox(
+                                            "Number of populations:",
+                                            range(2, max_clusters + 1),
+                                            index=optimal_k - 2,
+                                            help=f"Optimal: {optimal_k} clusters (highest silhouette score: {max(silhouette_scores):.3f})"
+                                        )
+                                    
+                                    with col_cluster2:
+                                        outlier_method = st.selectbox(
+                                            "Outlier detection method:",
+                                            ["Isolation Forest", "Local Outlier Factor", "Mahalanobis Distance"],
+                                            help="Method to identify cells with unusual parameter combinations"
+                                        )
+                                    
+                                    if st.button("Analyze Cell Populations", type="primary"):
+                                        with st.spinner("Analyzing cell populations..."):
+                                            # Perform clustering
+                                            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                                            cluster_labels = kmeans.fit_predict(scaled_data)
+                                            
+                                            # Outlier detection
+                                            if outlier_method == "Isolation Forest":
+                                                from sklearn.ensemble import IsolationForest
+                                                outlier_detector = IsolationForest(contamination=0.1, random_state=42)
+                                                outlier_labels = outlier_detector.fit_predict(scaled_data)
+                                            elif outlier_method == "Local Outlier Factor":
+                                                from sklearn.neighbors import LocalOutlierFactor
+                                                outlier_detector = LocalOutlierFactor(contamination=0.1)
+                                                outlier_labels = outlier_detector.fit_predict(scaled_data)
+                                            else:  # Mahalanobis Distance
+                                                from scipy.spatial.distance import mahalanobis
+                                                mean = np.mean(scaled_data, axis=0)
+                                                cov = np.cov(scaled_data.T)
+                                                inv_cov = np.linalg.pinv(cov)
+                                                
+                                                mahal_distances = []
+                                                for row in scaled_data:
+                                                    mahal_dist = mahalanobis(row, mean, inv_cov)
+                                                    mahal_distances.append(mahal_dist)
+                                                
+                                                # Threshold at 95th percentile
+                                                threshold = np.percentile(mahal_distances, 90)
+                                                outlier_labels = np.where(np.array(mahal_distances) > threshold, -1, 1)
+                                            
+                                            # Add results to dataframe
+                                            results_df = cluster_data.copy()
+                                            results_df['Population'] = cluster_labels
+                                            results_df['Is_Outlier'] = (outlier_labels == -1)
+                                            results_df['File_Name'] = [dm.files[fp]['name'] for fp in results_df.index]
+                                            
+                                            # Population summary
+                                            st.markdown("#### 📊 Population Summary")
+                                            
+                                            pop_summary = []
+                                            for pop in range(n_clusters):
+                                                pop_data = results_df[results_df['Population'] == pop]
+                                                pop_outliers = pop_data['Is_Outlier'].sum()
+                                                
+                                                summary = {
+                                                    'Population': f"Pop {pop + 1}",
+                                                    'Size': len(pop_data),
+                                                    'Percentage': f"{len(pop_data)/len(results_df)*100:.1f}%",
+                                                    'Outliers': pop_outliers,
+                                                    'Outlier_Rate': f"{pop_outliers/len(pop_data)*100:.1f}%" if len(pop_data) > 0 else "0%"
+                                                }
+                                                
+                                                # Add mean parameter values
+                                                for param in cluster_params:
+                                                    summary[f'{param}_mean'] = pop_data[param].mean()
+                                                
+                                                pop_summary.append(summary)
+                                            
+                                            summary_df = pd.DataFrame(pop_summary)
+                                            st.dataframe(summary_df, use_container_width=True)
+                                            
+                                            # Visualization
+                                            st.markdown("#### 📈 Population Visualization")
+                                            
+                                            if len(cluster_params) >= 2:
+                                                # 2D scatter plot
+                                                fig_pop = go.Figure()
+                                                
+                                                colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown']
+                                                
+                                                for pop in range(n_clusters):
+                                                    pop_data = results_df[results_df['Population'] == pop]
+                                                    
+                                                    # Normal cells
+                                                    normal_cells = pop_data[~pop_data['Is_Outlier']]
+                                                    if len(normal_cells) > 0:
+                                                        fig_pop.add_trace(go.Scatter(
+                                                            x=normal_cells[cluster_params[0]],
+                                                            y=normal_cells[cluster_params[1]],
+                                                            mode='markers',
+                                                            name=f'Population {pop + 1}',
+                                                            marker=dict(color=colors[pop % len(colors)], size=8),
+                                                            text=normal_cells['File_Name'],
+                                                            hovertemplate=f'<b>Population {pop + 1}</b><br>' +
+                                                                        f'{cluster_params[0]}: %{{x:.3f}}<br>' +
+                                                                        f'{cluster_params[1]}: %{{y:.3f}}<br>' +
+                                                                        'File: %{text}<extra></extra>'
+                                                        ))
+                                                    
+                                                    # Outlier cells
+                                                    outlier_cells = pop_data[pop_data['Is_Outlier']]
+                                                    if len(outlier_cells) > 0:
+                                                        fig_pop.add_trace(go.Scatter(
+                                                            x=outlier_cells[cluster_params[0]],
+                                                            y=outlier_cells[cluster_params[1]],
+                                                            mode='markers',
+                                                            name=f'Pop {pop + 1} Outliers',
+                                                            marker=dict(color=colors[pop % len(colors)], size=12, 
+                                                                      symbol='x', line=dict(width=2, color='black')),
+                                                            text=outlier_cells['File_Name'],
+                                                            hovertemplate=f'<b>Population {pop + 1} - OUTLIER</b><br>' +
+                                                                        f'{cluster_params[0]}: %{{x:.3f}}<br>' +
+                                                                        f'{cluster_params[1]}: %{{y:.3f}}<br>' +
+                                                                        'File: %{text}<extra></extra>'
+                                                        ))
+                                                
+                                                fig_pop.update_layout(
+                                                    title=f'Cell Populations in {selected_group_name}',
+                                                    xaxis_title=cluster_params[0].replace('_', ' ').title(),
+                                                    yaxis_title=cluster_params[1].replace('_', ' ').title(),
+                                                    height=600,
+                                                    hovermode='closest'
+                                                )
+                                                
+                                                st.plotly_chart(fig_pop, use_container_width=True)
+                                            
+                                            # Biological interpretation
+                                            st.markdown("#### 🧬 Biological Interpretation")
+                                            
+                                            interpretation_lines = []
+                                            interpretation_lines.append(f"**Population analysis of {selected_group_name} identified {n_clusters} distinct cell populations:**\n")
+                                            
+                                            for pop in range(n_clusters):
+                                                pop_data = results_df[results_df['Population'] == pop]
+                                                interpretation_lines.append(f"**Population {pop + 1}** ({len(pop_data)} cells, {len(pop_data)/len(results_df)*100:.1f}%):")
+                                                
+                                                for param in cluster_params:
+                                                    mean_val = pop_data[param].mean()
+                                                    overall_mean = results_df[param].mean()
+                                                    fold_change = mean_val / overall_mean
+                                                    
+                                                    if fold_change > 1.2:
+                                                        interpretation_lines.append(f"- Higher {param.replace('_', ' ')} ({mean_val:.3f} vs {overall_mean:.3f})")
+                                                    elif fold_change < 0.8:
+                                                        interpretation_lines.append(f"- Lower {param.replace('_', ' ')} ({mean_val:.3f} vs {overall_mean:.3f})")
+                                                
+                                                outlier_count = pop_data['Is_Outlier'].sum()
+                                                if outlier_count > 0:
+                                                    interpretation_lines.append(f"- Contains {outlier_count} outlier(s)")
+                                                
+                                                interpretation_lines.append("")
+                                            
+                                            # Suggest biological causes
+                                            interpretation_lines.append("**Potential biological explanations:**")
+                                            interpretation_lines.append("- **Population differences** may reflect:")
+                                            interpretation_lines.append("  - Cell cycle phase (G1/S/G2 have different chromatin dynamics)")
+                                            interpretation_lines.append("  - Differentiation state (stem vs. committed cells)")
+                                            interpretation_lines.append("  - Position in tissue (edge vs. center effects)")
+                                            interpretation_lines.append("  - Metabolic state (active vs. quiescent)")
+                                            interpretation_lines.append("- **Outlier cells** may indicate:")
+                                            interpretation_lines.append("  - Mitotic cells (condensed chromatin)")
+                                            interpretation_lines.append("  - Apoptotic cells (fragmented chromatin)")
+                                            interpretation_lines.append("  - Technical artifacts (poor bleaching, drift)")
+                                            interpretation_lines.append("  - Rare cell types or states")
+                                            
+                                            st.markdown("\n".join(interpretation_lines))
+                                            
+                                            # Export results
+                                            st.markdown("#### 💾 Export Population Analysis")
+                                            
+                                            # Prepare export data
+                                            export_df = results_df.copy()
+                                            export_df['Group'] = selected_group_name
+                                            export_df = export_df[['Group', 'File_Name', 'Population', 'Is_Outlier'] + cluster_params]
+                                            
+                                            st.download_button(
+                                                label="📊 Download Population Analysis Results",
+                                                data=export_df.to_csv(index=False),
+                                                file_name=f"population_analysis_{selected_group_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                                mime="text/csv",
+                                                help="Download detailed population analysis with cluster assignments and outlier flags"
+                                            )
+                                            
+                                            st.success(f"✓ Population analysis complete! Found {n_clusters} populations and {(outlier_labels == -1).sum()} outliers.")
+                                
+                                else:
+                                    st.warning("Need at least 6 cells for meaningful population analysis.")
+                            else:
+                                st.info("Select at least 2 parameters to perform population clustering.")
+                        
+                        except ImportError:
+                            st.error("Population analysis requires scikit-learn. Install with: `pip install scikit-learn`")
+                        except Exception as e:
+                            st.error(f"Error in population analysis: {e}")
+                            import traceback
+                            with st.expander("🔍 Error Details"):
+                                st.code(traceback.format_exc())
+                    
+                    else:
+                        st.info("Population analysis requires at least 10 cells. Current group has fewer cells.")
+
+                st.markdown("---")
+                st.markdown("### Step 7: Global Simultaneous Fitting")
                 st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
 
                 with st.expander("🌐 Global Simultaneous Fit", expanded=False):
@@ -2473,7 +2745,7 @@ with tab2:
                                 st.error(f"Error during global fitting: {e}")
 
                 st.markdown("---")
-                st.markdown("### Step 7: Group Recovery Plots")
+                st.markdown("### Step 8: Group Recovery Plots")
                 plot_data={path:dm.files[path] for path in filtered_df['file_path'].tolist()}
                 st.markdown("##### Average Recovery Curve")
                 avg_fig = plot_average_curve(plot_data)
@@ -2481,7 +2753,7 @@ with tab2:
                 
                 # Step 8: Time-Aligned Curves
                 st.markdown("---")
-                st.markdown("### Step 8: Visualize Aligned Group Curves")
+                st.markdown("### Step 9: Visualize Aligned Group Curves")
                 st.markdown("""
                 This plot shows all included curves from the group, **aligned to the bleach point (t=0)** 
                 and **interpolated onto a common time axis** to correct for different sampling rates between experiments.
