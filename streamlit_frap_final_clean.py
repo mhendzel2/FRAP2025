@@ -19,6 +19,8 @@ import logging
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_reference_database import display_reference_database_ui
+from frap_reference_integration import display_reference_comparison_widget
 import zipfile
 import tempfile
 import shutil
@@ -1103,7 +1105,7 @@ with st.sidebar:
                     st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
                     st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
 
 with tab1:
     st.header("Single File Analysis")
@@ -1739,6 +1741,20 @@ with tab1:
                         st.write(f"- R²: {fit.get('r2', 'N/A')}")
                         st.write(f"- AIC: {fit.get('aic', 'N/A')}")
                         st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+        
+        # Add reference database comparison for single file analysis when results are available
+        if selected_file_path and selected_file_path in dm.files:
+            file_features = dm.files[selected_file_path].get('features', {})
+            if file_features and file_features.get('mobile_fraction') is not None:
+                # Get diffusion coefficient from kinetic interpretation
+                kinetic_interp = dm.files[selected_file_path].get('kinetic_interpretation', {})
+                if kinetic_interp and kinetic_interp.get('diffusion_coefficient', 0) > 0:
+                    display_reference_comparison_widget(
+                        experimental_deff=kinetic_interp.get('diffusion_coefficient'),
+                        experimental_mf=file_features.get('mobile_fraction', 0),
+                        protein_name=selected_file_path.replace('.csv', '').replace('_', ' ') if selected_file_path else None,
+                        key_suffix=f"_single_{selected_file_path}"
+                    )
     else:
         st.info("Upload files using the sidebar to begin.")
 
@@ -1801,6 +1817,17 @@ with tab2:
                 col1,col2=st.columns(2)
                 col1.metric("Average Mobile Fraction",f"{mean_vals.get('mobile_fraction',0):.2f}%")
                 col2.metric("Average Immobile Fraction",f"{mean_vals.get('immobile_fraction',0):.2f}%")
+                
+                # Add reference database comparison for group analysis
+                if mean_vals.get('mobile_fraction') and filtered_df['diffusion_coefficient'].mean() > 0:
+                    avg_deff = filtered_df['diffusion_coefficient'].mean()
+                    avg_mf = mean_vals.get('mobile_fraction', 0)
+                    display_reference_comparison_widget(
+                        experimental_deff=avg_deff,
+                        experimental_mf=avg_mf,
+                        protein_name=selected_group_name if selected_group_name else None,
+                        key_suffix=f"_group_{selected_group_name}"
+                    )
 
                 st.markdown("#### Kinetic Parameters: Dual Interpretation Analysis")
                 st.markdown("Each kinetic rate can represent either diffusion or binding processes:")
@@ -4056,3 +4083,6 @@ if st.checkbox("I understand that this will DELETE all loaded data and groups.")
         st.session_state.selected_group_name = None
         st.success("All data cleared successfully.")
         st.rerun()
+
+with tab7:
+    display_reference_database_ui()
