@@ -153,6 +153,108 @@ except ImportError:
 
 class FRAPAnalysisCore:
     @staticmethod
+    def parse_fov_id(filename: str):
+        """
+        Parse the Field of View (FOV) ID from a filename.
+        Looks for patterns like 'fov1', 'fld2', 'FOV_3', etc.
+        
+        Parameters:
+        -----------
+        filename : str
+            The filename to parse
+            
+        Returns:
+        --------
+        int or None
+            The FOV ID number if found, None otherwise
+        """
+        import re
+        # Case-insensitive search for fov, fld, field, or view followed by a number
+        match = re.search(r'(?i)(?:fov|fld|field|view)[_-]?(\d+)', filename)
+        if match:
+            return int(match.group(1))
+        return None
+    
+    @staticmethod
+    def perform_quality_control(raw_df, processed_df, best_fit, features):
+        """
+        Perform a series of quality control checks.
+        
+        Parameters:
+        -----------
+        raw_df : pd.DataFrame
+            Raw data dataframe
+        processed_df : pd.DataFrame
+            Processed data dataframe
+        best_fit : dict
+            Best fit model dictionary
+        features : dict
+            Extracted features dictionary
+            
+        Returns:
+        --------
+        dict
+            Dictionary with QC results
+        """
+        qc_results = {}
+        
+        # 1. Pre-fit QC
+        prefit_pass = True
+        prefit_reasons = []
+        if len(raw_df) < 10:
+            prefit_pass = False
+            prefit_reasons.append("Insufficient data points (<10)")
+        
+        # Check for NaN values in intensity columns
+        intensity_cols = [c for c in raw_df.columns if 'roi' in c.lower() or 'intensity' in c.lower()]
+        if intensity_cols and raw_df[intensity_cols].isnull().values.any():
+            prefit_pass = False
+            prefit_reasons.append("NaN values in raw data")
+        
+        qc_results['qc_prefit_pass'] = prefit_pass
+        qc_results['qc_prefit_reason'] = ", ".join(prefit_reasons) if prefit_reasons else "OK"
+        
+        # 2. Fit QC
+        fit_pass = True
+        fit_reasons = []
+        if not best_fit:
+            fit_pass = False
+            fit_reasons.append("No best fit found")
+        else:
+            if best_fit.get('r2', 0) < 0.8:
+                fit_pass = False
+                fit_reasons.append(f"Low R-squared ({best_fit.get('r2', 0):.2f})")
+            # Check for extreme parameter values if CIs are available
+            if 'ci' in best_fit:
+                for param, (low, high) in best_fit['ci'].items():
+                    if np.isinf(low) or np.isinf(high):
+                        fit_pass = False
+                        fit_reasons.append(f"Unbounded CI for {param}")
+        
+        qc_results['qc_fit_pass'] = fit_pass
+        qc_results['qc_fit_reason'] = ", ".join(fit_reasons) if fit_reasons else "OK"
+        
+        # 3. Feature QC
+        feat_pass = True
+        feat_reasons = []
+        if not features:
+            feat_pass = False
+            feat_reasons.append("No features extracted")
+        else:
+            mobile_fraction = features.get('mobile_fraction', 0)
+            if mobile_fraction > 110:
+                feat_pass = False
+                feat_reasons.append("Mobile fraction > 110%")
+            if mobile_fraction < 0:
+                feat_pass = False
+                feat_reasons.append("Mobile fraction < 0%")
+        
+        qc_results['qc_feat_pass'] = feat_pass
+        qc_results['qc_feat_reason'] = ", ".join(feat_reasons) if feat_reasons else "OK"
+        
+        return qc_results
+    
+    @staticmethod
     def get_post_bleach_data(time, intensity):
         """
         Return post-bleach trace with recovery curve extrapolation back to bleach point.
@@ -608,6 +710,36 @@ class FRAPAnalysisCore:
         return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + A3 * (1 - np.exp(-k3 * t)) + C
 
     @staticmethod
+    def anomalous_diffusion(t, A, tau, beta, C):
+        """
+        Anomalous diffusion model (stretched exponential)
+        I(t) = A * (1 - exp(-(t/τ)^β)) + C
+        
+        Parameters:
+        -----------
+        t : numpy.ndarray
+            Time points
+        A : float
+            Amplitude
+        tau : float
+            Characteristic time
+        beta : float
+            Anomalous diffusion exponent (0 < beta <= 1)
+            beta < 1: subdiffusive
+            beta = 1: normal diffusion
+        C : float
+            Offset
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Model values at each time point
+        """
+        # Ensure t is non-negative for the power law
+        t_safe = np.maximum(t, 0)
+        return A * (1 - np.exp(-(t_safe / tau)**beta)) + C
+
+    @staticmethod
     def compute_r_squared(y, y_fit):
         """
         Calculate R-squared value
@@ -707,6 +839,76 @@ class FRAPAnalysisCore:
         return n * np.log(rss / n) + n_params * np.log(n)
 
     @staticmethod
+    def compute_aicc(rss, n, n_params):
+        """
+        Calculate corrected Akaike Information Criterion (AICc)
+        
+        AICc corrects AIC for small sample sizes. Recommended for n/k < 40.
+        
+        Parameters:
+        -----------
+        rss : float
+            Residual sum of squares
+        n : int
+            Number of data points
+        n_params : int
+            Number of parameters in the model
+            
+        Returns:
+        --------
+        float
+            AICc value
+        """
+        if n <= n_params + 1:
+            return np.inf  # Not enough data points for AICc
+        
+        aic = FRAPAnalysisCore.compute_aic(rss, n, n_params)
+        
+        # Correction term
+        correction = (2 * n_params * (n_params + 1)) / (n - n_params - 1)
+        
+        return aic + correction
+
+    @staticmethod
+    def compute_confidence_intervals(popt, pcov, n, n_params, alpha=0.05):
+        """
+        Calculate confidence intervals for fitted parameters using t-distribution.
+        
+        Parameters:
+        -----------
+        popt : array
+            Optimal parameters from curve_fit.
+        pcov : 2D array
+            Covariance matrix from curve_fit.
+        n : int
+            Number of data points.
+        n_params : int
+            Number of parameters.
+        alpha : float
+            Significance level (e.g., 0.05 for 95% CI).
+        
+        Returns:
+        --------
+        dict
+            Dictionary with parameter names and their (low, high) confidence bounds.
+        """
+        from scipy.stats import t
+        
+        perr = np.sqrt(np.diag(pcov))
+        dof = n - n_params
+        if dof <= 0:
+            return {f'param_{i}': (np.nan, np.nan) for i in range(len(popt))}
+        
+        t_val = t.ppf(1.0 - alpha / 2.0, dof)
+        ci = {}
+        for i, (param, std_err) in enumerate(zip(popt, perr)):
+            lower = param - t_val * std_err
+            upper = param + t_val * std_err
+            ci[f'param_{i}'] = (lower, upper)
+        
+        return ci
+
+    @staticmethod
     def compute_reduced_chi_squared(y, y_fit, n_params, error_variance=1):
         """
         Calculate reduced chi-squared statistic
@@ -803,17 +1005,19 @@ class FRAPAnalysisCore:
             try:
                 p0 = [A0, k0, C0]
                 bounds = ([0, 1e-6, -np.inf], [np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
+                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
                 fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
-                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0))
+                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Single-component fit failed: {e}")
                 
@@ -825,17 +1029,19 @@ class FRAPAnalysisCore:
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
+                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
                 fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_double))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_double))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_double))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_double))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_double))
-                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_double))
+                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Two-component fit failed: {e}")
                 
@@ -849,19 +1055,51 @@ class FRAPAnalysisCore:
                 k3_0 = k0 / 3
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
                 bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
+                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
                 fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
                 adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_triple))
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_triple))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_triple))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_triple))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_triple))
-                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt,
-                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
-                             'red_chi2': red_chi2, 'fitted_values': fitted})
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_triple))
+                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Three-component fit failed: {e}")
+            
+            # Anomalous Diffusion Fit
+            try:
+                # Initial guesses: A0, tau0, beta0, C0
+                tau0 = time_span / 2
+                beta0 = 0.8  # Start with a subdiffusive guess
+                p0_anomalous = [A0, tau0, beta0, C0]
+                bounds_anomalous = ([0, 1e-6, 1e-3, -np.inf], [np.inf, np.inf, 1.0, np.inf])  # beta <= 1
+                
+                popt, pcov = curve_fit(FRAPAnalysisCore.anomalous_diffusion, t_fit, intensity_fit, p0=p0_anomalous, bounds=bounds_anomalous)
+                fitted = FRAPAnalysisCore.anomalous_diffusion(t_fit, *popt)
+                rss = np.sum((intensity_fit - fitted)**2)
+                r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+                adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_anomalous))
+                aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_anomalous))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_anomalous))
+                bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_anomalous))
+                red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_anomalous))
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_anomalous))
+                
+                # Label model based on beta value
+                model_name = 'anomalous_diffusion'
+                if popt[2] < 1.0:  # beta < 1
+                    model_name = 'anomalous_diffusion_subdiffusive'
+                
+                fits.append({'model': model_name, 'func': FRAPAnalysisCore.anomalous_diffusion, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
+            except Exception as e:
+                logging.error(f"Anomalous diffusion fit failed: {e}")
                 
             return fits
             
@@ -870,16 +1108,17 @@ class FRAPAnalysisCore:
             return []
 
     @staticmethod
-    def select_best_fit(fits, criterion='aic'):
+    def select_best_fit(fits, criterion='aicc'):
         """
-        Select the best fit model based on the specified criterion
+        Select the best fit model and compute delta AIC/BIC values.
         
         Parameters:
         -----------
         fits : list
-            List of dictionaries containing model fitting results
+            List of dictionaries containing model fitting results. This list is modified in place.
         criterion : str
-            Criterion for model selection ('aic', 'bic', 'adj_r2', 'r2', or 'red_chi2')
+            Criterion for model selection ('aicc', 'aic', 'bic', 'adj_r2')
+            Default is 'aicc' which is recommended for small sample sizes.
             
         Returns:
         --------
@@ -888,19 +1127,30 @@ class FRAPAnalysisCore:
         """
         if not fits:
             return None
-            
-        if criterion == 'aic':
-            best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
+        
+        # Select best model
+        if criterion == 'aicc':
+            best = min(fits, key=lambda f: f.get('aicc', np.inf))
+        elif criterion == 'aic':
+            best = min(fits, key=lambda f: f.get('aic', np.inf))
         elif criterion == 'bic':
-            best = min(fits, key=lambda f: f['bic'] if not np.isnan(f['bic']) else np.inf)
+            best = min(fits, key=lambda f: f.get('bic', np.inf))
         elif criterion == 'adj_r2':
-            best = max(fits, key=lambda f: f['adj_r2'] if not np.isnan(f['adj_r2']) else -np.inf)
+            best = max(fits, key=lambda f: f.get('adj_r2', -np.inf))
         elif criterion == 'r2':
-            best = max(fits, key=lambda f: f['r2'] if not np.isnan(f['r2']) else -np.inf)
+            best = max(fits, key=lambda f: f.get('r2', -np.inf))
         elif criterion == 'red_chi2':
-            best = min(fits, key=lambda f: f['red_chi2'] if not np.isnan(f['red_chi2']) else np.inf)
+            best = min(fits, key=lambda f: f.get('red_chi2', np.inf))
         else:
-            best = min(fits, key=lambda f: f['aic'] if not np.isnan(f['aic']) else np.inf)
+            best = min(fits, key=lambda f: f.get('aicc', np.inf))  # Default to aicc
+        
+        # Calculate delta values for all fits
+        best_aicc = best.get('aicc', np.inf)
+        best_bic = best.get('bic', np.inf)
+        
+        for fit in fits:
+            fit['delta_aicc'] = fit.get('aicc', np.inf) - best_aicc
+            fit['delta_bic'] = fit.get('bic', np.inf) - best_bic
             
         return best
 
