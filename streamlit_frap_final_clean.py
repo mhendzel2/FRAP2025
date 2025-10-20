@@ -2547,33 +2547,38 @@ with tab2:
     # Add holistic group comparison section
     if len(dm.groups) >= 2:
         st.markdown("---")
-        st.markdown("## 🔬 Holistic Group Comparison")
+        st.markdown("## 🔬 Multi-Group Comparison")
         st.markdown("""
-        **Compare groups accounting for population distributions and weighted kinetics.**
+        **Compare recovery dynamics across experimental conditions using mean recovery curves.**
         
-        This analysis goes beyond comparing individual components by:
-        - **Averaging recovery profiles** directly (model-independent)
-        - **Analyzing population distributions** (% in diffusion/binding/intermediate regimes)
-        - **Computing weighted kinetics** (accounting for component abundance)
-        - **Providing biological interpretation** (e.g., "lost binding capability")
+        This approach provides robust, mechanistic insights by analyzing **averaged recovery profiles** 
+        that minimize noise from individual cell variability while revealing biological differences.
+        
+        💡 **Recommended Workflow:**
+        - Start here for **comparing treatment conditions** using mean recovery curve analysis
+        - Use **Individual Group Analysis (Tab 1)** for in-depth, cell-level analysis of specific conditions
         """)
 
-        with st.expander("📖 Why Holistic Comparison?", expanded=False):
+        with st.expander("📖 Why Focus on Mean Recovery Curves?", expanded=False):
             st.markdown("""
-            **Traditional component-wise comparison can be misleading:**
+            **Mean recovery curve analysis offers several advantages:**
             
-            ❌ "Group 2 has faster kinetics" → Misses that it lost binding entirely
+            ✅ **Higher signal-to-noise ratio** - Averaging reduces measurement noise
+            ✅ **Sophisticated biophysical models** - Can fit complex models (anomalous diffusion, reaction-diffusion)
+            ✅ **Population-level insights** - Reveals treatment effects on overall recovery dynamics
+            ✅ **Robust comparisons** - Less sensitive to outliers and individual cell variability
             
-            ✅ "Group 2 lost binding population, shifted to pure diffusion" → Reveals biological mechanism
+            **Individual cell fitting limitations:**
+            - Lower SNR limits model complexity (typically only simple exponential models)
+            - High variability requires larger sample sizes
+            - Best suited for detailed exploration within a single condition
             
-            **Example:**
-            - **WT:** 60% binding (slow), 40% diffusion (fast)
-            - **Mutant:** 18% binding, 82% diffusion
-            
-            The mutant didn't "get faster" - it lost the ability to bind chromatin!
+            **Example Use Cases:**
+            - **Mean Curves:** "Does Drug X slow recovery compared to control?"
+            - **Individual Cells:** "What is the distribution of recovery rates in the Drug X group?"
             """)
 
-        # Import holistic comparison module
+        # Import required modules
         try:
             from frap_group_comparison import (
                 HolisticGroupComparator,
@@ -2586,28 +2591,12 @@ with tab2:
             
             available_groups = list(dm.groups.keys())
             
-            col_select1, col_select2 = st.columns(2)
-            
-            with col_select1:
-                selected_groups_holistic = st.multiselect(
-                    "Choose groups (select 2 for pairwise comparison):",
-                    options=available_groups,
-                    default=available_groups[:2] if len(available_groups) >= 2 else available_groups,
-                    help="Select multiple groups to compare their population distributions and kinetics"
-                )
-            
-            with col_select2:
-                st.markdown("**Comparison Options:**")
-                show_profile_comparison = st.checkbox(
-                    "Show averaged recovery profiles",
-                    value=True,
-                    help="Compare directly averaged curves (model-independent)"
-                )
-                show_interpretation = st.checkbox(
-                    "Show biological interpretation",
-                    value=True,
-                    help="Generate narrative interpretation of differences"
-                )
+            selected_groups_holistic = st.multiselect(
+                "Choose experimental groups:",
+                options=available_groups,
+                default=available_groups[:2] if len(available_groups) >= 2 else available_groups,
+                help="Select 2+ groups to compare their mean recovery curves"
+            )
 
             if len(selected_groups_holistic) >= 2:
                 st.markdown("---")
@@ -2635,6 +2624,294 @@ with tab2:
                         fp: dm.files[fp] for fp in group_files if fp in dm.files
                     }
 
+                # ============================================================================
+                # SECTION 1: MEAN RECOVERY CURVE COMPARISON (PRIMARY)
+                # ============================================================================
+                st.markdown("## 📉 Mean Recovery Curve Analysis")
+                st.markdown("**Direct comparison of averaged curves - robust, model-independent approach**")
+                
+                if len(group_data_raw) >= 2:
+                    try:
+                        import plotly.graph_objects as go
+                        fig_profiles = go.Figure()
+                        
+                        colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 
+                                 'rgb(214, 39, 40)', 'rgb(148, 103, 189)', 'rgb(140, 86, 75)']
+                        
+                        for idx, group_name in enumerate(selected_groups_holistic):
+                            if group_name in group_data_raw and group_data_raw[group_name]:
+                                try:
+                                    t_avg, i_avg, i_sem = compute_average_recovery_profile(
+                                        group_data_raw[group_name]
+                                    )
+                                    
+                                    color = colors[idx % len(colors)]
+                                    
+                                    # Plot mean with error bars
+                                    fig_profiles.add_trace(go.Scatter(
+                                        x=t_avg,
+                                        y=i_avg,
+                                        mode='lines',
+                                        name=group_name,
+                                        line=dict(color=color, width=3),
+                                        showlegend=True
+                                    ))
+                                    
+                                    # Add SEM as shaded area
+                                    fig_profiles.add_trace(go.Scatter(
+                                        x=np.concatenate([t_avg, t_avg[::-1]]),
+                                        y=np.concatenate([i_avg + i_sem, (i_avg - i_sem)[::-1]]),
+                                        fill='toself',
+                                        fillcolor=color.replace('rgb', 'rgba').replace(')', ', 0.2)'),
+                                        line=dict(color='rgba(255,255,255,0)'),
+                                        name=f'{group_name} (±SEM)',
+                                        showlegend=False,
+                                        hoverinfo='skip'
+                                    ))
+                                    
+                                except Exception as e:
+                                    st.warning(f"Could not compute average profile for {group_name}: {e}")
+                        
+                        fig_profiles.update_layout(
+                            title='Mean Recovery Profiles Comparison',
+                            xaxis_title='Time (s)',
+                            yaxis_title='Normalized Intensity',
+                            height=500,
+                            hovermode='x unified',
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="right",
+                                x=1
+                            )
+                        )
+                        
+                        st.plotly_chart(fig_profiles, use_container_width=True)
+                        
+                        # Quantitative profile comparison for 2 groups
+                        if len(selected_groups_holistic) == 2:
+                            group1_name, group2_name = selected_groups_holistic[0], selected_groups_holistic[1]
+                            
+                            if (group1_name in group_data_raw and group2_name in group_data_raw and
+                                group_data_raw[group1_name] and group_data_raw[group2_name]):
+                                try:
+                                    profile_comparison = compare_recovery_profiles(
+                                        group_data_raw[group1_name],
+                                        group_data_raw[group2_name],
+                                        group1_name=group1_name,
+                                        group2_name=group2_name
+                                    )
+                                    
+                                    st.markdown("#### 📊 Profile Similarity Metrics")
+                                    
+                                    col_prof1, col_prof2, col_prof3 = st.columns(3)
+                                    
+                                    # Access metrics from 'comparison' sub-dictionary
+                                    comparison_metrics = profile_comparison['comparison']
+                                    
+                                    with col_prof1:
+                                        st.metric(
+                                            "Max Difference",
+                                            f"{comparison_metrics['max_difference']:.3f}",
+                                            help="Maximum absolute difference between averaged profiles"
+                                        )
+                                    
+                                    with col_prof2:
+                                        st.metric(
+                                            "Mean Difference",
+                                            f"{comparison_metrics['mean_difference']:.3f}",
+                                            help="Average absolute difference across all time points"
+                                        )
+                                    
+                                    with col_prof3:
+                                        st.metric(
+                                            "RMSD",
+                                            f"{comparison_metrics['rmsd']:.3f}",
+                                            help="Root mean square deviation between profiles"
+                                        )
+                                    
+                                except Exception as e:
+                                    st.warning(f"Could not compute profile comparison metrics: {e}")
+                    
+                    except Exception as e:
+                        st.error(f"Error plotting averaged profiles: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                
+                # Advanced Curve Fitting Option
+                st.markdown("---")
+                with st.expander("🔬 Advanced Curve Fitting (Mechanistic Models)", expanded=False):
+                    st.markdown("""
+                    **Fit sophisticated biophysical models to mean recovery curves** to extract mechanistic parameters.
+                    
+                    **Available Models:**
+                    - **Anomalous Diffusion**: For subdiffusive or superdiffusive recovery (α ≠ 1)
+                    - **Simple Reaction-Diffusion**: Fast diffusion + slow binding/unbinding
+                    - **Full Reaction-Diffusion**: Complete 3-state model (free, bound, intermediate)
+                    
+                    **Benefits:**
+                    - Higher SNR from averaged data enables complex model fitting
+                    - Extract biophysical parameters (diffusion coefficient, binding rates, etc.)
+                    - Compare mechanisms between groups (e.g., "lost binding capability")
+                    
+                    **Note:** Individual cell fitting is limited to simple exponential models due to lower SNR.
+                    """)
+                    
+                    if len(selected_groups_holistic) == 2:
+                        try:
+                            from frap_advanced_fitting import compare_groups_advanced_fitting
+                            
+                            st.markdown("### ⚙️ Advanced Fitting Configuration")
+                            
+                            col_adv1, col_adv2 = st.columns(2)
+                            with col_adv1:
+                                advanced_model = st.selectbox(
+                                    "Select Biophysical Model:",
+                                    ["auto", "anomalous_diffusion", "reaction_diffusion_simple", "reaction_diffusion_full"],
+                                    help="'auto' selects best model by AIC"
+                                )
+                            
+                            with col_adv2:
+                                fit_bleach_radius = st.number_input(
+                                    "Bleach Radius (μm):",
+                                    min_value=0.1,
+                                    max_value=10.0,
+                                    value=float(bleach_radius * pixel_size),
+                                    step=0.1,
+                                    help="Effective bleach spot radius in micrometers"
+                                )
+                            
+                            if st.button("Fit Advanced Models to Mean Curves", type="primary"):
+                                with st.spinner("Fitting advanced models to mean recovery profiles..."):
+                                    try:
+                                        group1_name, group2_name = selected_groups_holistic[0], selected_groups_holistic[1]
+                                        
+                                        # Compute averaged profiles for both groups
+                                        if (group1_name in group_data_raw and group2_name in group_data_raw and
+                                            group_data_raw[group1_name] and group_data_raw[group2_name]):
+                                            
+                                            t1_avg, i1_avg, i1_sem = compute_average_recovery_profile(group_data_raw[group1_name])
+                                            t2_avg, i2_avg, i2_sem = compute_average_recovery_profile(group_data_raw[group2_name])
+                                            
+                                            # Perform advanced fitting comparison
+                                            fit_results = compare_groups_advanced_fitting(
+                                                group1_time=t1_avg,
+                                                group1_intensity=i1_avg,
+                                                group1_sem=i1_sem,
+                                                group2_time=t2_avg,
+                                                group2_intensity=i2_avg,
+                                                group2_sem=i2_sem,
+                                                group1_name=group1_name,
+                                                group2_name=group2_name,
+                                                bleach_radius_um=fit_bleach_radius,
+                                                model=advanced_model
+                                            )
+                                            
+                                            if fit_results['success']:
+                                                st.success("✓ Advanced fitting completed successfully!")
+                                                
+                                                # Display fitted parameters
+                                                st.markdown("#### 📈 Fitted Parameters")
+                                                st.markdown(f"**Model Used:** `{fit_results['model_used']}`")
+                                                
+                                                col_fit1, col_fit2 = st.columns(2)
+                                                
+                                                with col_fit1:
+                                                    st.markdown(f"**{group1_name}**")
+                                                    st.markdown(f"- R²: `{fit_results['r2_group1']:.4f}`")
+                                                    
+                                                    params1 = fit_results['group1_fit']['params']
+                                                    for param, value in params1.items():
+                                                        st.markdown(f"- {param}: `{value:.4f}`")
+                                                
+                                                with col_fit2:
+                                                    st.markdown(f"**{group2_name}**")
+                                                    st.markdown(f"- R²: `{fit_results['r2_group2']:.4f}`")
+                                                    
+                                                    params2 = fit_results['group2_fit']['params']
+                                                    for param, value in params2.items():
+                                                        st.markdown(f"- {param}: `{value:.4f}`")
+                                                
+                                                # Parameter comparison
+                                                st.markdown("#### 🔍 Parameter Fold Changes")
+                                                param_comparison = fit_results['parameter_comparison']
+                                                
+                                                if param_comparison:
+                                                    comparison_data = []
+                                                    for param_name, values in param_comparison.items():
+                                                        comparison_data.append({
+                                                            'Parameter': param_name,
+                                                            group1_name: f"{values[group1_name]:.4f}",
+                                                            group2_name: f"{values[group2_name]:.4f}",
+                                                            'Fold Change': f"{values['fold_change']:.3f}",
+                                                            'Percent Change': f"{values['percent_change']:+.1f}%"
+                                                        })
+                                                    
+                                                    param_df = pd.DataFrame(comparison_data)
+                                                    st.dataframe(param_df, use_container_width=True)
+                                                else:
+                                                    st.info("No parameter comparisons available.")
+                                                
+                                                # Biological interpretation
+                                                st.markdown("#### 🧬 Biological Interpretation")
+                                                st.markdown(fit_results['interpretation'])
+                                                
+                                                # Visualization
+                                                st.markdown("#### 📊 Fitted Curves Visualization")
+                                                from frap_plots import plot_advanced_group_comparison, plot_parameter_comparison
+                                                
+                                                try:
+                                                    fig_fit = plot_advanced_group_comparison(fit_results)
+                                                    st.plotly_chart(fig_fit, use_container_width=True)
+                                                except Exception as plot_error:
+                                                    st.warning(f"Could not generate fitted curves plot: {plot_error}")
+                                                
+                                                try:
+                                                    fig_params = plot_parameter_comparison(fit_results)
+                                                    st.plotly_chart(fig_params, use_container_width=True)
+                                                except Exception as plot_error:
+                                                    st.warning(f"Could not generate parameter comparison plot: {plot_error}")
+                                            else:
+                                                st.error(f"❌ Advanced fitting failed: {fit_results.get('error', 'Unknown error')}")
+                                        else:
+                                            st.error("❌ Could not compute averaged profiles for one or both groups.")
+                                    
+                                    except Exception as e:
+                                        st.error(f"Error during advanced fitting: {e}")
+                                        import traceback
+                                        with st.expander("🔍 Error Details"):
+                                            st.code(traceback.format_exc())
+                        
+                        except ImportError:
+                            st.warning("⚠️ Advanced fitting module not available. Ensure `frap_advanced_fitting.py` is in the same directory.")
+                    else:
+                        st.info("Select exactly 2 groups to enable pairwise advanced fitting comparison.")
+
+                # ============================================================================
+                # SECTION 2: POPULATION-BASED ANALYSIS (HOLISTIC COMPARISON)
+                # ============================================================================
+                st.markdown("---")
+                st.markdown("## 📊 Population-Based Analysis")
+                st.markdown("**Analyze distributions of kinetic parameters across cell populations**")
+                
+                with st.expander("ℹ️ What is Population-Based Analysis?", expanded=False):
+                    st.markdown("""
+                    **Population analysis** characterizes the **distribution of recovery kinetics** within each group,
+                    rather than just comparing mean values.
+                    
+                    **Key Insights:**
+                    - **Kinetic Subpopulations**: Categorizes cells into fast diffusion / intermediate / slow binding regimes
+                    - **Population Shifts**: Detects changes in the proportion of cells in each regime
+                    - **Weighted Kinetics**: Calculates population-weighted rate constants
+                    
+                    **Example:**
+                    - **Control:** 60% binding (slow), 40% diffusion (fast)
+                    - **Treatment:** 18% binding, 82% diffusion
+                    
+                    → Treatment didn't "speed up recovery" - it **eliminated binding capability**!
+                    """)
+                
                 # Multi-group population distribution table
                 if group_features:
                     st.markdown("### 📊 Population Distribution Comparison")
@@ -2772,133 +3049,19 @@ with tab2:
                                 )
                             
                             # Biological interpretation
-                            if show_interpretation:
-                                st.markdown("---")
-                                st.markdown("### 🧬 Biological Interpretation")
-                                
-                                interpretation = comparator.interpret_differences(stats_results)
-                                st.markdown(interpretation)
+                            st.markdown("---")
+                            st.markdown("### 🧬 Biological Interpretation")
+                            
+                            interpretation = comparator.interpret_differences(stats_results)
+                            st.markdown(interpretation)
                         
                         except Exception as e:
                             st.error(f"Error in statistical comparison: {e}")
                             import traceback
                             st.code(traceback.format_exc())
 
-                # Averaged recovery profile comparison
-                if show_profile_comparison and len(selected_groups_holistic) >= 2:
-                    st.markdown("---")
-                    st.markdown("### 📉 Averaged Recovery Profile Comparison")
-                    st.markdown("**Direct comparison of averaged curves (no model assumptions)**")
-                    
-                    try:
-                        fig_profiles = go.Figure()
-                        
-                        colors = ['rgb(31, 119, 180)', 'rgb(255, 127, 14)', 'rgb(44, 160, 44)', 
-                                 'rgb(214, 39, 40)', 'rgb(148, 103, 189)', 'rgb(140, 86, 75)']
-                        
-                        for idx, group_name in enumerate(selected_groups_holistic):
-                            if group_name in group_data_raw and group_data_raw[group_name]:
-                                try:
-                                    t_avg, i_avg, i_sem = compute_average_recovery_profile(
-                                        group_data_raw[group_name]
-                                    )
-                                    
-                                    color = colors[idx % len(colors)]
-                                    
-                                    # Plot mean with error bars
-                                    fig_profiles.add_trace(go.Scatter(
-                                        x=t_avg,
-                                        y=i_avg,
-                                        mode='lines',
-                                        name=group_name,
-                                        line=dict(color=color, width=3),
-                                        showlegend=True
-                                    ))
-                                    
-                                    # Add SEM as shaded area
-                                    fig_profiles.add_trace(go.Scatter(
-                                        x=np.concatenate([t_avg, t_avg[::-1]]),
-                                        y=np.concatenate([i_avg + i_sem, (i_avg - i_sem)[::-1]]),
-                                        fill='toself',
-                                        fillcolor=color.replace('rgb', 'rgba').replace(')', ', 0.2)'),
-                                        line=dict(color='rgba(255,255,255,0)'),
-                                        name=f'{group_name} (±SEM)',
-                                        showlegend=False,
-                                        hoverinfo='skip'
-                                    ))
-                                    
-                                except Exception as e:
-                                    st.warning(f"Could not compute average profile for {group_name}: {e}")
-                        
-                        fig_profiles.update_layout(
-                            title='Averaged Recovery Profiles Comparison',
-                            xaxis_title='Time (s)',
-                            yaxis_title='Normalized Intensity',
-                            height=500,
-                            hovermode='x unified',
-                            legend=dict(
-                                orientation="h",
-                                yanchor="bottom",
-                                y=1.02,
-                                xanchor="right",
-                                x=1
-                            )
-                        )
-                        
-                        st.plotly_chart(fig_profiles, use_container_width=True)
-                        
-                        # Quantitative profile comparison for 2 groups
-                        if len(selected_groups_holistic) == 2:
-                            group1_name, group2_name = selected_groups_holistic[0], selected_groups_holistic[1]
-                            
-                            if (group1_name in group_data_raw and group2_name in group_data_raw and
-                                group_data_raw[group1_name] and group_data_raw[group2_name]):
-                                try:
-                                    profile_comparison = compare_recovery_profiles(
-                                        group_data_raw[group1_name],
-                                        group_data_raw[group2_name],
-                                        group1_name=group1_name,
-                                        group2_name=group2_name
-                                    )
-                                    
-                                    st.markdown("#### Profile Comparison Metrics")
-                                    
-                                    col_prof1, col_prof2, col_prof3 = st.columns(3)
-                                    
-                                    # Fix: Access metrics from 'comparison' sub-dictionary
-                                    comparison_metrics = profile_comparison['comparison']
-                                    
-                                    with col_prof1:
-                                        st.metric(
-                                            "Max Difference",
-                                            f"{comparison_metrics['max_difference']:.3f}",
-                                            help="Maximum absolute difference between averaged profiles"
-                                        )
-                                    
-                                    with col_prof2:
-                                        st.metric(
-                                            "Mean Difference",
-                                            f"{comparison_metrics['mean_difference']:.3f}",
-                                            help="Average absolute difference across all time points"
-                                        )
-                                    
-                                    with col_prof3:
-                                        st.metric(
-                                            "RMSD",
-                                            f"{comparison_metrics['rmsd']:.3f}",
-                                            help="Root mean square deviation between profiles"
-                                        )
-                                    
-                                except Exception as e:
-                                    st.warning(f"Could not compute profile comparison metrics: {e}")
-                    
-                    except Exception as e:
-                        st.error(f"Error plotting averaged profiles: {e}")
-                        import traceback
-                        st.code(traceback.format_exc())
-
             elif len(selected_groups_holistic) == 1:
-                st.info("Select at least 2 groups to enable holistic comparison.")
+                st.info("Select at least 2 groups to enable multi-group comparison.")
             else:
                 st.warning("Please select groups to compare.")
 
@@ -3544,22 +3707,29 @@ with tab6:
         st.text("MW = 27 kDa")
 
     st.markdown("### Advanced Curve Fitting Options")
+    st.info("""
+    **Advanced biophysical model fitting is now available in Multi-Group Comparison (Tab 2)!**
+    
+    ✅ Available Models:
+    - Anomalous Diffusion (subdiffusive/superdiffusive recovery)
+    - Reaction-Diffusion Simple (fast diffusion + slow binding)
+    - Reaction-Diffusion Full (3-state model)
+    
+    📍 Location: Tab 2 → Multi-Group Comparison → Expand "Advanced Curve Fitting" section
+    
+    💡 Advanced models are applied to **mean recovery curves** (averaged across cells) for:
+    - Higher signal-to-noise ratio
+    - Mechanistic parameter extraction (D, k_on, k_off, etc.)
+    - Automatic model selection by AIC
+    - Biological interpretation generation
+    """)
+    
     col_fit1, col_fit2 = st.columns(2)
 
     with col_fit1:
-        # fitting_method = st.selectbox(
-        #     "Curve Fitting Method",
-        #     ["least_squares", "robust", "bayesian"],
-        #     index=0,
-        #     format_func=lambda x: {
-        #         "least_squares": "Standard Least Squares",
-        #         "robust": "Robust Fitting (outlier resistant)",
-        #         "bayesian": "Bayesian MCMC (full uncertainty)"
-        #     }[x],
-        #     help="Choose fitting algorithm for kinetic analysis"
-        # )
-        st.info("Advanced fitting methods (Robust, Bayesian) are planned for a future release.")
-        fitting_method = "least_squares" # Hardcode to the only implemented method
+        # Individual cell fitting uses standard least squares (simple exponential models)
+        # Advanced biophysical models are available for mean curves in Tab 2
+        fitting_method = "least_squares" # Standard method for individual cell fitting
 
         max_iterations = st.number_input(
             "Max Fitting Iterations",
