@@ -608,36 +608,70 @@ class FRAPReferenceDatabase:
     def plot_reference_overview(self) -> go.Figure:
         """Create an overview plot of the reference database."""
         
-        # Filter data with valid diffusion coefficients
-        plot_data = self.df[self.df['deff_um2_s'].notna()].copy()
+        # Filter data with valid diffusion coefficients and mobile fractions
+        plot_data = self.df[
+            (self.df['deff_um2_s'].notna()) & 
+            (self.df['mobile_fraction_pct'].notna())
+        ].copy()
         
         if len(plot_data) == 0:
             # Create empty figure
             fig = go.Figure()
             fig.add_annotation(
-                text="No diffusion coefficient data available for plotting",
+                text="No complete diffusion coefficient and mobile fraction data available for plotting",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5, showarrow=False
             )
             return fig
         
-        # Create scatter plot
-        fig = px.scatter(
-            plot_data,
-            x='molecular_weight_kda',
-            y='deff_um2_s',
-            color='class_type',
-            size='mobile_fraction_pct',
-            hover_data=['protein_probe', 'cellular_compartment', 'cell_type', 'condition'],
-            labels={
-                'molecular_weight_kda': 'Molecular Weight (kDa)',
-                'deff_um2_s': 'Diffusion Coefficient (µm²/s)',
-                'class_type': 'Protein Class',
-                'mobile_fraction_pct': 'Mobile Fraction (%)'
-            },
-            title='FRAP Reference Database: Protein Mobility Overview',
-            log_y=True
-        )
+        # Ensure mobile fraction values are valid for sizing (positive and finite)
+        plot_data = plot_data[plot_data['mobile_fraction_pct'] > 0].copy()
+        
+        if len(plot_data) == 0:
+            # Create empty figure
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No valid mobile fraction data available for plotting",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False
+            )
+            return fig
+        
+        # Create scatter plot with size encoding if we have enough data
+        if len(plot_data) >= 5:  # Only use size encoding if we have sufficient data points
+            fig = px.scatter(
+                plot_data,
+                x='molecular_weight_kda',
+                y='deff_um2_s',
+                color='class_type',
+                size='mobile_fraction_pct',
+                hover_data=['protein_probe', 'cellular_compartment', 'cell_type', 'condition'],
+                labels={
+                    'molecular_weight_kda': 'Molecular Weight (kDa)',
+                    'deff_um2_s': 'Diffusion Coefficient (µm²/s)',
+                    'class_type': 'Protein Class',
+                    'mobile_fraction_pct': 'Mobile Fraction (%)'
+                },
+                title='FRAP Reference Database: Protein Mobility Overview',
+                log_y=True
+            )
+        else:
+            # Fallback to simple scatter plot without size encoding
+            all_data = self.df[self.df['deff_um2_s'].notna()].copy()
+            fig = px.scatter(
+                all_data,
+                x='molecular_weight_kda',
+                y='deff_um2_s',
+                color='class_type',
+                hover_data=['protein_probe', 'cellular_compartment', 'cell_type', 'condition'],
+                labels={
+                    'molecular_weight_kda': 'Molecular Weight (kDa)',
+                    'deff_um2_s': 'Diffusion Coefficient (µm²/s)',
+                    'class_type': 'Protein Class'
+                },
+                title='FRAP Reference Database: Protein Mobility Overview (Size: Mobile Fraction data limited)',
+                log_y=True
+            )
         
         fig.update_layout(
             height=600,
