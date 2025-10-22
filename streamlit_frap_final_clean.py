@@ -1975,48 +1975,88 @@ with tab2:
                         st.success(f"✅ Updated analysis! Now using {len(group['files']) - len(new_excluded_paths)} curves.")
                         st.rerun()
                 
-                # ML-based outlier detection
+                # Automatic slope detection (simpler and more direct)
                 try:
-                    from frap_ml_outliers import create_ml_outlier_interface
-                    create_ml_outlier_interface(group, dm, selected_group_name)
-                except ImportError:
-                    st.info("💡 ML-based outlier detection requires scikit-learn: `pip install scikit-learn`")
+                    from frap_slope_detection import create_slope_detection_interface
+                    create_slope_detection_interface(group, dm, selected_group_name)
                 except Exception as e:
-                    st.warning(f"ML outlier detection not available: {e}")
+                    st.warning(f"Slope detection not available: {e}")
                 
-                # File selection grid with checkboxes
-                st.markdown("**Select files to include in analysis:**")
-                files_per_row = 4
-                file_list = list(group['files'])
+                # Statistical outlier detection (IQR-based filtering for robust averages)
+                try:
+                    from frap_statistical_outliers import create_statistical_outlier_interface
+                    create_statistical_outlier_interface(group, dm, selected_group_name)
+                except Exception as e:
+                    st.warning(f"Statistical outlier detection not available: {e}")
                 
-                # Track changes to trigger plot update
-                selection_changed = False
+                # Enhanced interactive selection interface
+                try:
+                    from frap_interactive_selection import handle_curve_click_selection, create_hover_selection_plot
+                    
+                    # Show the enhanced hover plot for quality assessment
+                    st.markdown("---")
+                    st.markdown("### 📊 Curve Quality Assessment")
+                    st.markdown("**Color-coded visualization to help identify problematic curves**")
+                    
+                    excluded_files = st.session_state.interactive_excluded_files
+                    hover_fig = create_hover_selection_plot(group, dm, excluded_files)
+                    st.plotly_chart(hover_fig, use_container_width=True)
+                    
+                    # Interactive selection interface
+                    handle_curve_click_selection(group, dm, selected_group_name)
+                    
+                except ImportError:
+                    st.info("💡 Enhanced interactive selection not available")
+                except Exception as e:
+                    st.warning(f"Interactive selection not available: {e}")
                 
-                for i in range(0, len(file_list), files_per_row):
-                    cols = st.columns(files_per_row)
-                    for j, col in enumerate(cols):
-                        if i + j < len(file_list):
-                            file_path = file_list[i + j]
-                            file_name = dm.files[file_path]['name']
-                            
-                            # Current inclusion status (inverted from exclusion)
-                            is_included = file_path not in st.session_state.interactive_excluded_files
-                            
-                            # Checkbox to toggle inclusion
-                            new_status = col.checkbox(
-                                f"📁 {file_name[:25]}{'...' if len(file_name) > 25 else ''}",
-                                value=is_included,
-                                key=f"file_toggle_{file_path}",
-                                help=f"File: {file_name}\nStatus: {'Included' if is_included else 'Excluded'}"
-                            )
-                            
-                            # Update exclusion set based on checkbox
-                            if new_status != is_included:  # Status changed
-                                if new_status:  # Include file (remove from exclusion set)
-                                    st.session_state.interactive_excluded_files.discard(file_path)
-                                else:  # Exclude file (add to exclusion set)
-                                    st.session_state.interactive_excluded_files.add(file_path)
-                                selection_changed = True
+                # Advanced ML outlier detection (optional)
+                with st.expander("🤖 Advanced ML Outlier Detection", expanded=False):
+                    try:
+                        from frap_ml_outliers import create_ml_outlier_interface
+                        st.info("💡 Advanced option: Machine learning-based outlier detection using 48 extracted features")
+                        create_ml_outlier_interface(group, dm, selected_group_name)
+                    except ImportError:
+                        st.info("💡 ML-based outlier detection requires scikit-learn: `pip install scikit-learn`")
+                    except Exception as e:
+                        st.warning(f"ML outlier detection not available: {e}")
+                
+                # File selection grid with checkboxes (legacy interface)
+                with st.expander("📋 Legacy Checkbox Interface", expanded=False):
+                    st.markdown("**Select files to include in analysis:**")
+                    st.info("💡 This is the original checkbox interface. Use the enhanced interfaces above for easier selection.")
+                    
+                    files_per_row = 4
+                    file_list = list(group['files'])
+                    
+                    # Track changes to trigger plot update
+                    selection_changed = False
+                    
+                    for i in range(0, len(file_list), files_per_row):
+                        cols = st.columns(files_per_row)
+                        for j, col in enumerate(cols):
+                            if i + j < len(file_list):
+                                file_path = file_list[i + j]
+                                file_name = dm.files[file_path]['name']
+                                
+                                # Current inclusion status (inverted from exclusion)
+                                is_included = file_path not in st.session_state.interactive_excluded_files
+                                
+                                # Checkbox to toggle inclusion
+                                new_status = col.checkbox(
+                                    f"📁 {file_name[:25]}{'...' if len(file_name) > 25 else ''}",
+                                    value=is_included,
+                                    key=f"file_toggle_{file_path}",
+                                    help=f"File: {file_name}\nStatus: {'Included' if is_included else 'Excluded'}"
+                                )
+                                
+                                # Update exclusion set based on checkbox
+                                if new_status != is_included:  # Status changed
+                                    if new_status:  # Include file (remove from exclusion set)
+                                        st.session_state.interactive_excluded_files.discard(file_path)
+                                    else:  # Exclude file (add to exclusion set)
+                                        st.session_state.interactive_excluded_files.add(file_path)
+                                    selection_changed = True
                 
                 # Update excluded_paths for rest of the analysis
                 excluded_paths = list(st.session_state.interactive_excluded_files)
