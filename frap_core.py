@@ -570,10 +570,11 @@ class FRAPAnalysisCore:
         Preprocess the data by applying background correction and proper FRAP normalization.
         
         IMPORTANT: This now implements PROPER FRAP normalization where:
-        - 1.0 represents the theoretical maximum recovery
-        - Pre-bleach intensity is normalized to 1.0
+        - 1.0 represents the theoretical maximum recovery (if all molecules were mobile)
+        - Pre-bleach intensity is normalized to 1.0  
         - Accounts for imaging-induced photobleaching via reference ROI
-        - Mobile fraction can be calculated as: (plateau - post_bleach) / (1.0 - post_bleach)
+        - Mobile fraction = plateau intensity * 100% (e.g., plateau at 0.95 = 95% mobile)
+        - Assumes theoretical bleach depth to 0, actual depth reflects diffusion during bleaching
         
         Parameters:
         -----------
@@ -1307,8 +1308,9 @@ class FRAPAnalysisCore:
         if model == 'single' and len(params) >= 3:
             A, k, C = params
             endpoint = A + C
-            # Mobile fraction is the endpoint (final plateau) in a normalized curve
-            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
+            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
+            # If curve starts at 0.7 and plateaus at 0.95, mobile fraction = 95%
             mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
             features.update({
                 'amplitude': A, 'rate_constant': k, 'offset': C,
@@ -1328,8 +1330,8 @@ class FRAPAnalysisCore:
             k_fast, A_fast = components[0]
             k_slow, A_slow = components[1]
 
-            # Mobile fraction is the endpoint (final plateau) in a normalized curve
-            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
+            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
             mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
             
             features.update({
@@ -1353,8 +1355,8 @@ class FRAPAnalysisCore:
             k_med, A_med = components[1]
             k_slow, A_slow = components[2]
 
-            # Mobile fraction is the endpoint (final plateau) in a normalized curve
-            # Clamp to 100% maximum to prevent nonsensical values from fitting instabilities
+            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
+            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
             mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
             
             features.update({
