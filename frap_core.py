@@ -625,21 +625,22 @@ class FRAPAnalysisCore:
                 if pre_bleach_roi2 <= 0:
                     pre_bleach_roi2 = 1.0
             
-            # Step 5: Calculate reference correction (accounts for imaging photobleaching)
+            # Step 5: Calculate reference correction factor (accounts for imaging photobleaching)
+            # Reference correction normalizes the reference ROI to its pre-bleach value
             roi2_normalized = result_df['roi2_bg_corrected'] / pre_bleach_roi2
             # Clip to reasonable bounds to avoid artifacts
-            roi2_normalized = roi2_normalized.clip(lower=0.1, upper=2.0)
+            roi2_normalized = roi2_normalized.clip(lower=0.1, upper=2.0).fillna(1.0)
             
             # Step 6: Apply proper FRAP normalization
-            # Key: Normalize to pre-bleach intensity so 1.0 = theoretical maximum recovery
-            
-            # Reference-corrected normalization (recommended for imaging photobleaching)
-            safe_roi2_normalized = roi2_normalized.replace(0, 1.0).fillna(1.0)
-            result_df['roi1_ref_corrected'] = result_df['roi1_bg_corrected'] / safe_roi2_normalized
-            result_df['double_normalized'] = result_df['roi1_ref_corrected'] / pre_bleach_roi1
+            # Standard FRAP formula: I_norm(t) = [I(t) - I_bg] / [I_pre - I_bg]
+            # With reference correction: I_norm(t) = [I(t) - I_bg] / [I_pre - I_bg] * [R_pre/R(t)]
             
             # Simple normalization (without reference correction)
             result_df['normalized'] = result_df['roi1_bg_corrected'] / pre_bleach_roi1
+            
+            # Double normalization with reference correction (standard FRAP approach)
+            # This corrects for imaging-induced photobleaching using the reference ROI
+            result_df['double_normalized'] = (result_df['roi1_bg_corrected'] / pre_bleach_roi1) / roi2_normalized
             
             # Step 7: Calculate bleach depth for validation
             post_bleach_start = min(bleach_idx + 1, len(result_df) - 1)
