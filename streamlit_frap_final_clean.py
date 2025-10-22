@@ -1937,52 +1937,152 @@ with tab2:
                         )
 
                 st.markdown("---")
-                st.markdown("### Step 3: Individual Curve Analysis")
+                st.markdown("### Step 3: Interactive Individual Curve Analysis")
 
                 # Enhanced plot of all individual curves with outliers highlighted
-                st.markdown("#### All Individual Curves (Outliers Highlighted)")
+                st.markdown("#### All Individual Curves - Interactive Selection")
+                st.info("💡 **Interactive Feature**: Use the checkboxes below to include/exclude curves from analysis. Changes update the plot and statistics in real-time.")
+                
+                # Track which files should be excluded (start with current excluded_paths)
+                if 'interactive_excluded_files' not in st.session_state:
+                    st.session_state.interactive_excluded_files = set(excluded_paths)
+                
+                # Create interface for curve selection
+                st.markdown("#### 📁 File Selection Panel")
+                
+                # Control buttons in columns
+                control_cols = st.columns(4)
+                with control_cols[0]:
+                    if st.button("✅ Include All", help="Include all curves in the analysis"):
+                        st.session_state.interactive_excluded_files = set()
+                        st.rerun()
+                
+                with control_cols[1]:
+                    if st.button("❌ Exclude All", help="Exclude all curves from analysis"):
+                        st.session_state.interactive_excluded_files = set(group['files'])
+                        st.rerun()
+                
+                with control_cols[2]:
+                    if st.button("🔄 Reset to Auto-Outliers", help="Reset to automatically detected outliers"):
+                        st.session_state.interactive_excluded_files = set(excluded_paths)
+                        st.rerun()
+                
+                with control_cols[3]:
+                    if st.button("💾 Apply Selection", type="primary", help="Update the group analysis with current selection"):
+                        # Update the group's excluded files
+                        new_excluded_paths = list(st.session_state.interactive_excluded_files)
+                        dm.update_group_analysis(selected_group_name, excluded_files=new_excluded_paths)
+                        st.success(f"✅ Updated analysis! Now using {len(group['files']) - len(new_excluded_paths)} curves.")
+                        st.rerun()
+                
+                # File selection grid with checkboxes
+                st.markdown("**Select files to include in analysis:**")
+                files_per_row = 4
+                file_list = list(group['files'])
+                
+                # Track changes to trigger plot update
+                selection_changed = False
+                
+                for i in range(0, len(file_list), files_per_row):
+                    cols = st.columns(files_per_row)
+                    for j, col in enumerate(cols):
+                        if i + j < len(file_list):
+                            file_path = file_list[i + j]
+                            file_name = dm.files[file_path]['name']
+                            
+                            # Current inclusion status (inverted from exclusion)
+                            is_included = file_path not in st.session_state.interactive_excluded_files
+                            
+                            # Checkbox to toggle inclusion
+                            new_status = col.checkbox(
+                                f"📁 {file_name[:25]}{'...' if len(file_name) > 25 else ''}",
+                                value=is_included,
+                                key=f"file_toggle_{file_path}",
+                                help=f"File: {file_name}\nStatus: {'Included' if is_included else 'Excluded'}"
+                            )
+                            
+                            # Update exclusion set based on checkbox
+                            if new_status != is_included:  # Status changed
+                                if new_status:  # Include file (remove from exclusion set)
+                                    st.session_state.interactive_excluded_files.discard(file_path)
+                                else:  # Exclude file (add to exclusion set)
+                                    st.session_state.interactive_excluded_files.add(file_path)
+                                selection_changed = True
+                
+                # Update excluded_paths for rest of the analysis
+                excluded_paths = list(st.session_state.interactive_excluded_files)
+                
+                # Status summary
+                n_included = len(group['files']) - len(excluded_paths)
+                n_excluded = len(excluded_paths)
+                
+                status_cols = st.columns(3)
+                with status_cols[0]:
+                    st.metric("✅ Included Files", n_included, help="Files included in group analysis")
+                with status_cols[1]:
+                    st.metric("❌ Excluded Files", n_excluded, help="Files excluded from group analysis")
+                with status_cols[2]:
+                    st.metric("📊 Total Files", len(group['files']), help="Total files in group")
+                
+                # Create the updated plot
                 fig_indiv = go.Figure()
-
                 group_files_data = {path: dm.files[path] for path in group['files']}
-
-                for path, file_data in group_files_data.items():
-                    is_outlier = path in excluded_paths
-                    line_color = "rgba(255, 0, 0, 0.7)" if is_outlier else "rgba(100, 100, 100, 0.4)"
-                    line_width = 2 if is_outlier else 1
+                
+                # Generate distinct colors for each curve
+                import colorsys
+                n_files = len(group_files_data)
+                
+                for i, (path, file_data) in enumerate(group_files_data.items()):
+                    is_excluded = path in excluded_paths
+                    
+                    # Generate distinct color for each curve
+                    if is_excluded:
+                        line_color = "rgba(255, 50, 50, 0.8)"  # Red for excluded
+                        line_width = 3
+                        line_dash = "dash"
+                    else:
+                        # Generate distinct colors for included files
+                        hue = (i * 360 / n_files) % 360
+                        rgb = colorsys.hsv_to_rgb(hue/360, 0.7, 0.8)
+                        line_color = f"rgba({int(rgb[0]*255)}, {int(rgb[1]*255)}, {int(rgb[2]*255)}, 0.8)"
+                        line_width = 2
+                        line_dash = "solid"
 
                     fig_indiv.add_trace(go.Scatter(
                         x=file_data['time'],
                         y=file_data['intensity'],
                         mode='lines',
-                        name=file_data['name'],
-                        line=dict(color=line_color, width=line_width),
-                        legendgroup="outlier" if is_outlier else "included",
-                        showlegend=False,
+                        name=f"{'❌ ' if is_excluded else '✅ '}{file_data['name']}",
+                        line=dict(color=line_color, width=line_width, dash=line_dash),
                         hovertemplate=f"<b>{file_data['name']}</b><br>" +
-                                    f"Status: {'Outlier' if is_outlier else 'Included'}<br>" +
+                                    f"Status: {'EXCLUDED' if is_excluded else 'INCLUDED'}<br>" +
                                     "Time: %{x:.2f}s<br>" +
-                                    "Intensity: %{y:.3f}<extra></extra>"
+                                    "Intensity: %{y:.3f}<extra></extra>",
+                        legendgroup="excluded" if is_excluded else "included",
+                        showlegend=True
                     ))
 
-                # Add legend entries manually
-                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
-                                             line=dict(color="rgba(100, 100, 100, 0.8)", width=2),
-                                             name="Included", showlegend=True))
-                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
-                                             line=dict(color="rgba(255, 0, 0, 0.8)", width=2),
-                                             name="Outliers", showlegend=True))
-
                 fig_indiv.update_layout(
-                    title="All Individual Recovery Curves in Group",
+                    title=f"Individual Recovery Curves - {n_included} Included, {n_excluded} Excluded",
                     xaxis_title="Time (s)",
                     yaxis_title="Normalized Intensity",
-                    legend_title="File Status",
-                    height=500
+                    height=600,
+                    hovermode='closest',
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        xanchor="left",
+                        x=1.02,
+                        bgcolor="rgba(255,255,255,0.8)"
+                    )
                 )
+                
                 st.plotly_chart(fig_indiv, use_container_width=True)
 
                 # Detailed table of individual kinetics
                 st.markdown("#### Kinetic Parameters for Each File")
+                st.markdown(f"**Currently Analyzing:** {len(group['files']) - len(excluded_paths)} included files, {len(excluded_paths)} excluded files")
 
                 all_features_df = group.get('features_df')
                 if all_features_df is not None and not all_features_df.empty:
@@ -2006,9 +2106,12 @@ with tab2:
                             gfp_mw=27.0
                         )
 
+                        # Use the interactive exclusion status
+                        status = 'Excluded' if path in excluded_paths else 'Included'
+                        
                         all_files_data.append({
                             'File Name': file_data['name'],
-                            'Status': 'Outlier' if path in excluded_paths else 'Included',
+                            'Status': status,
                             'Mobile (%)': features.get('mobile_fraction', np.nan),
                             'Immobile (%)': features.get('immobile_fraction', np.nan),
                             'Primary Rate (k)': primary_rate,
@@ -2022,28 +2125,51 @@ with tab2:
 
                     detailed_df = pd.DataFrame(all_files_data)
 
-                    # Style the dataframe with outliers highlighted
-                    def highlight_outliers(row):
-                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
+                    # Style the dataframe with excluded files highlighted
+                    def highlight_excluded(row):
+                        if row['Status'] == 'Excluded':
+                            return ['background-color: #ffcccc; color: #cc0000' for _ in row]
+                        else:
+                            return ['background-color: #ccffcc; color: #006600' for _ in row]
 
                     with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
                         st.dataframe(
-                            detailed_df.style.apply(highlight_outliers, axis=1).format({
+                            detailed_df.style.apply(highlight_excluded, axis=1).format({
                                 'Mobile (%)': '{:.1f}',
                                 'Immobile (%)': '{:.1f}',
                                 'Primary Rate (k)': '{:.4f}',
                                 'Half-time (s)': '{:.2f}',
                                 'k_off (1/s)': '{:.4f}',
-                                'Apparent D (μm²/s)': '{:.3f}',
-                                'Apparent MW (kDa)': '{:.1f}',
+                                'App. D (μm²/s)': '{:.3f}',
+                                'App. MW (kDa)': '{:.1f}',
                                 'R²': '{:.3f}'
                             }, na_rep="-"),
                             use_container_width=True
                         )
 
-                        # Summary statistics
+                        # Summary statistics for included files only
                         included_data = detailed_df[detailed_df['Status'] == 'Included']
-                        st.markdown("##### Summary Statistics (Included Files Only)")
+                        if len(included_data) > 0:
+                            st.markdown("##### Summary Statistics (Included Files Only)")
+                            
+                            summary_cols = st.columns(4)
+                            with summary_cols[0]:
+                                st.metric("Mean Mobile Fraction", f"{included_data['Mobile (%)'].mean():.1f}%")
+                                st.metric("Std Mobile Fraction", f"{included_data['Mobile (%)'].std():.1f}%")
+                            
+                            with summary_cols[1]:
+                                st.metric("Mean Half-time", f"{included_data['Half-time (s)'].mean():.2f} s")
+                                st.metric("Std Half-time", f"{included_data['Half-time (s)'].std():.2f} s")
+                            
+                            with summary_cols[2]:
+                                st.metric("Mean App. D", f"{included_data['App. D (μm²/s)'].mean():.3f} μm²/s")
+                                st.metric("Std App. D", f"{included_data['App. D (μm²/s)'].std():.3f} μm²/s")
+                            
+                            with summary_cols[3]:
+                                st.metric("Mean R²", f"{included_data['R²'].mean():.3f}")
+                                st.metric("Files Used", f"{len(included_data)}/{len(detailed_df)}")
+                        else:
+                            st.warning("⚠️ No files are currently included in the analysis. Please include at least one file.")
 
                         # Add report generation section
                         st.markdown("---")
