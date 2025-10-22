@@ -1975,6 +1975,15 @@ with tab2:
                         st.success(f"✅ Updated analysis! Now using {len(group['files']) - len(new_excluded_paths)} curves.")
                         st.rerun()
                 
+                # ML-based outlier detection
+                try:
+                    from frap_ml_outliers import create_ml_outlier_interface
+                    create_ml_outlier_interface(group, dm, selected_group_name)
+                except ImportError:
+                    st.info("💡 ML-based outlier detection requires scikit-learn: `pip install scikit-learn`")
+                except Exception as e:
+                    st.warning(f"ML outlier detection not available: {e}")
+                
                 # File selection grid with checkboxes
                 st.markdown("**Select files to include in analysis:**")
                 files_per_row = 4
