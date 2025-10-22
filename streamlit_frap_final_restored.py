@@ -913,15 +913,30 @@ class FRAPDataManager:
                                         shutil.copy(file_path_in_temp, tp)
 
                                     # Use lazy loading (fit_models=False) for faster bulk upload
-                                    if self.load_file(tp, file_name, fit_models=False):
-                                        self.add_file_to_group(group_name, tp)
-                                        success_count += 1
+                                    load_result = self.load_file(tp, file_name, fit_models=False)
+                                    logger.info(f"load_file returned: {load_result} for {file_name} (path: {tp})")
+                                    logger.info(f"File in self.files after load: {tp in self.files}")
+                                    
+                                    if load_result:
+                                        add_result = self.add_file_to_group(group_name, tp)
+                                        if add_result:
+                                            success_count += 1
+                                            logger.info(f"Successfully added {file_name} to group {group_name}")
+                                        else:
+                                            logger.error(f"Failed to add {file_name} (path: {tp}) to group {group_name}")
+                                            logger.error(f"Group exists: {group_name in self.groups}, File exists: {tp in self.files}")
+                                            raise ValueError(f"Failed to add file to group {group_name}")
                                     else:
                                         raise ValueError("Failed to load data from file.")
                                 else:
                                     # File already exists, just add to group
-                                    self.add_file_to_group(group_name, tp)
-                                    success_count += 1
+                                    add_result = self.add_file_to_group(group_name, tp)
+                                    if add_result:
+                                        success_count += 1
+                                        logger.info(f"File already existed, added {file_name} to group {group_name}")
+                                    else:
+                                        logger.error(f"File already existed but failed to add to group: {file_name} to {group_name}")
+                                        logger.error(f"Group exists: {group_name in self.groups}, File exists: {tp in self.files}")
 
                             except Exception as e:
                                 error_count += 1
@@ -1119,12 +1134,22 @@ with st.sidebar:
                             # Mark this file as processed
                             st.session_state.processed_zip_files.add(zip_file_id)
                             
+                            # Debug: Log group contents
+                            logger.info(f"Groups after processing: {list(dm.groups.keys())}")
+                            for gname, gdata in dm.groups.items():
+                                logger.info(f"Group '{gname}' has {len(gdata.get('files', []))} files: {gdata.get('files', [])}")
+                            
                             # Show successful groups
                             if dm.groups:
                                 st.success("Successfully created {} groups from ZIP archive:".format(len(dm.groups)))
                                 for group_name, group_data in dm.groups.items():
                                     file_count = len(group_data.get('files', []))
                                     st.write(f"📁 **{group_name}**: {file_count} files")
+                                    # Debug output
+                                    if file_count == 0:
+                                        st.error(f"⚠️ Group '{group_name}' has NO files!")
+                                        logger.error(f"Group '{group_name}' created but has no files!")
+
 
                                 # Show summary of what was processed
                                 total_files = sum(len(group_data.get('files', [])) for group_data in dm.groups.values())
