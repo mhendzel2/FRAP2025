@@ -518,11 +518,17 @@ class FRAPDataManager:
                 import tempfile
                 import shutil
                 if '.xlsx_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xlsx')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.xls_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xls')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xls', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.csv_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.csv')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.csv', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 else:
                     temp_path = file_path
 
@@ -1272,7 +1278,8 @@ with tab1:
                     ))
 
                     # Calculate and plot individual components
-                    model_func = best_fit['func']
+                    # Note: Using mathematical formulas directly instead of function references
+                    # to support session files that may not contain function objects
                     params = best_fit['params']
 
                     if best_fit['model'] == 'double':
@@ -2369,9 +2376,32 @@ with tab5:
                 import pickle
                 from datetime import datetime
 
+                def sanitize_for_pickle(data):
+                    """Remove unpickleable objects like function references"""
+                    if isinstance(data, dict):
+                        sanitized = {}
+                        for key, value in data.items():
+                            if key == 'func':  # Skip function objects
+                                continue
+                            elif callable(value):  # Skip any callable objects
+                                continue
+                            else:
+                                sanitized[key] = sanitize_for_pickle(value)
+                        return sanitized
+                    elif isinstance(data, list):
+                        return [sanitize_for_pickle(item) for item in data]
+                    elif isinstance(data, tuple):
+                        return tuple(sanitize_for_pickle(item) for item in data)
+                    else:
+                        return data
+
+                # Sanitize the data to remove unpickleable objects
+                sanitized_files = sanitize_for_pickle(dm.files)
+                sanitized_groups = sanitize_for_pickle(dm.groups)
+
                 session_data = {
-                    'files': dm.files,
-                    'groups': dm.groups,
+                    'files': sanitized_files,
+                    'groups': sanitized_groups,
                     'settings': st.session_state.settings,
                     'timestamp': datetime.now().isoformat(),
                     'version': '1.0'

@@ -104,11 +104,25 @@ def run_bootstrap(best_fit, t_fit, intensity_fit, bleach_radius_um, n_bootstrap=
     if not best_fit:
         return None
     
-    model_func = best_fit['func']
+    # Import model functions instead of relying on 'func' key which may not exist in session files
+    from frap_core import FRAPAnalysisCore
+    
     model_name = best_fit['model']
     initial_params = best_fit['params']
     fitted_y = best_fit['fitted_values']
     residuals = intensity_fit - fitted_y
+    
+    # Map model names to functions
+    model_functions = {
+        'single': FRAPAnalysisCore.single_component,
+        'double': FRAPAnalysisCore.two_component,
+        'triple': FRAPAnalysisCore.three_component
+    }
+    
+    model_func = model_functions.get(model_name)
+    if model_func is None:
+        print(f"Warning: Unknown model type '{model_name}' for bootstrap analysis")
+        return None
     
     # Define bounds for the model
     if model_name == 'single':

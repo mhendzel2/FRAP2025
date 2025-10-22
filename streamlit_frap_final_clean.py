@@ -523,11 +523,17 @@ class FRAPDataManager:
                 import tempfile
                 import shutil
                 if '.xlsx_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xlsx')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.xls_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xls')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xls', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.csv_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.csv')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.csv', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 else:
                     temp_path = file_path
 
@@ -1300,33 +1306,43 @@ with tab1:
                 st.markdown("View recovery curve, residuals, and individual components in a single integrated plot")
                 
                 if st.button("🔍 Show Comprehensive Analysis Plot", key="comprehensive_plot_btn"):
-                    from frap_plots import FRAPPlots
-                    
-                    comprehensive_fig = FRAPPlots.plot_comprehensive_fit(
-                        time=t_fit,
-                        intensity=intensity_fit,
-                        fit_result=best_fit,
-                        file_name=file_data['name'],
-                        height=800
-                    )
-                    
-                    if comprehensive_fig:
-                        st.plotly_chart(comprehensive_fig, use_container_width=True)
-                        st.success("✅ Comprehensive analysis plot generated successfully!")
+                    try:
+                        from frap_plots import FRAPPlots
                         
-                        st.markdown("""
-                        **Comprehensive Plot Features:**
-                        - **Top Panel**: Recovery curve with fitted model and parameter annotations
-                        - **Middle Panel**: Residuals plot showing fit quality (should be randomly scattered around zero)
-                        - **Bottom Panel**: Individual exponential components (for multi-component fits)
+                        comprehensive_fig = FRAPPlots.plot_comprehensive_fit(
+                            time=t_fit,
+                            intensity=intensity_fit,
+                            fit_result=best_fit,
+                            file_name=file_data['name'],
+                            height=800
+                        )
                         
-                        This integrated view makes it easy to assess:
-                        - Overall fit quality
-                        - Presence of systematic errors in residuals
-                        - Contribution of each kinetic component
-                        """)
-                    else:
-                        st.error("Failed to generate comprehensive plot")
+                        if comprehensive_fig:
+                            st.plotly_chart(comprehensive_fig, use_container_width=True)
+                            st.success("✅ Comprehensive analysis plot generated successfully!")
+                            
+                            st.markdown("""
+                            **Comprehensive Plot Features:**
+                            - **Top Panel**: Recovery curve with fitted model and parameter annotations
+                            - **Middle Panel**: Residuals plot showing fit quality (should be randomly scattered around zero)
+                            - **Bottom Panel**: Individual exponential components (for multi-component fits)
+                            
+                            This integrated view makes it easy to assess:
+                            - Overall fit quality
+                            - Presence of systematic errors in residuals
+                            - Contribution of each kinetic component
+                            """)
+                        else:
+                            st.error("Failed to generate comprehensive plot - the plot function returned None")
+                            st.info("This may be due to invalid fit parameters or missing model functions")
+                    except ImportError as e:
+                        st.error(f"Failed to import plotting module: {e}")
+                        st.info("Please ensure frap_plots.py is available and properly configured")
+                    except Exception as e:
+                        st.error(f"Failed to generate comprehensive plot: {e}")
+                        st.info("Please check that the fit results contain valid parameters")
+                        import traceback
+                        st.code(traceback.format_exc())
 
                 # Component-wise recovery analysis for multi-component fits
                 if best_fit['model'] in ['double', 'triple']:
@@ -1347,7 +1363,8 @@ with tab1:
                     ))
 
                     # Calculate and plot individual components
-                    model_func = best_fit['func']
+                    # Note: Using mathematical formulas directly instead of function references
+                    # to support session files that may not contain function objects
                     params = best_fit['params']
 
                     if best_fit['model'] == 'double':
@@ -3877,9 +3894,32 @@ with tab5:
                 import pickle
                 from datetime import datetime
 
+                def sanitize_for_pickle(data):
+                    """Remove unpickleable objects like function references"""
+                    if isinstance(data, dict):
+                        sanitized = {}
+                        for key, value in data.items():
+                            if key == 'func':  # Skip function objects
+                                continue
+                            elif callable(value):  # Skip any callable objects
+                                continue
+                            else:
+                                sanitized[key] = sanitize_for_pickle(value)
+                        return sanitized
+                    elif isinstance(data, list):
+                        return [sanitize_for_pickle(item) for item in data]
+                    elif isinstance(data, tuple):
+                        return tuple(sanitize_for_pickle(item) for item in data)
+                    else:
+                        return data
+
+                # Sanitize the data to remove unpickleable objects
+                sanitized_files = sanitize_for_pickle(dm.files)
+                sanitized_groups = sanitize_for_pickle(dm.groups)
+
                 session_data = {
-                    'files': dm.files,
-                    'groups': dm.groups,
+                    'files': sanitized_files,
+                    'groups': sanitized_groups,
                     'settings': st.session_state.settings,
                     'timestamp': datetime.now().isoformat(),
                     'version': '1.0'
@@ -3897,9 +3937,11 @@ with tab5:
                 )
 
                 st.success(f"Session prepared for download: {len(dm.files)} files, {len(dm.groups)} groups")
+                st.info("📝 Note: Function objects and other non-serializable data are automatically excluded from the session file to ensure compatibility.")
 
             except Exception as e:
                 st.error(f"Error saving session: {e}")
+                st.info("This may be due to complex objects in your analysis data. Try with simpler datasets.")
 
         # Session load functionality
         st.markdown("### Load Previous Session")

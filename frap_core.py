@@ -1332,7 +1332,12 @@ class FRAPAnalysisCore:
             features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
             features['half_time_fast'] = features.get('half_time_binding')
 
-        features['immobile_fraction'] = 100 - features.get('mobile_fraction', 0)
+        # Ensure immobile fraction = 100% - mobile fraction (only if mobile fraction is finite)
+        mobile_frac = features.get('mobile_fraction', np.nan)
+        if np.isfinite(mobile_frac):
+            features['immobile_fraction'] = 100.0 - mobile_frac
+        else:
+            features['immobile_fraction'] = np.nan
         
         # Add model information and quality metrics
         features.update({

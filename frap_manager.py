@@ -84,11 +84,17 @@ class FRAPDataManager:
                 import tempfile
                 import shutil
                 if '.xlsx_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xlsx')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.xls_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.xls')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xls', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 elif '.csv_' in file_path:
-                    temp_path = tempfile.mktemp(suffix='.csv')
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.csv', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
                 else:
                     temp_path = file_path
 
