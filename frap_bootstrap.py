@@ -11,6 +11,22 @@ from scipy.optimize import curve_fit
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
+def get_model_function(model_name):
+    """Get the appropriate model function by name."""
+    from frap_core import FRAPAnalysisCore
+    
+    model_functions = {
+        'single': FRAPAnalysisCore.single_component,
+        'single_component': FRAPAnalysisCore.single_component,
+        'double': FRAPAnalysisCore.two_component,
+        'two_component': FRAPAnalysisCore.two_component,
+        'triple': FRAPAnalysisCore.three_component,
+        'three_component': FRAPAnalysisCore.three_component
+    }
+    
+    return model_functions.get(model_name)
+
+
 def _extract_params_from_popt(popt, model_name, model_func):
     """Extract key parameters from fitted model parameters."""
     if model_name == 'single':
