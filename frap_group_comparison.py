@@ -438,8 +438,8 @@ def compute_average_recovery_profile(group_data: Dict[str, Dict],
     """
     Compute average recovery profile for a group by averaging individual curves.
     
-    This is the most direct way to compare groups - by looking at the actual
-    averaged recovery curves rather than individual fitted parameters.
+    IMPORTANT: This function now aligns all curves so that photobleaching occurs at t=0,
+    enabling meaningful comparison between groups with different bleaching timepoints.
     
     Parameters
     ----------
@@ -447,36 +447,48 @@ def compute_average_recovery_profile(group_data: Dict[str, Dict],
         Dictionary mapping file paths to their data dictionaries
         Each data dict should have 'time' and 'intensity' arrays
     time_points : np.ndarray, optional
-        Common time grid for interpolation. If None, uses union of all time points
+        Common time grid for interpolation. If None, uses union of all aligned time points
         
     Returns
     -------
     tuple
-        (time_grid, mean_intensity, sem_intensity)
+        (time_grid, mean_intensity, sem_intensity) - time_grid starts from t=0 at bleaching
     """
     if not group_data:
         return np.array([]), np.array([]), np.array([])
     
-    # Extract all time series
+    # Import the alignment function
+    from frap_core import FRAPAnalysisCore
+    
+    # Extract and align all time series to start from bleaching at t=0
     time_series = []
     intensity_series = []
     
     for file_path, data in group_data.items():
         if 'time' in data and 'intensity' in data:
-            time_series.append(data['time'])
-            intensity_series.append(data['intensity'])
+            try:
+                # Align each curve so bleaching occurs at t=0
+                t_aligned, i_aligned, _ = FRAPAnalysisCore.get_post_bleach_data(
+                    data['time'], data['intensity']
+                )
+                time_series.append(t_aligned)
+                intensity_series.append(i_aligned)
+            except Exception as e:
+                # Skip curves that can't be aligned (e.g., pathological data)
+                print(f"Warning: Could not align curve from {file_path}: {e}")
+                continue
     
     if not time_series:
         return np.array([]), np.array([]), np.array([])
     
     # Create common time grid if not provided
     if time_points is None:
-        # Use the union of all unique time points
+        # Use the union of all unique aligned time points (all starting from t=0)
         all_times = np.concatenate(time_series)
         time_points = np.unique(all_times)
         time_points.sort()
     
-    # Interpolate all curves to common time grid
+    # Interpolate all aligned curves to common time grid
     interpolated_intensities = []
     
     for t, i in zip(time_series, intensity_series):

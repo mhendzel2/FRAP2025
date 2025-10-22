@@ -3049,7 +3049,10 @@ with tab2:
         This approach provides robust, mechanistic insights by analyzing **averaged recovery profiles** 
         that minimize noise from individual cell variability while revealing biological differences.
         
-        💡 **Recommended Workflow:**
+        � **Photobleach Alignment:** All curves are automatically aligned so that photobleaching occurs at t=0,
+        enabling accurate comparison between groups regardless of when bleaching occurred in each experiment.
+        
+        �💡 **Recommended Workflow:**
         - Start here for **comparing treatment conditions** using mean recovery curve analysis
         - Use **Individual Group Analysis (Tab 1)** for in-depth, cell-level analysis of specific conditions
         """)
@@ -3058,6 +3061,7 @@ with tab2:
             st.markdown("""
             **Mean recovery curve analysis offers several advantages:**
             
+            ✅ **Photobleach alignment** - All curves aligned to t=0 at bleaching for accurate comparison
             ✅ **Higher signal-to-noise ratio** - Averaging reduces measurement noise
             ✅ **Sophisticated biophysical models** - Can fit complex models (anomalous diffusion, reaction-diffusion)
             ✅ **Population-level insights** - Reveals treatment effects on overall recovery dynamics
