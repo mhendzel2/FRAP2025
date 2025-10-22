@@ -1705,14 +1705,18 @@ with tab1:
                     # Display available parameters for debugging
                     with st.expander("🔍 Debug Information"):
                         st.write("**Available parameters:**")
-                        # Fix: Check if params is a dict before calling .items()
-                        if isinstance(params, dict):
-                            for key, value in params.items():
-                                if 'rate' in key.lower() or 'constant' in key.lower():
-                                    st.write(f"- {key}: {value}")
+                        # Fix: Get params from best_fit instead of undefined variable
+                        if best_fit and 'params' in best_fit:
+                            params = best_fit['params']
+                            if isinstance(params, dict):
+                                for key, value in params.items():
+                                    if 'rate' in key.lower() or 'constant' in key.lower():
+                                        st.write(f"- {key}: {value}")
+                            else:
+                                st.write(f"Parameters is not a dict (type: {type(params).__name__})")
+                                st.write(f"Value: {params}")
                         else:
-                            st.write(f"Parameters is not a dict (type: {type(params).__name__})")
-                            st.write(f"Value: {params}")
+                            st.write("No parameters available in best_fit")
                         st.write("**Model information:**")
                         if best_fit:
                             st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
