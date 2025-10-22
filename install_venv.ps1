@@ -57,7 +57,7 @@ if (Test-Path "venv") {
         Write-Host "Step 5/5: Installing/updating dependencies..." -ForegroundColor Cyan
         Write-Host "  This may take several minutes..." -ForegroundColor Yellow
         python -m pip install -r requirements.txt
-        
+
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  All packages installed successfully!" -ForegroundColor Green
         } else {

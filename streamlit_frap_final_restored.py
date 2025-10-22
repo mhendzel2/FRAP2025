@@ -695,6 +695,7 @@ class FRAPDataManager:
 
                 # Walk through ALL directories to find folders containing data files
                 folders_with_data = {}
+                group_name_counts = {}  # Track duplicate folder names
                 
                 for root, dirs, files in os.walk(temp_dir):
                     # Check if this folder contains data files
@@ -709,22 +710,42 @@ class FRAPDataManager:
                         if folder_name.startswith('__') or folder_name.startswith('.'):
                             continue
                         
+                        # Handle duplicate folder names by adding a suffix
+                        if folder_name in group_name_counts:
+                            group_name_counts[folder_name] += 1
+                            unique_folder_name = f"{folder_name}_{group_name_counts[folder_name]}"
+                        else:
+                            group_name_counts[folder_name] = 1
+                            unique_folder_name = folder_name
+                        
                         # Store folder info
                         folders_with_data[root] = {
-                            'name': folder_name,
+                            'name': unique_folder_name,
                             'files': data_files
                         }
 
                 # Process each folder with data files
-                for folder_path, folder_info in folders_with_data.items():
+                total_folders = len(folders_with_data)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for folder_idx, (folder_path, folder_info) in enumerate(folders_with_data.items()):
                     group_name = folder_info['name']
+                    
+                    # Update progress
+                    progress_pct = (folder_idx + 1) / total_folders
+                    progress_bar.progress(progress_pct)
+                    status_text.text(f"Processing group {folder_idx + 1}/{total_folders}: {group_name}")
                     
                     # Create group
                     self.create_group(group_name)
                     groups_created.append(group_name)
                     
                     # Process each data file in this folder
-                    for file_in_group in folder_info['files']:
+                    total_files_in_group = len(folder_info['files'])
+                    for file_idx, file_in_group in enumerate(folder_info['files']):
+                        status_text.text(f"Processing group {folder_idx + 1}/{total_folders}: {group_name} - File {file_idx + 1}/{total_files_in_group}")
+                        
                         file_path_in_temp = os.path.join(folder_path, file_in_group)
 
                         if os.path.isfile(file_path_in_temp):
@@ -783,6 +804,10 @@ class FRAPDataManager:
                                 error_count += 1
                                 error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
                                 logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
+                
+                # Clear progress indicators
+                progress_bar.empty()
+                status_text.empty()
                             
         except Exception as e:
             logger.error(f"Error processing ZIP archive with subfolders: {e}")
@@ -1405,7 +1430,7 @@ with tab1:
                     # Display available parameters for debugging
                     with st.expander("🔍 Debug Information"):
                         st.write("**Available parameters:**")
-                        for key, value in params.items():
+                        for key, value in features.items():
                             if 'rate' in key.lower() or 'constant' in key.lower():
                                 st.write(f"- {key}: {value}")
                         st.write("**Model information:**")
