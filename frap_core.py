@@ -567,17 +567,24 @@ class FRAPAnalysisCore:
     @staticmethod
     def preprocess(df):
         """
-        Preprocess the data by applying background correction and normalization
+        Preprocess the data by applying background correction and proper FRAP normalization.
+        
+        IMPORTANT: This now implements PROPER FRAP normalization where:
+        - 1.0 represents the theoretical maximum recovery
+        - Pre-bleach intensity is normalized to 1.0
+        - Accounts for imaging-induced photobleaching via reference ROI
+        - Mobile fraction can be calculated as: (plateau - post_bleach) / (1.0 - post_bleach)
         
         Parameters:
         -----------
         df : pandas.DataFrame
             Raw data with time, roi1, roi2, roi3 columns
+            roi1 = bleached region, roi2 = reference region, roi3 = background
             
         Returns:
         --------
         pandas.DataFrame
-            Processed dataframe with additional columns
+            Processed dataframe with proper normalization columns
         """
         try:
             # Make a copy to avoid modifying the original
@@ -593,37 +600,62 @@ class FRAPAnalysisCore:
             if len(result_df) < 3:
                 raise ValueError("Insufficient data points for preprocessing (need at least 3)")
             
-            # Background correction with error handling
+            # Step 1: Background correction
             result_df['roi1_bg_corrected'] = result_df['roi1'] - result_df['roi3']
             result_df['roi2_bg_corrected'] = result_df['roi2'] - result_df['roi3']
             
-            # Find pre-bleach values (average of first few points)
-            pre_bleach_points = min(5, max(1, len(df) // 4))  # Ensure at least 1 point
+            # Step 2: Find bleaching timepoint (minimum intensity in ROI1)
+            bleach_idx = result_df['roi1_bg_corrected'].idxmin()
+            
+            # Step 3: Calculate pre-bleach intensities (average of frames before bleaching)
+            pre_bleach_points = min(5, max(1, bleach_idx))
             pre_bleach_roi1 = result_df['roi1_bg_corrected'][:pre_bleach_points].mean()
             pre_bleach_roi2 = result_df['roi2_bg_corrected'][:pre_bleach_points].mean()
             
-            # Handle edge cases for normalization
-            if pd.isna(pre_bleach_roi1) or pre_bleach_roi1 == 0:
+            # Step 4: Handle edge cases for normalization
+            if pd.isna(pre_bleach_roi1) or pre_bleach_roi1 <= 0:
                 logging.warning("Invalid pre-bleach ROI1 value, using fallback normalization")
                 pre_bleach_roi1 = result_df['roi1_bg_corrected'].iloc[0] if len(result_df) > 0 else 1.0
-                if pre_bleach_roi1 == 0:
+                if pre_bleach_roi1 <= 0:
                     pre_bleach_roi1 = 1.0
             
-            if pd.isna(pre_bleach_roi2) or pre_bleach_roi2 == 0:
+            if pd.isna(pre_bleach_roi2) or pre_bleach_roi2 <= 0:
                 logging.warning("Invalid pre-bleach ROI2 value, using fallback normalization")
                 pre_bleach_roi2 = result_df['roi2_bg_corrected'].iloc[0] if len(result_df) > 0 else 1.0
-                if pre_bleach_roi2 == 0:
+                if pre_bleach_roi2 <= 0:
                     pre_bleach_roi2 = 1.0
             
-            # Calculate reference-corrected values with error handling
+            # Step 5: Calculate reference correction (accounts for imaging photobleaching)
             roi2_normalized = result_df['roi2_bg_corrected'] / pre_bleach_roi2
+            # Clip to reasonable bounds to avoid artifacts
+            roi2_normalized = roi2_normalized.clip(lower=0.1, upper=2.0)
             
-            # Avoid division by zero in double normalization
-            safe_roi2_normalized = roi2_normalized.replace(0, np.nan)
-            result_df['double_normalized'] = result_df['roi1_bg_corrected'] / safe_roi2_normalized / pre_bleach_roi1
+            # Step 6: Apply proper FRAP normalization
+            # Key: Normalize to pre-bleach intensity so 1.0 = theoretical maximum recovery
+            
+            # Reference-corrected normalization (recommended for imaging photobleaching)
+            safe_roi2_normalized = roi2_normalized.replace(0, 1.0).fillna(1.0)
+            result_df['roi1_ref_corrected'] = result_df['roi1_bg_corrected'] / safe_roi2_normalized
+            result_df['double_normalized'] = result_df['roi1_ref_corrected'] / pre_bleach_roi1
             
             # Simple normalization (without reference correction)
             result_df['normalized'] = result_df['roi1_bg_corrected'] / pre_bleach_roi1
+            
+            # Step 7: Calculate bleach depth for validation
+            post_bleach_start = min(bleach_idx + 1, len(result_df) - 1)
+            post_bleach_points = min(3, len(result_df) - post_bleach_start)
+            if post_bleach_points > 0:
+                post_bleach_roi1 = result_df['roi1_bg_corrected'][post_bleach_start:post_bleach_start + post_bleach_points].mean()
+                bleach_depth = (pre_bleach_roi1 - post_bleach_roi1) / pre_bleach_roi1
+            else:
+                post_bleach_roi1 = result_df['roi1_bg_corrected'].iloc[bleach_idx]
+                bleach_depth = (pre_bleach_roi1 - post_bleach_roi1) / pre_bleach_roi1
+            
+            # Store metadata
+            result_df.attrs['pre_bleach_intensity'] = pre_bleach_roi1
+            result_df.attrs['post_bleach_intensity'] = post_bleach_roi1
+            result_df.attrs['bleach_depth'] = bleach_depth
+            result_df.attrs['bleach_frame'] = bleach_idx
             
             # Fill NaN values using forward fill (modern pandas syntax)
             result_df['normalized'] = result_df['normalized'].ffill()
@@ -633,7 +665,14 @@ class FRAPAnalysisCore:
             if result_df['normalized'].isna().all():
                 raise ValueError("Normalization failed - all values are NaN")
             
-            logging.info("Data preprocessing completed successfully")
+            # Log normalization results
+            logging.info("FRAP preprocessing completed with proper normalization:")
+            logging.info(f"  Pre-bleach intensity: {pre_bleach_roi1:.3f}")
+            logging.info(f"  Post-bleach intensity: {post_bleach_roi1:.3f}")
+            logging.info(f"  Bleach depth: {bleach_depth:.1%}")
+            logging.info(f"  Bleach frame: {bleach_idx}")
+            logging.info("  Note: 1.0 now represents theoretical maximum recovery")
+            
             return result_df
             
         except Exception as e:
