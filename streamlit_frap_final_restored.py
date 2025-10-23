@@ -14,9 +14,6 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import minimum_position
 import plotly.graph_objects as go
 import plotly.express as px
-# Force Plotly to use the correct renderer for Streamlit
-import plotly.io as pio
-pio.renderers.default = "browser"  # Ensure Plotly uses browser renderer
 from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
@@ -1943,11 +1940,18 @@ with tab2:
                 st.markdown("---")
                 st.markdown("### Step 3: Individual Curve Analysis")
 
+                # Ensure all files in the group are fitted before plotting
+                with st.spinner("Analyzing all curves for plotting..."):
+                    dm.ensure_group_fitted(selected_group_name)
+                logger.info(f"All files in group '{selected_group_name}' are ensured to be fitted before plotting.")
+
                 # Enhanced plot of all individual curves with outliers highlighted
                 st.markdown("#### All Individual Curves (Outliers Highlighted)")
                 fig_indiv = go.Figure()
 
                 group_files_data = {path: dm.files[path] for path in group['files']}
+                logger.info(f"Plotting {len(group_files_data)} total curves for group '{selected_group_name}'.")
+                logger.info(f"{len(excluded_paths)} curves will be highlighted as outliers.")
 
                 for path, file_data in group_files_data.items():
                     is_outlier = path in excluded_paths
@@ -1981,7 +1985,8 @@ with tab2:
                     xaxis_title="Time (s)",
                     yaxis_title="Normalized Intensity",
                     legend_title="File Status",
-                    height=500
+                    height=500,
+                    yaxis=dict(range=[0, None])  # Ensure y-axis starts from zero for consistency
                 )
                 st.plotly_chart(fig_indiv, use_container_width=True)
 
