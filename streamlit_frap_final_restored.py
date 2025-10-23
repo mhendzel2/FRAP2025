@@ -19,6 +19,8 @@ import logging
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_reference_database import display_reference_database_ui
+from frap_reference_integration import display_reference_comparison_widget
 import zipfile
 import tempfile
 import shutil
@@ -1101,47 +1103,6 @@ class FRAPDataManager:
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
 
-# DIAGNOSTIC TEST: Verify Plotly rendering works
-if st.checkbox("🔍 Show Plotly Diagnostic Test", value=False):
-    st.info("Testing if Plotly charts render in your browser...")
-    st.warning("""
-    **If you don't see charts:**
-    1. Check browser console for JavaScript errors (F12 → Console tab)
-    2. Try a different browser (Chrome/Firefox/Edge)
-    3. Disable browser extensions that might block JavaScript
-    4. Check if you're behind a firewall blocking CDN resources
-    """)
-    try:
-        test_fig = go.Figure()
-        test_fig.add_trace(go.Scatter(
-            x=[1, 2, 3, 4, 5],
-            y=[1, 4, 9, 16, 25],
-            mode='lines+markers',
-            name='Test Data',
-            line=dict(color='red', width=2),
-            marker=dict(size=10)
-        ))
-        test_fig.update_layout(
-            title='Plotly Test Chart - If you see this, Plotly works!',
-            xaxis_title='X Axis',
-            yaxis_title='Y Axis',
-            height=400,
-            showlegend=True
-        )
-        logger.info("DEBUG: About to display Plotly test chart")
-        st.plotly_chart(test_fig, use_container_width=True, key='test_chart')
-        logger.info("DEBUG: ✅ Plotly test chart displayed successfully")
-        st.success("✅ Plotly rendering is working! If you see the chart above, Plotly is functional.")
-        
-        # Also show the raw HTML to verify Plotly is generating output
-        st.write("Chart object created:", type(test_fig))
-        st.write("Number of traces:", len(test_fig.data))
-        
-    except Exception as e:
-        logger.error(f"ERROR: Plotly test failed: {e}", exc_info=True)
-        st.error(f"❌ Plotly test failed: {e}")
-        st.exception(e)
-
 dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_manager is None else st.session_state.data_manager
 
 with st.sidebar:
@@ -1320,7 +1281,7 @@ with st.sidebar:
                     st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
                     st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
 
 with tab1:
     st.header("Single File Analysis")
@@ -1742,6 +1703,29 @@ with tab1:
                                 total_A = A1 + A2 + A3
                                 st.write(f"- Total amplitude: {total_A}")
                                 st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+                
+                # Add Reference Database Comparison Widget
+                st.markdown("---")
+                st.markdown("### 📚 Compare to Reference Database")
+                
+                # Extract relevant parameters for comparison
+                mobile_frac = features.get('mobile_fraction', None)
+                primary_rate = features.get('rate_constant_fast', features.get('rate_constant', None))
+                
+                # Calculate diffusion coefficient if possible
+                deff = None
+                if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 0:
+                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                    effective_radius_um = bleach_radius * pixel_size
+                    deff = (effective_radius_um**2 * primary_rate) / 4.0
+                
+                # Display reference comparison widget
+                display_reference_comparison_widget(
+                    deff_um2_s=deff,
+                    mobile_fraction_pct=mobile_frac,
+                    compartment="Nucleoplasm"  # Default, can be made configurable
+                )
             else:
                 st.error("Could not determine a best fit for this file.")
                 logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
@@ -3085,10 +3069,13 @@ if st.button("Apply Settings", type="primary"):
     st.success("Settings applied successfully.")
     st.rerun()
 
-st.markdown("### Data Management")
-if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-    if st.button("Clear All Data", type="secondary"):
-        st.session_state.data_manager = FRAPDataManager()
-        st.session_state.selected_group_name = None
-        st.success("All data cleared successfully.")
-        st.rerun()
+    st.markdown("### Data Management")
+    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
+        if st.button("Clear All Data", type="secondary"):
+            st.session_state.data_manager = FRAPDataManager()
+            st.session_state.selected_group_name = None
+            st.success("All data cleared successfully.")
+
+with tab7:
+    # Reference Database Tab
+    display_reference_database_ui()
