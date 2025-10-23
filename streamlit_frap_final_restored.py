@@ -14,6 +14,9 @@ from scipy.optimize import curve_fit
 from scipy.ndimage import minimum_position
 import plotly.graph_objects as go
 import plotly.express as px
+# Force Plotly to use the correct renderer for Streamlit
+import plotly.io as pio
+pio.renderers.default = "browser"  # Ensure Plotly uses browser renderer
 from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
@@ -646,29 +649,42 @@ class FRAPDataManager:
         bool
             True if file is fitted (or was just fitted), False on error
         """
+        logger.info(f"DEBUG ensure_file_fitted: Starting for {file_path}")
+        
         if file_path not in self.files:
+            logger.error(f"DEBUG ensure_file_fitted: File path not in self.files!")
             return False
             
         file_data = self.files[file_path]
+        logger.info(f"DEBUG ensure_file_fitted: File name: {file_data.get('name', 'UNKNOWN')}")
         
         # Check if already fitted
         if file_data.get('fitted', False):
+            logger.info(f"DEBUG ensure_file_fitted: File already marked as fitted")
             return True
             
         # Need to fit models
         try:
+            logger.info(f"DEBUG ensure_file_fitted: Attempting to fit models...")
             time = file_data['time']
             intensity = file_data['intensity']
             
+            logger.info(f"DEBUG ensure_file_fitted: Data loaded - time points: {len(time)}, intensity points: {len(intensity)}")
+            
             fits = CoreFRAPAnalysis.fit_all_models(time, intensity)
+            logger.info(f"DEBUG ensure_file_fitted: fit_all_models returned {len(fits) if fits else 0} fits")
+            
             best_fit = CoreFRAPAnalysis.select_best_fit(fits, st.session_state.settings['default_criterion'])
+            logger.info(f"DEBUG ensure_file_fitted: select_best_fit returned: {best_fit is not None}")
             
             if best_fit:
+                logger.info(f"DEBUG ensure_file_fitted: Best fit model: {best_fit.get('model', 'UNKNOWN')}")
                 params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
                 params = validate_analysis_results(params)
+                logger.info(f"DEBUG ensure_file_fitted: Features extracted successfully")
             else:
                 params = None
-                logger.warning(f"No valid fit found for {file_data['name']}")
+                logger.warning(f"DEBUG ensure_file_fitted: No valid fit found for {file_data['name']}")
             
             # Update file data
             file_data['fits'] = fits
@@ -676,11 +692,11 @@ class FRAPDataManager:
             file_data['features'] = params
             file_data['fitted'] = True
             
-            logger.info(f"Fitted models for: {file_data['name']}")
+            logger.info(f"DEBUG ensure_file_fitted: Fitted models for: {file_data['name']}")
             return True
             
         except Exception as e:
-            logger.error(f"Error fitting models for {file_data.get('name', 'unknown')}: {e}")
+            logger.error(f"DEBUG ensure_file_fitted: ERROR fitting models for {file_data.get('name', 'unknown')}: {e}", exc_info=True)
             return False
     
     def ensure_group_fitted(self, group_name):
@@ -1087,6 +1103,48 @@ class FRAPDataManager:
 # --- Streamlit UI Application ---
 st.title("🔬 FRAP Analysis Application")
 st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
+
+# DIAGNOSTIC TEST: Verify Plotly rendering works
+if st.checkbox("🔍 Show Plotly Diagnostic Test", value=False):
+    st.info("Testing if Plotly charts render in your browser...")
+    st.warning("""
+    **If you don't see charts:**
+    1. Check browser console for JavaScript errors (F12 → Console tab)
+    2. Try a different browser (Chrome/Firefox/Edge)
+    3. Disable browser extensions that might block JavaScript
+    4. Check if you're behind a firewall blocking CDN resources
+    """)
+    try:
+        test_fig = go.Figure()
+        test_fig.add_trace(go.Scatter(
+            x=[1, 2, 3, 4, 5],
+            y=[1, 4, 9, 16, 25],
+            mode='lines+markers',
+            name='Test Data',
+            line=dict(color='red', width=2),
+            marker=dict(size=10)
+        ))
+        test_fig.update_layout(
+            title='Plotly Test Chart - If you see this, Plotly works!',
+            xaxis_title='X Axis',
+            yaxis_title='Y Axis',
+            height=400,
+            showlegend=True
+        )
+        logger.info("DEBUG: About to display Plotly test chart")
+        st.plotly_chart(test_fig, use_container_width=True, key='test_chart')
+        logger.info("DEBUG: ✅ Plotly test chart displayed successfully")
+        st.success("✅ Plotly rendering is working! If you see the chart above, Plotly is functional.")
+        
+        # Also show the raw HTML to verify Plotly is generating output
+        st.write("Chart object created:", type(test_fig))
+        st.write("Number of traces:", len(test_fig.data))
+        
+    except Exception as e:
+        logger.error(f"ERROR: Plotly test failed: {e}", exc_info=True)
+        st.error(f"❌ Plotly test failed: {e}")
+        st.exception(e)
+
 dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_manager is None else st.session_state.data_manager
 
 with st.sidebar:
@@ -1272,20 +1330,53 @@ with tab1:
     if dm.files:
         selected_file_path = st.selectbox("Select file to analyze", list(dm.files.keys()), format_func=lambda p: dm.files[p]['name'])
         if selected_file_path and selected_file_path in dm.files:
+            # Debug: Check file state
+            file_debug_data = dm.files.get(selected_file_path)
+            logger.info(f"DEBUG: Selected file: {selected_file_path}")
+            logger.info(f"DEBUG: File exists in dm.files: {selected_file_path in dm.files}")
+            
+            if file_debug_data:
+                logger.info(f"DEBUG: File name: {file_debug_data.get('name', 'UNKNOWN')}")
+                logger.info(f"DEBUG: File fitted status: {file_debug_data.get('fitted', False)}")
+                logger.info(f"DEBUG: File has best_fit: {file_debug_data.get('best_fit') is not None}")
+                logger.info(f"DEBUG: File has features: {file_debug_data.get('features') is not None}")
+                if file_debug_data.get('best_fit'):
+                    logger.info(f"DEBUG: best_fit model: {file_debug_data['best_fit'].get('model', 'NONE')}")
+            
             # Ensure file is fitted before displaying results
             if not dm.files[selected_file_path].get('fitted', False):
+                st.info(f"🔄 File not yet analyzed. Fitting models now...")
+                logger.info(f"DEBUG: Calling ensure_file_fitted for {selected_file_path}")
                 with st.spinner(f"Analyzing {dm.files[selected_file_path]['name']}..."):
-                    dm.ensure_file_fitted(selected_file_path)
+                    fit_result = dm.ensure_file_fitted(selected_file_path)
+                    logger.info(f"DEBUG: ensure_file_fitted returned: {fit_result}")
+                    
+                # Check status after fitting
+                logger.info(f"DEBUG: After fitting - fitted status: {dm.files[selected_file_path].get('fitted', False)}")
+                logger.info(f"DEBUG: After fitting - has best_fit: {dm.files[selected_file_path].get('best_fit') is not None}")
+            else:
+                logger.info(f"DEBUG: File already fitted, skipping ensure_file_fitted")
             
             file_data=dm.files[selected_file_path]
             st.subheader(f"Results for: {file_data['name']}")
+            
+            # CRITICAL DEBUG: Check best_fit status
+            logger.info(f"DEBUG: ⚠️ Checking best_fit status...")
+            logger.info(f"DEBUG: file_data keys: {list(file_data.keys())}")
+            logger.info(f"DEBUG: file_data['best_fit'] = {file_data.get('best_fit', 'KEY_MISSING')}")
+            logger.info(f"DEBUG: bool(file_data['best_fit']) = {bool(file_data.get('best_fit'))}")
+            st.write(f"🔍 DEBUG: best_fit exists = {file_data.get('best_fit') is not None}")
+            st.write(f"🔍 DEBUG: bool(best_fit) = {bool(file_data.get('best_fit'))}")
+            
             if file_data['best_fit']:
+                st.success("✅ Entered best_fit conditional block")
                 best_fit,features=file_data['best_fit'],file_data['features']
                 
                 # Handle case where features might be None
                 if features is None:
                     features = {}
                     
+                logger.info(f"DEBUG: Displaying results for fitted file - model: {best_fit.get('model', 'UNKNOWN')}")
                 t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
 
                 # Enhanced metrics display with validation warnings
@@ -1656,6 +1747,9 @@ with tab1:
                                 st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
             else:
                 st.error("Could not determine a best fit for this file.")
+                logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
+                logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
+                logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
 
                 # Show debugging information for failed fits
                 if file_data.get('fits'):
@@ -1665,6 +1759,17 @@ with tab1:
                         st.write(f"- R²: {fit.get('r2', 'N/A')}")
                         st.write(f"- AIC: {fit.get('aic', 'N/A')}")
                         st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+                else:
+                    st.warning("No fit attempts were made. This might indicate a data loading issue.")
+                    
+                # Show raw data info
+                st.markdown("### Raw Data Info")
+                st.write(f"- Time points: {len(file_data.get('time', []))}")
+                st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+                if len(file_data.get('time', [])) > 0:
+                    st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+                if len(file_data.get('intensity', [])) > 0:
+                    st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
     else:
         st.info("Upload files using the sidebar to begin.")
 
