@@ -535,7 +535,7 @@ class FRAPDataManager:
         Parameters:
         -----------
         file_path : str
-            Path to the file
+            Path to the file (used as the key in self.files dictionary)
         file_name : str
             Name of the file
         fit_models : bool, default=True
@@ -544,6 +544,9 @@ class FRAPDataManager:
             Models can be fitted later using ensure_file_fitted().
         """
         try:
+            # Keep the original file_path as the dictionary key
+            original_file_path = file_path
+            
             # Extract original extension before the hash suffix
             if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
                 # Find the original extension and create a temporary file with correct extension
@@ -566,9 +569,14 @@ class FRAPDataManager:
 
                 if temp_path != file_path:
                     shutil.copy2(file_path, temp_path)
-                    file_path = temp_path
+                    # Use temp_path for reading, but keep original_file_path for dictionary key
+                    file_path_to_read = temp_path
+                else:
+                    file_path_to_read = file_path
+            else:
+                file_path_to_read = file_path
 
-            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path))
+            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path_to_read))
             if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
                 time,intensity = processed_df['time'].values,processed_df['normalized'].values
 
@@ -606,7 +614,8 @@ class FRAPDataManager:
                     best_fit = None
                     params = None
 
-                self.files[file_path]={
+                # IMPORTANT: Use original_file_path as the dictionary key, not the modified file_path
+                self.files[original_file_path]={
                     'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
                     'fits':fits,'best_fit':best_fit,'features':params,
                     'fitted': fit_models  # Track whether models have been fitted
@@ -913,30 +922,19 @@ class FRAPDataManager:
                                         shutil.copy(file_path_in_temp, tp)
 
                                     # Use lazy loading (fit_models=False) for faster bulk upload
-                                    load_result = self.load_file(tp, file_name, fit_models=False)
-                                    logger.info(f"load_file returned: {load_result} for {file_name} (path: {tp})")
-                                    logger.info(f"File in self.files after load: {tp in self.files}")
-                                    
-                                    if load_result:
-                                        add_result = self.add_file_to_group(group_name, tp)
-                                        if add_result:
+                                    if self.load_file(tp, file_name, fit_models=False):
+                                        if self.add_file_to_group(group_name, tp):
                                             success_count += 1
-                                            logger.info(f"Successfully added {file_name} to group {group_name}")
                                         else:
-                                            logger.error(f"Failed to add {file_name} (path: {tp}) to group {group_name}")
-                                            logger.error(f"Group exists: {group_name in self.groups}, File exists: {tp in self.files}")
                                             raise ValueError(f"Failed to add file to group {group_name}")
                                     else:
                                         raise ValueError("Failed to load data from file.")
                                 else:
                                     # File already exists, just add to group
-                                    add_result = self.add_file_to_group(group_name, tp)
-                                    if add_result:
+                                    if self.add_file_to_group(group_name, tp):
                                         success_count += 1
-                                        logger.info(f"File already existed, added {file_name} to group {group_name}")
                                     else:
                                         logger.error(f"File already existed but failed to add to group: {file_name} to {group_name}")
-                                        logger.error(f"Group exists: {group_name in self.groups}, File exists: {tp in self.files}")
 
                             except Exception as e:
                                 error_count += 1
@@ -1134,21 +1132,12 @@ with st.sidebar:
                             # Mark this file as processed
                             st.session_state.processed_zip_files.add(zip_file_id)
                             
-                            # Debug: Log group contents
-                            logger.info(f"Groups after processing: {list(dm.groups.keys())}")
-                            for gname, gdata in dm.groups.items():
-                                logger.info(f"Group '{gname}' has {len(gdata.get('files', []))} files: {gdata.get('files', [])}")
-                            
                             # Show successful groups
                             if dm.groups:
                                 st.success("Successfully created {} groups from ZIP archive:".format(len(dm.groups)))
                                 for group_name, group_data in dm.groups.items():
                                     file_count = len(group_data.get('files', []))
                                     st.write(f"📁 **{group_name}**: {file_count} files")
-                                    # Debug output
-                                    if file_count == 0:
-                                        st.error(f"⚠️ Group '{group_name}' has NO files!")
-                                        logger.error(f"Group '{group_name}' created but has no files!")
 
 
                                 # Show summary of what was processed
@@ -1292,6 +1281,11 @@ with tab1:
             st.subheader(f"Results for: {file_data['name']}")
             if file_data['best_fit']:
                 best_fit,features=file_data['best_fit'],file_data['features']
+                
+                # Handle case where features might be None
+                if features is None:
+                    features = {}
+                    
                 t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
 
                 # Enhanced metrics display with validation warnings
@@ -1567,7 +1561,9 @@ with tab1:
                 st.markdown("### Biophysical Interpretation")
 
                 # Calculate diffusion coefficient and molecular weight estimates
-                features = file_data.get('features', {})
+                features = file_data.get('features')
+                if features is None:
+                    features = {}
                 primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
 
                 # More robust validation of rate constant
@@ -1893,7 +1889,11 @@ with tab2:
                     all_files_data = []
                     for path in group['files']:
                         file_data = dm.files[path]
-                        features = file_data.get('features', {})
+                        features = file_data.get('features')
+                        
+                        # Handle case where features is None (file not fitted or fitting failed)
+                        if features is None:
+                            features = {}
 
                         # Get dual interpretation for each file
                         bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
@@ -2068,17 +2068,18 @@ with tab2:
                             stats_data = {
                                 'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Median', 'CV (%)'],
                                 'Value': [
-                                    len(param_data),
-                                    f"{mean_val:.4f}",
-                                    f"{std_val:.4f}",
-                                    f"{param_data[selected_param].min():.4f}",
-                                    f"{param_data[selected_param].max():.4f}",
-                                    f"{median_val:.4f}",
-                                    f"{cv_val:.1f}"
+                                    float(len(param_data)),
+                                    float(mean_val),
+                                    float(std_val),
+                                    float(param_data[selected_param].min()),
+                                    float(param_data[selected_param].max()),
+                                    float(median_val),
+                                    float(cv_val)
                                 ]
                             }
 
                             stats_df = pd.DataFrame(stats_data)
+                            # Display with proper formatting
                             st.dataframe(stats_df, use_container_width=True)
                         else:
                             st.warning("No valid data for selected parameter")
