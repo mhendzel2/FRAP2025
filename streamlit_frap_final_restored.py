@@ -1722,8 +1722,8 @@ with tab1:
                 
                 # Display reference comparison widget
                 display_reference_comparison_widget(
-                    deff_um2_s=deff,
-                    mobile_fraction_pct=mobile_frac,
+                    experimental_deff=deff,
+                    experimental_mf=mobile_frac,
                     compartment="Nucleoplasm"  # Default, can be made configurable
                 )
             else:
