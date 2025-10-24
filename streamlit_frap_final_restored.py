@@ -1366,348 +1366,355 @@ with tab1:
                             st.warning("Very high bleach efficiency (>90%)")
 
                 # Main recovery curve plot with proper FRAP visualization
-                fig = go.Figure()
+                st.markdown("### FRAP Recovery Curve")
+                
+                try:
+                    fig = go.Figure()
 
-                # Get the bleach frame index and interpolated bleach time
-                bleach_idx = np.argmin(file_data['intensity'])
+                    # Get the bleach frame index and interpolated bleach time
+                    bleach_idx = np.argmin(file_data['intensity'])
 
-                # Calculate the interpolated bleach time (same as in get_post_bleach_data)
-                if bleach_idx > 0:
-                    interpolated_bleach_time = (file_data['time'][bleach_idx-1] + file_data['time'][bleach_idx]) / 2.0
-                else:
-                    interpolated_bleach_time = file_data['time'][bleach_idx]
+                    # Calculate the interpolated bleach time (same as in get_post_bleach_data)
+                    if bleach_idx > 0:
+                        interpolated_bleach_time = (file_data['time'][bleach_idx-1] + file_data['time'][bleach_idx]) / 2.0
+                    else:
+                        interpolated_bleach_time = file_data['time'][bleach_idx]
 
-                # Pre-bleach data (shown but not fitted)
-                pre_bleach_time = file_data['time'][:bleach_idx]
-                pre_bleach_intensity = file_data['intensity'][:bleach_idx]
+                    # Pre-bleach data (shown but not fitted)
+                    pre_bleach_time = file_data['time'][:bleach_idx]
+                    pre_bleach_intensity = file_data['intensity'][:bleach_idx]
 
-                # Add pre-bleach data (gray markers)
-                if len(pre_bleach_time) > 0:
+                    # Add pre-bleach data (gray markers)
+                    if len(pre_bleach_time) > 0:
+                        fig.add_trace(go.Scatter(
+                            x=pre_bleach_time,
+                            y=pre_bleach_intensity,
+                            mode='markers',
+                            name='Pre-bleach (not fitted)',
+                            marker=dict(color='lightgray', size=6, opacity=0.7),
+                            showlegend=True
+                        ))
+
+                    # Convert fitted timepoints back to original time scale for plotting
+                    # t_fit starts from 0, so we add the interpolated bleach time
+                    t_fit_original_scale = t_fit + interpolated_bleach_time
+
+                    # Add post-bleach data (blue markers) - use the actual fitted data points
                     fig.add_trace(go.Scatter(
-                        x=pre_bleach_time,
-                        y=pre_bleach_intensity,
+                        x=t_fit_original_scale,
+                        y=intensity_fit,
                         mode='markers',
-                        name='Pre-bleach (not fitted)',
-                        marker=dict(color='lightgray', size=6, opacity=0.7),
+                        name='Post-bleach (fitted)',
+                        marker=dict(color='blue', size=6),
                         showlegend=True
                     ))
 
-                # Convert fitted timepoints back to original time scale for plotting
-                # t_fit starts from 0, so we add the interpolated bleach time
-                t_fit_original_scale = t_fit + interpolated_bleach_time
+                    # Add the fitted curve starting from the interpolated point
+                    # Convert fitted curve timepoints to original scale
+                    fig.add_trace(go.Scatter(
+                        x=t_fit_original_scale,
+                        y=best_fit['fitted_values'],
+                        mode='lines',
+                        name=f"Fit: {best_fit['model'].title()}",
+                        line=dict(color='red', width=3),
+                        showlegend=True
+                    ))
 
-                # Add post-bleach data (blue markers) - use the actual fitted data points
-                fig.add_trace(go.Scatter(
-                    x=t_fit_original_scale,
-                    y=intensity_fit,
-                    mode='markers',
-                    name='Post-bleach (fitted)',
-                    marker=dict(color='blue', size=6),
-                    showlegend=True
+                    # Add a vertical line at the interpolated bleach time
+                    # Use the interpolated bleach time we calculated above
+                    bleach_time = interpolated_bleach_time
+                    min_intensity = 0  # Start y-axis from zero
+                    max_intensity = max(np.max(file_data['intensity']), np.max(intensity_fit))
+
+                    fig.add_shape(
+                        type="line",
+                        x0=bleach_time, y0=min_intensity,
+                        x1=bleach_time, y1=max_intensity,
+                        line=dict(color="orange", width=2, dash="dash"),
+                    )
+
+                    # Add annotation for bleach event
+                    fig.add_annotation(
+                        x=bleach_time,
+                        y=max_intensity * 0.9,
+                        text="Bleach Event",
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowcolor="orange",
+                        font=dict(color="orange")
+                    )
+
+                    # Update layout with proper scaling
+                    fig.update_layout(
+                        title='FRAP Recovery Curve',
+                        xaxis_title='Time (s)',
+                        yaxis_title='Normalized Intensity',
+                        height=450,
+                        yaxis=dict(range=[0, max_intensity * 1.05]),  # Start from 0, add 5% headroom
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                except Exception as e:
+                    st.error(f"❌ Failed to create FRAP recovery curve plot: {str(e)}")
+                    logger.error(f"Plot error: {e}", exc_info=True)
+        
+        # Add explanation text
+        st.markdown("""
+        **Plot Explanation:**
+        - **Gray points**: Pre-bleach data (shown for context, not included in fitting)
+        - **Blue points**: Post-bleach data starting from interpolated bleach point (used for curve fitting)
+        - **Red curve**: Fitted exponential recovery model aligned with post-bleach timepoints
+        - **Orange dashed line**: Interpolated bleach event (midpoint between last pre-bleach and first post-bleach frames)
+        - **Y-axis**: Starts at zero for proper scaling
+        """)
+
+        # Component-wise recovery analysis for multi-component fits
+        if best_fit['model'] in ['double', 'triple']:
+            st.markdown("### Component-wise Recovery Analysis")
+
+            comp_fig = go.Figure()
+
+            # Add original data
+            comp_fig.add_trace(go.Scatter(
+                x=t_fit, y=intensity_fit, mode='markers', name='Data',
+                marker=dict(color='blue', size=4)
+            ))
+
+            # Add total fit
+            comp_fig.add_trace(go.Scatter(
+                x=t_fit, y=best_fit['fitted_values'], mode='lines', name='Total Fit',
+                line=dict(color='red', width=3)
+            ))
+
+            # Calculate and plot individual components  
+            # Note: Using mathematical formulas directly instead of function references
+            # to support session files that may not contain function objects
+            params = best_fit['params']
+
+            if best_fit['model'] == 'double':
+                A1, k1, A2, k2, C = params
+                comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                    line=dict(dash='dot', color='green')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp2, mode='lines', name=f'Slow (k={k2:.4f})',
+                    line=dict(dash='dot', color='purple')
                 ))
 
-                # Add the fitted curve starting from the interpolated point
-                # Convert fitted curve timepoints to original scale
-                fig.add_trace(go.Scatter(
-                    x=t_fit_original_scale,
-                    y=best_fit['fitted_values'],
-                    mode='lines',
-                    name=f"Fit: {best_fit['model'].title()}",
-                    line=dict(color='red', width=3),
-                    showlegend=True
+            elif best_fit['model'] == 'triple':
+                A1, k1, A2, k2, A3, k3, C = params
+                comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+                comp3 = A3 * (1 - np.exp(-k3 * t_fit)) + C
+
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                    line=dict(dash='dot', color='green')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp2, mode='lines', name=f'Medium (k={k2:.4f})',
+                    line=dict(dash='dot', color='blue')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp3, mode='lines', name=f'Slow (k={k3:.4f})',
+                    line=dict(dash='dot', color='purple')
                 ))
 
-                # Add a vertical line at the interpolated bleach time
-                # Use the interpolated bleach time we calculated above
-                bleach_time = interpolated_bleach_time
-                min_intensity = 0  # Start y-axis from zero
-                max_intensity = max(np.max(file_data['intensity']), np.max(intensity_fit))
+            comp_fig.update_layout(
+                title="Component-wise Recovery Analysis",
+                xaxis_title="Time (s)",
+                yaxis_title="Normalized Intensity",
+                height=400,
+                yaxis=dict(range=[0, np.max(intensity_fit) * 1.05])
+            )
+            st.plotly_chart(comp_fig, use_container_width=True)
 
-                fig.add_shape(
-                    type="line",
-                    x0=bleach_time, y0=min_intensity,
-                    x1=bleach_time, y1=max_intensity,
-                    line=dict(color="orange", width=2, dash="dash"),
-                )
+        # Residuals analysis
+        st.markdown("### Residuals Analysis")
+        st.markdown("Random scatter around zero indicates good fit quality. Patterns suggest model inadequacy.")
 
-                # Add annotation for bleach event
-                fig.add_annotation(
-                    x=bleach_time,
-                    y=max_intensity * 0.9,
-                    text="Bleach Event",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowcolor="orange",
-                    font=dict(color="orange")
-                )
+        if 'fitted_values' in best_fit:
+            residuals=intensity_fit-best_fit['fitted_values']
+            residual_std=np.std(residuals)
+            residual_mean=np.mean(residuals)
 
-                # Update layout with proper scaling
-                fig.update_layout(
-                    title='FRAP Recovery Curve',
-                    xaxis_title='Time (s)',
-                    yaxis_title='Normalized Intensity',
-                    height=450,
-                    yaxis=dict(range=[0, max_intensity * 1.05]),  # Start from 0, add 5% headroom
-                    showlegend=True,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    )
-                )
+            res_fig=go.Figure()
+            res_fig.add_trace(go.Scatter(
+                x=t_fit,y=residuals,mode='markers',
+                marker=dict(color='orange',size=6),name='Residuals',
+                hovertemplate='Time: %{x:.1f}s<br>Residual: %{y:.4f}<extra></extra>'
+            ))
+            res_fig.add_hline(y=0,line_dash="dash",line_color="gray",annotation_text="Zero")
+            res_fig.add_hline(y=2*residual_std,line_dash="dot",line_color="red",annotation_text="+2σ")
+            res_fig.add_hline(y=-2*residual_std,line_dash="dot",line_color="red",annotation_text="-2σ")
 
-                st.plotly_chart(fig, use_container_width=True)
+            res_fig.update_layout(
+                title=f"Residuals - {best_fit['model'].title()} Model",
+                xaxis_title="Time (s)",yaxis_title="Residuals",height=350,
+                annotations=[dict(x=0.02,y=0.98,xref="paper",yref="paper",
+                                 text=f"Mean: {residual_mean:.4f}<br>Std: {residual_std:.4f}",
+                                 showarrow=False,bgcolor="white",bordercolor="gray",borderwidth=1)]
+            )
+            st.plotly_chart(res_fig,use_container_width=True)
 
-                # Add explanation text
-                st.markdown("""
-                **Plot Explanation:**
-                - **Gray points**: Pre-bleach data (shown for context, not included in fitting)
-                - **Blue points**: Post-bleach data starting from interpolated bleach point (used for curve fitting)
-                - **Red curve**: Fitted exponential recovery model aligned with post-bleach timepoints
-                - **Orange dashed line**: Interpolated bleach event (midpoint between last pre-bleach and first post-bleach frames)
-                - **Y-axis**: Starts at zero for proper scaling
-                """)
+        # Biophysical parameters
+        st.markdown("### Biophysical Interpretation")
 
-                # Component-wise recovery analysis for multi-component fits
-                if best_fit['model'] in ['double', 'triple']:
-                    st.markdown("### Component-wise Recovery Analysis")
+        # Calculate diffusion coefficient and molecular weight estimates
+        features = file_data.get('features')
+        if features is None:
+            features = {}
+        primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
 
-                    comp_fig = go.Figure()
+        # More robust validation of rate constant
+        if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
+            bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
+            pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
+            effective_radius_um=bleach_radius*pixel_size
 
-                    # Add original data
-                    comp_fig.add_trace(go.Scatter(
-                        x=t_fit, y=intensity_fit, mode='markers', name='Data',
-                        marker=dict(color='blue', size=4)
-                    ))
+            # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+            diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
 
-                    # Add total fit
-                    comp_fig.add_trace(go.Scatter(
-                        x=t_fit, y=best_fit['fitted_values'], mode='lines', name='Total Fit',
-                        line=dict(color='red', width=3)
-                    ))
+            # Binding interpretation: k_off = k
+            k_off=primary_rate
 
-                    # Calculate and plot individual components  
-                    # Note: Using mathematical formulas directly instead of function references
-                    # to support session files that may not contain function objects
-                    params = best_fit['params']
+            # Molecular weight estimation (relative to GFP)
+            gfp_d=25.0  # μm²/s
+            gfp_mw=27.0  # kDa
+            apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
 
-                    if best_fit['model'] == 'double':
-                        A1, k1, A2, k2, C = params
-                        comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
-                        comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+            # Validate calculated values
+            if diffusion_coeff > 100:
+                st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+            if apparent_mw > 10000:
+                st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
 
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
-                            line=dict(dash='dot', color='green')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit, y=comp2, mode='lines', name=f'Slow (k={k2:.4f})',
-                            line=dict(dash='dot', color='purple')
-                        ))
+            col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
+            with col_bio1:
+                st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+            with col_bio2:
+                st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+            with col_bio3:
+                st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+            with col_bio4:
+                immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                st.metric("Immobile (%)",f"{immobile_frac:.1f}")
 
-                    elif best_fit['model'] == 'triple':
-                        A1, k1, A2, k2, A3, k3, C = params
-                        comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
-                        comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
-                        comp3 = A3 * (1 - np.exp(-k3 * t_fit)) + C
+        else:
+            # More informative error message with diagnostic information
+            debug_info = []
+            if primary_rate is None:
+                debug_info.append("Rate constant is None")
+            elif np.isnan(primary_rate):
+                debug_info.append("Rate constant is NaN")
+            elif primary_rate <= 0:
+                debug_info.append(f"Rate constant is non-positive ({primary_rate:.6f})")
+            elif primary_rate <= 1e-8:
+                debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
 
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
-                            line=dict(dash='dot', color='green')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit, y=comp2, mode='lines', name=f'Medium (k={k2:.4f})',
-                            line=dict(dash='dot', color='blue')
-                        ))
-                        comp_fig.add_trace(go.Scatter(
-                            x=t_fit, y=comp3, mode='lines', name=f'Slow (k={k3:.4f})',
-                            line=dict(dash='dot', color='purple')
-                        ))
+            st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
 
-                    comp_fig.update_layout(
-                        title="Component-wise Recovery Analysis",
-                        xaxis_title="Time (s)",
-                        yaxis_title="Normalized Intensity",
-                        height=400,
-                        yaxis=dict(range=[0, np.max(intensity_fit) * 1.05])
-                    )
-                    st.plotly_chart(comp_fig, use_container_width=True)
+            # Display available parameters for debugging
+            with st.expander("🔍 Debug Information"):
+                st.write("**Available parameters:**")
+                for key, value in features.items():
+                    if 'rate' in key.lower() or 'constant' in key.lower():
+                        st.write(f"- {key}: {value}")
+                st.write("**Model information:**")
+                if best_fit:
+                    st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
+                    st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
+                    st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
 
-                # Residuals analysis
-                st.markdown("### Residuals Analysis")
-                st.markdown("Random scatter around zero indicates good fit quality. Patterns suggest model inadequacy.")
+                # Show raw fitting parameters for debugging
+                if 'params' in best_fit:
+                    st.write("**Raw fitting parameters:**")
+                    model = best_fit.get('model', 'unknown')
+                    params_raw = best_fit['params']
+                    if model == 'single' and len(params_raw) >= 3:
+                        A, k, C = params_raw[:3]
+                        st.write(f"- Amplitude (A): {A}")
+                        st.write(f"- Rate constant (k): {k}")
+                        st.write(f"- Offset (C): {C}")
+                        st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
+                    elif model == 'double' and len(params_raw) >= 5:
+                        A1, k1, A2, k2, C = params_raw[:5]
+                        st.write(f"- A1: {A1}, k1: {k1}")
+                        st.write(f"- A2: {A2}, k2: {k2}")
+                        st.write(f"- Offset (C): {C}")
+                        total_A = A1 + A2
+                        st.write(f"- Total amplitude: {total_A}")
+                        st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+                    elif model == 'triple' and len(params_raw) >= 6:
+                        A1, k1, A2, k2, A3, k3, C = params_raw[:6]
+                        st.write(f"- A1: {A1}, k1: {k1}")
+                        st.write(f"- A2: {A2}, k2: {k2}")
+                        st.write(f"- A3: {A3}, k3: {k3}")
+                        st.write(f"- Offset (C): {C}")
+                        total_A = A1 + A2 + A3
+                        st.write(f"- Total amplitude: {total_A}")
+                        st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+        
+            # Add Reference Database Comparison Widget
+            st.markdown("---")
+            st.markdown("### 📚 Compare to Reference Database")
 
-                if 'fitted_values' in best_fit:
-                    residuals=intensity_fit-best_fit['fitted_values']
-                    residual_std=np.std(residuals)
-                    residual_mean=np.mean(residuals)
+            # Extract relevant parameters for comparison
+            mobile_frac = features.get('mobile_fraction', None)
+            primary_rate = features.get('rate_constant_fast', features.get('rate_constant', None))
 
-                    res_fig=go.Figure()
-                    res_fig.add_trace(go.Scatter(
-                        x=t_fit,y=residuals,mode='markers',
-                        marker=dict(color='orange',size=6),name='Residuals',
-                        hovertemplate='Time: %{x:.1f}s<br>Residual: %{y:.4f}<extra></extra>'
-                    ))
-                    res_fig.add_hline(y=0,line_dash="dash",line_color="gray",annotation_text="Zero")
-                    res_fig.add_hline(y=2*residual_std,line_dash="dot",line_color="red",annotation_text="+2σ")
-                    res_fig.add_hline(y=-2*residual_std,line_dash="dot",line_color="red",annotation_text="-2σ")
+            # Calculate diffusion coefficient if possible
+            deff = None
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 0:
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                effective_radius_um = bleach_radius * pixel_size
+                deff = (effective_radius_um**2 * primary_rate) / 4.0
 
-                    res_fig.update_layout(
-                        title=f"Residuals - {best_fit['model'].title()} Model",
-                        xaxis_title="Time (s)",yaxis_title="Residuals",height=350,
-                        annotations=[dict(x=0.02,y=0.98,xref="paper",yref="paper",
-                                         text=f"Mean: {residual_mean:.4f}<br>Std: {residual_std:.4f}",
-                                         showarrow=False,bgcolor="white",bordercolor="gray",borderwidth=1)]
-                    )
-                    st.plotly_chart(res_fig,use_container_width=True)
+            # Display reference comparison widget
+            display_reference_comparison_widget(
+                experimental_deff=deff,
+                experimental_mf=mobile_frac,
+                compartment="Nucleoplasm"  # Default, can be made configurable
+            )
+        else:
+            st.error("Could not determine a best fit for this file.")
+            logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
+            logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
+            logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
 
-                # Biophysical parameters
-                st.markdown("### Biophysical Interpretation")
-
-                # Calculate diffusion coefficient and molecular weight estimates
-                features = file_data.get('features')
-                if features is None:
-                    features = {}
-                primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
-
-                # More robust validation of rate constant
-                if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
-                    bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
-                    pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
-                    effective_radius_um=bleach_radius*pixel_size
-
-                    # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
-                    diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
-
-                    # Binding interpretation: k_off = k
-                    k_off=primary_rate
-
-                    # Molecular weight estimation (relative to GFP)
-                    gfp_d=25.0  # μm²/s
-                    gfp_mw=27.0  # kDa
-                    apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
-
-                    # Validate calculated values
-                    if diffusion_coeff > 100:
-                        st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
-                    if apparent_mw > 10000:
-                        st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
-
-                    col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
-                    with col_bio1:
-                        st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
-                    with col_bio2:
-                        st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
-                    with col_bio3:
-                        st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
-                    with col_bio4:
-                        immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
-                        st.metric("Immobile (%)",f"{immobile_frac:.1f}")
-
-                else:
-                    # More informative error message with diagnostic information
-                    debug_info = []
-                    if primary_rate is None:
-                        debug_info.append("Rate constant is None")
-                    elif np.isnan(primary_rate):
-                        debug_info.append("Rate constant is NaN")
-                    elif primary_rate <= 0:
-                        debug_info.append(f"Rate constant is non-positive ({primary_rate:.6f})")
-                    elif primary_rate <= 1e-8:
-                        debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
-
-                    st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
-
-                    # Display available parameters for debugging
-                    with st.expander("🔍 Debug Information"):
-                        st.write("**Available parameters:**")
-                        for key, value in features.items():
-                            if 'rate' in key.lower() or 'constant' in key.lower():
-                                st.write(f"- {key}: {value}")
-                        st.write("**Model information:**")
-                        if best_fit:
-                            st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
-                            st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
-                            st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
-
-                        # Show raw fitting parameters for debugging
-                        if 'params' in best_fit:
-                            st.write("**Raw fitting parameters:**")
-                            model = best_fit.get('model', 'unknown')
-                            params_raw = best_fit['params']
-                            if model == 'single' and len(params_raw) >= 3:
-                                A, k, C = params_raw[:3]
-                                st.write(f"- Amplitude (A): {A}")
-                                st.write(f"- Rate constant (k): {k}")
-                                st.write(f"- Offset (C): {C}")
-                                st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
-                            elif model == 'double' and len(params_raw) >= 5:
-                                A1, k1, A2, k2, C = params_raw[:5]
-                                st.write(f"- A1: {A1}, k1: {k1}")
-                                st.write(f"- A2: {A2}, k2: {k2}")
-                                st.write(f"- Offset (C): {C}")
-                                total_A = A1 + A2
-                                st.write(f"- Total amplitude: {total_A}")
-                                st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
-                            elif model == 'triple' and len(params_raw) >= 6:
-                                A1, k1, A2, k2, A3, k3, C = params_raw[:6]
-                                st.write(f"- A1: {A1}, k1: {k1}")
-                                st.write(f"- A2: {A2}, k2: {k2}")
-                                st.write(f"- A3: {A3}, k3: {k3}")
-                                st.write(f"- Offset (C): {C}")
-                                total_A = A1 + A2 + A3
-                                st.write(f"- Total amplitude: {total_A}")
-                                st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
-                
-                # Add Reference Database Comparison Widget
-                st.markdown("---")
-                st.markdown("### 📚 Compare to Reference Database")
-                
-                # Extract relevant parameters for comparison
-                mobile_frac = features.get('mobile_fraction', None)
-                primary_rate = features.get('rate_constant_fast', features.get('rate_constant', None))
-                
-                # Calculate diffusion coefficient if possible
-                deff = None
-                if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 0:
-                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
-                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
-                    effective_radius_um = bleach_radius * pixel_size
-                    deff = (effective_radius_um**2 * primary_rate) / 4.0
-                
-                # Display reference comparison widget
-                display_reference_comparison_widget(
-                    experimental_deff=deff,
-                    experimental_mf=mobile_frac,
-                    compartment="Nucleoplasm"  # Default, can be made configurable
-                )
+            # Show debugging information for failed fits
+            if file_data.get('fits'):
+                st.markdown("### Available Fits (Debug)")
+                for i, fit in enumerate(file_data['fits']):
+                    st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
+                    st.write(f"- R²: {fit.get('r2', 'N/A')}")
+                    st.write(f"- AIC: {fit.get('aic', 'N/A')}")
+                    st.write(f"- Parameters: {fit.get('params', 'N/A')}")
             else:
-                st.error("Could not determine a best fit for this file.")
-                logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
-                logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
-                logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
+                st.warning("No fit attempts were made. This might indicate a data loading issue.")
 
-                # Show debugging information for failed fits
-                if file_data.get('fits'):
-                    st.markdown("### Available Fits (Debug)")
-                    for i, fit in enumerate(file_data['fits']):
-                        st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
-                        st.write(f"- R²: {fit.get('r2', 'N/A')}")
-                        st.write(f"- AIC: {fit.get('aic', 'N/A')}")
-                        st.write(f"- Parameters: {fit.get('params', 'N/A')}")
-                else:
-                    st.warning("No fit attempts were made. This might indicate a data loading issue.")
-                    
-                # Show raw data info
-                st.markdown("### Raw Data Info")
-                st.write(f"- Time points: {len(file_data.get('time', []))}")
-                st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
-                if len(file_data.get('time', [])) > 0:
-                    st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
-                if len(file_data.get('intensity', [])) > 0:
-                    st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
+            # Show raw data info
+            st.markdown("### Raw Data Info")
+            st.write(f"- Time points: {len(file_data.get('time', []))}")
+            st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+            if len(file_data.get('time', [])) > 0:
+                st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+            if len(file_data.get('intensity', [])) > 0:
+                st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
     else:
         st.info("Upload files using the sidebar to begin.")
 
