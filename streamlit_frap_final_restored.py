@@ -1288,53 +1288,10 @@ with tab1:
     if dm.files:
         selected_file_path = st.selectbox("Select file to analyze", list(dm.files.keys()), format_func=lambda p: dm.files[p]['name'])
         if selected_file_path and selected_file_path in dm.files:
-            # Debug: Check file state
-            file_debug_data = dm.files.get(selected_file_path)
-            logger.info(f"DEBUG: Selected file: {selected_file_path}")
-            logger.info(f"DEBUG: File exists in dm.files: {selected_file_path in dm.files}")
-            
-            if file_debug_data:
-                logger.info(f"DEBUG: File name: {file_debug_data.get('name', 'UNKNOWN')}")
-                logger.info(f"DEBUG: File fitted status: {file_debug_data.get('fitted', False)}")
-                logger.info(f"DEBUG: File has best_fit: {file_debug_data.get('best_fit') is not None}")
-                logger.info(f"DEBUG: File has features: {file_debug_data.get('features') is not None}")
-                if file_debug_data.get('best_fit'):
-                    logger.info(f"DEBUG: best_fit model: {file_debug_data['best_fit'].get('model', 'NONE')}")
-            
-            # Ensure file is fitted before displaying results
-            if not dm.files[selected_file_path].get('fitted', False):
-                st.info(f"🔄 File not yet analyzed. Fitting models now...")
-                logger.info(f"DEBUG: Calling ensure_file_fitted for {selected_file_path}")
-                with st.spinner(f"Analyzing {dm.files[selected_file_path]['name']}..."):
-                    fit_result = dm.ensure_file_fitted(selected_file_path)
-                    logger.info(f"DEBUG: ensure_file_fitted returned: {fit_result}")
-                    
-                # Check status after fitting
-                logger.info(f"DEBUG: After fitting - fitted status: {dm.files[selected_file_path].get('fitted', False)}")
-                logger.info(f"DEBUG: After fitting - has best_fit: {dm.files[selected_file_path].get('best_fit') is not None}")
-            else:
-                logger.info(f"DEBUG: File already fitted, skipping ensure_file_fitted")
-            
             file_data=dm.files[selected_file_path]
             st.subheader(f"Results for: {file_data['name']}")
-            
-            # CRITICAL DEBUG: Check best_fit status
-            logger.info(f"DEBUG: ⚠️ Checking best_fit status...")
-            logger.info(f"DEBUG: file_data keys: {list(file_data.keys())}")
-            logger.info(f"DEBUG: file_data['best_fit'] = {file_data.get('best_fit', 'KEY_MISSING')}")
-            logger.info(f"DEBUG: bool(file_data['best_fit']) = {bool(file_data.get('best_fit'))}")
-            st.write(f"🔍 DEBUG: best_fit exists = {file_data.get('best_fit') is not None}")
-            st.write(f"🔍 DEBUG: bool(best_fit) = {bool(file_data.get('best_fit'))}")
-            
             if file_data['best_fit']:
-                st.success("✅ Entered best_fit conditional block")
                 best_fit,features=file_data['best_fit'],file_data['features']
-                
-                # Handle case where features might be None
-                if features is None:
-                    features = {}
-                    
-                logger.info(f"DEBUG: Displaying results for fitted file - model: {best_fit.get('model', 'UNKNOWN')}")
                 t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
 
                 # Enhanced metrics display with validation warnings
