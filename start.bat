@@ -2,34 +2,38 @@
 REM ==============================================================================
 REM FRAP Analysis Platform - Windows Launcher
 REM ==============================================================================
-REM This batch file launches the FRAP Single-Cell Analysis Streamlit UI
-REM Date: October 15, 2025
+REM This batch file launches the FRAP Analysis Streamlit UI
+REM Date: October 22, 2025
 REM ==============================================================================
 
 echo.
 echo ================================================================================
-echo             FRAP Single-Cell Analysis Platform - Launcher
+echo             FRAP Analysis Platform - Launcher
 echo ================================================================================
 echo.
 
-REM Check if Python is available
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH
+REM Set Python executable path
+if exist "venv\Scripts\python.exe" (
+    echo [INFO] Using virtual environment Python
+    set PYTHON_EXE=venv\Scripts\python.exe
+    set STREAMLIT_CMD=venv\Scripts\streamlit.exe
     echo.
-    echo Please install Python 3.11+ from https://www.python.org/
-    echo Make sure to check "Add Python to PATH" during installation
-    pause
-    exit /b 1
+) else (
+    echo [WARNING] Virtual environment not found, using system Python
+    echo [INFO] To create a virtual environment, run: install_venv.ps1
+    set PYTHON_EXE=python
+    set STREAMLIT_CMD=streamlit
+    echo.
 )
 
-echo [INFO] Python found: 
-python --version
+REM Check Python version
+echo [INFO] Python environment:
+%PYTHON_EXE% --version
 echo.
 
 REM Check if we're in the correct directory
-if not exist "streamlit_frap_final_clean.py" (
-    echo [ERROR] Cannot find streamlit_frap_final_clean.py
+if not exist "streamlit_frap_final_restored.py" (
+    echo [ERROR] Cannot find streamlit_frap_final_restored.py
     echo.
     echo Please run this script from the FRAP2025 directory
     echo Current directory: %CD%
@@ -38,18 +42,18 @@ if not exist "streamlit_frap_final_clean.py" (
 )
 
 echo [INFO] Checking required files...
-if exist "streamlit_frap_final_clean.py" echo   [OK] streamlit_frap_final_clean.py
+if exist "streamlit_frap_final_restored.py" echo   [OK] streamlit_frap_final_restored.py
 if exist "frap_singlecell_api.py" echo   [OK] frap_singlecell_api.py
 if exist "frap_data_model.py" echo   [OK] frap_data_model.py
 echo.
 
 REM Check if Streamlit is installed
-python -c "import streamlit" 2>nul
+%PYTHON_EXE% -c "import streamlit" 2>nul
 if %errorlevel% neq 0 (
-    echo [WARNING] Streamlit is not installed
+    echo [WARNING] Streamlit is not installed in the current environment
     echo.
-    echo [INFO] Automatically installing required dependencies from requirements.txt...
-    pip install -r requirements.txt
+    echo [INFO] Installing required dependencies from requirements.txt...
+    %PYTHON_EXE% -m pip install -r requirements.txt
     if %errorlevel% neq 0 (
         echo [ERROR] Failed to install dependencies
         pause
@@ -76,7 +80,7 @@ echo ===========================================================================
 echo.
 
 REM Launch Streamlit with optimal settings
-streamlit run streamlit_frap_final_clean.py ^
+%STREAMLIT_CMD% run streamlit_frap_final_restored.py ^
     --server.port=8501 ^
     --server.address=localhost ^
     --browser.gatherUsageStats=false ^
@@ -88,9 +92,9 @@ if %errorlevel% neq 0 (
     echo [ERROR] Failed to launch Streamlit
     echo.
     echo Troubleshooting:
-    echo 1. Make sure all dependencies are installed: pip install -r requirements.txt
+    echo 1. Make sure all dependencies are installed: %PYTHON_EXE% -m pip install -r requirements.txt
     echo 2. Check that no other application is using port 8501
-    echo 3. Try running: python -m streamlit run streamlit_frap_final_clean.py
+    echo 3. Try running: %PYTHON_EXE% -m streamlit run streamlit_frap_final_restored.py
     echo.
     pause
     exit /b 1

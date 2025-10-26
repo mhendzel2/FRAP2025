@@ -1,17 +1,41 @@
 @echo off
-echo Installing FRAP Analysis Platform (Corrected Version)...
-echo This version includes critical mathematical fixes for diffusion coefficient calculation
+echo ================================================================================
+echo FRAP Analysis Platform - Installation Script
+echo ================================================================================
+echo.
 
-python --version >nul 2>&1 || (
-    echo Python required. Please install Python 3.11+
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Python is not installed or not in PATH
+    echo Please install Python 3.10+ from https://www.python.org/
     pause
     exit /b 1
 )
 
-pip install streamlit pandas numpy scipy matplotlib plotly seaborn scikit-image opencv-python tifffile reportlab xlsxwriter openpyxl scikit-learn sqlalchemy psycopg2-binary
-
+echo [INFO] Python found:
+python --version
 echo.
-echo Installation complete!
-echo CRITICAL: This corrected version uses D = (w^2 * k) / 4 for diffusion coefficient
-echo Run with: streamlit run streamlit_frap_final.py --server.port 5000
+
+echo [INFO] Installing dependencies from requirements.txt...
+echo This may take several minutes...
+echo.
+
+pip install -r requirements.txt
+
+if %errorlevel% equ 0 (
+    echo.
+    echo ================================================================================
+    echo Installation complete!
+    echo ================================================================================
+    echo.
+    echo To launch the application:
+    echo   start.bat              - Launch main FRAP UI
+    echo   start_singlecell.bat   - Launch single-cell analysis UI
+    echo.
+) else (
+    echo.
+    echo [ERROR] Installation failed. Please check the error messages above.
+    echo.
+)
+
 pause
