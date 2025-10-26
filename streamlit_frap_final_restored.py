@@ -19,6 +19,8 @@ import logging
 from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_reference_database import display_reference_database_ui
+from frap_reference_integration import display_reference_comparison_widget
 import zipfile
 import tempfile
 import shutil
@@ -1052,20 +1054,26 @@ with st.sidebar:
             button_col1, button_col2 = st.columns(2)
             with button_col1:
                 if st.button("Add Selected Files", disabled=len(selected_files) == 0, key=f"btn_add_{selected_group_name}"):
-                    group['files'].extend(selected_files)
+                    added_count = 0
+                    for file_path in selected_files:
+                        if dm.add_file_to_group(selected_group_name, file_path):
+                            added_count += 1
                     dm.update_group_analysis(selected_group_name)
-                    st.success(f"Added {len(selected_files)} files to {selected_group_name}")
+                    st.success(f"Added {added_count} files to {selected_group_name}")
                     st.rerun()
 
             with button_col2:
                 if st.button("Remove Selected Files", disabled=len(files_to_remove) == 0, key=f"btn_rm_{selected_group_name}"):
+                    removed_count = 0
                     for file_path in files_to_remove:
-                        group['files'].remove(file_path)
+                        if file_path in group['files']:
+                            group['files'].remove(file_path)
+                            removed_count += 1
                     dm.update_group_analysis(selected_group_name)
-                    st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
+                    st.success(f"Removed {removed_count} files from {selected_group_name}")
                     st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
 
 with tab1:
     st.header("Single File Analysis")
@@ -1404,8 +1412,9 @@ with tab1:
 
                     # Display available parameters for debugging
                     with st.expander("🔍 Debug Information"):
-                        st.write("**Available parameters:**")
-                        for key, value in params.items():
+                        st.write("**Available features:**")
+                        # Use features instead of params which may not be in scope
+                        for key, value in features.items():
                             if 'rate' in key.lower() or 'constant' in key.lower():
                                 st.write(f"- {key}: {value}")
                         st.write("**Model information:**")
@@ -1415,7 +1424,7 @@ with tab1:
                             st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
 
                         # Show raw fitting parameters for debugging
-                        if 'params' in best_fit:
+                        if best_fit and 'params' in best_fit:
                             st.write("**Raw fitting parameters:**")
                             model = best_fit.get('model', 'unknown')
                             params_raw = best_fit['params']
@@ -1442,17 +1451,59 @@ with tab1:
                                 total_A = A1 + A2 + A3
                                 st.write(f"- Total amplitude: {total_A}")
                                 st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
-            else:
-                st.error("Could not determine a best fit for this file.")
 
-                # Show debugging information for failed fits
-                if file_data.get('fits'):
-                    st.markdown("### Available Fits (Debug)")
-                    for i, fit in enumerate(file_data['fits']):
-                        st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
-                        st.write(f"- R²: {fit.get('r2', 'N/A')}")
-                        st.write(f"- AIC: {fit.get('aic', 'N/A')}")
-                        st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+                        # Display immobile fraction info 
+                        immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                        st.write(f"**Immobile fraction**: {immobile_frac:.1f}%")
+
+            # Extract relevant parameters for reference comparison
+            mobile_frac = features.get('mobile_fraction', None)
+            primary_rate = features.get('rate_constant_fast', features.get('rate_constant', None))
+
+            # Calculate diffusion coefficient if possible
+            deff = None
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 0:
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                effective_radius_um = bleach_radius * pixel_size
+                deff = (effective_radius_um**2 * primary_rate) / 4.0
+
+            # Display reference comparison widget
+            try:
+                display_reference_comparison_widget(
+                    experimental_deff=deff,
+                    experimental_mf=mobile_frac,
+                    compartment="Nucleoplasm"  # Default, can be made configurable
+                )
+            except Exception as e:
+                logger.warning(f"Reference comparison widget error: {e}")
+                # Gracefully handle missing reference database functionality
+                pass
+        else:
+            st.error("Could not determine a best fit for this file.")
+            logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
+            logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
+            logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
+
+            # Show debugging information for failed fits
+            if file_data.get('fits'):
+                st.markdown("### Available Fits (Debug)")
+                for i, fit in enumerate(file_data['fits']):
+                    st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
+                    st.write(f"- R²: {fit.get('r2', 'N/A')}")
+                    st.write(f"- AIC: {fit.get('aic', 'N/A')}")
+                    st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+            else:
+                st.warning("No fit attempts were made. This might indicate a data loading issue.")
+
+            # Show raw data info
+            st.markdown("### Raw Data Info")
+            st.write(f"- Time points: {len(file_data.get('time', []))}")
+            st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+            if len(file_data.get('time', [])) > 0:
+                st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+            if len(file_data.get('intensity', [])) > 0:
+                st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
     else:
         st.info("Upload files using the sidebar to begin.")
 
@@ -1626,11 +1677,18 @@ with tab2:
                 st.markdown("---")
                 st.markdown("### Step 3: Individual Curve Analysis")
 
+                # Note: ensure_group_fitted method not available in current version
+                # with st.spinner("Analyzing all curves for plotting..."):
+                #     dm.ensure_group_fitted(selected_group_name)
+                logger.info(f"Plotting analysis for group '{selected_group_name}'.")
+
                 # Enhanced plot of all individual curves with outliers highlighted
                 st.markdown("#### All Individual Curves (Outliers Highlighted)")
                 fig_indiv = go.Figure()
 
                 group_files_data = {path: dm.files[path] for path in group['files']}
+                logger.info(f"Plotting {len(group_files_data)} total curves for group '{selected_group_name}'.")
+                logger.info(f"{len(excluded_paths)} curves will be highlighted as outliers.")
 
                 for path, file_data in group_files_data.items():
                     is_outlier = path in excluded_paths
@@ -1664,7 +1722,8 @@ with tab2:
                     xaxis_title="Time (s)",
                     yaxis_title="Normalized Intensity",
                     legend_title="File Status",
-                    height=500
+                    height=500,
+                    yaxis=dict(range=[0, None])  # Ensure y-axis starts from zero for consistency
                 )
                 st.plotly_chart(fig_indiv, use_container_width=True)
 
@@ -2758,10 +2817,18 @@ if st.button("Apply Settings", type="primary"):
     st.success("Settings applied successfully.")
     st.rerun()
 
-st.markdown("### Data Management")
-if st.checkbox("I understand that this will DELETE all loaded data and groups."):
-    if st.button("Clear All Data", type="secondary"):
-        st.session_state.data_manager = FRAPDataManager()
-        st.session_state.selected_group_name = None
-        st.success("All data cleared successfully.")
-        st.rerun()
+    st.markdown("### Data Management")
+    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
+        if st.button("Clear All Data", type="secondary"):
+            st.session_state.data_manager = FRAPDataManager()
+            st.session_state.selected_group_name = None
+            st.success("All data cleared successfully.")
+            st.rerun()
+
+with tab7:
+    # Reference Database Tab
+    try:
+        display_reference_database_ui()
+    except Exception as e:
+        st.error(f"Reference database functionality not available: {e}")
+        st.info("This feature provides access to a comprehensive database of protein mobility values for comparison with experimental results.")
