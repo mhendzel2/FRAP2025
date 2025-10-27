@@ -1576,103 +1576,103 @@ with tab1:
             )
             st.plotly_chart(res_fig,use_container_width=True)
 
-        # Biophysical parameters
-        st.markdown("### Biophysical Interpretation")
+            # Biophysical parameters
+            st.markdown("### Biophysical Interpretation")
 
-        # Calculate diffusion coefficient and molecular weight estimates
-        features = file_data.get('features')
-        if features is None:
-            features = {}
-        primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
+            # Calculate diffusion coefficient and molecular weight estimates
+            features = file_data.get('features')
+            if features is None:
+                features = {}
+            primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
 
-        # More robust validation of rate constant
-        if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
-            bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
-            pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
-            effective_radius_um=bleach_radius*pixel_size
+            # More robust validation of rate constant
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
+                bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
+                pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
+                effective_radius_um=bleach_radius*pixel_size
 
-            # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
-            diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
+                # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
 
-            # Binding interpretation: k_off = k
-            k_off=primary_rate
+                # Binding interpretation: k_off = k
+                k_off=primary_rate
 
-            # Molecular weight estimation (relative to GFP)
-            gfp_d=25.0  # μm²/s
-            gfp_mw=27.0  # kDa
-            apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
+                # Molecular weight estimation (relative to GFP)
+                gfp_d=25.0  # μm²/s
+                gfp_mw=27.0  # kDa
+                apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
 
-            # Validate calculated values
-            if diffusion_coeff > 100:
-                st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
-            if apparent_mw > 10000:
-                st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
+                # Validate calculated values
+                if diffusion_coeff > 100:
+                    st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+                if apparent_mw > 10000:
+                    st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
 
-            col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
-            with col_bio1:
-                st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
-            with col_bio2:
-                st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
-            with col_bio3:
-                st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
-            with col_bio4:
-                immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
-                st.metric("Immobile (%)",f"{immobile_frac:.1f}")
+                col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
+                with col_bio1:
+                    st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+                with col_bio2:
+                    st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+                with col_bio3:
+                    st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+                with col_bio4:
+                    immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                    st.metric("Immobile (%)",f"{immobile_frac:.1f}")
 
-        else:
-            # More informative error message with diagnostic information
-            debug_info = []
-            if primary_rate is None:
-                debug_info.append("Rate constant is None")
-            elif np.isnan(primary_rate):
-                debug_info.append("Rate constant is NaN")
-            elif primary_rate <= 0:
-                debug_info.append(f"Rate constant is non-positive ({primary_rate:.6f})")
-            elif primary_rate <= 1e-8:
-                debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
+            else:
+                # More informative error message with diagnostic information
+                debug_info = []
+                if primary_rate is None:
+                    debug_info.append("Rate constant is None")
+                elif np.isnan(primary_rate):
+                    debug_info.append("Rate constant is NaN")
+                elif primary_rate <= 0:
+                    debug_info.append(f"Rate constant is non-positive ({primary_rate:.6f})")
+                elif primary_rate <= 1e-8:
+                    debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
 
-            st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
+                st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
 
-            # Display available parameters for debugging
-            with st.expander("🔍 Debug Information"):
-                st.write("**Available parameters:**")
-                for key, value in features.items():
-                    if 'rate' in key.lower() or 'constant' in key.lower():
-                        st.write(f"- {key}: {value}")
-                st.write("**Model information:**")
-                if best_fit:
-                    st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
-                    st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
-                    st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
+                # Display available parameters for debugging
+                with st.expander("🔍 Debug Information"):
+                    st.write("**Available parameters:**")
+                    for key, value in features.items():
+                        if 'rate' in key.lower() or 'constant' in key.lower():
+                            st.write(f"- {key}: {value}")
+                    st.write("**Model information:**")
+                    if best_fit:
+                        st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
+                        st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
+                        st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
 
-                # Show raw fitting parameters for debugging
-                if 'params' in best_fit:
-                    st.write("**Raw fitting parameters:**")
-                    model = best_fit.get('model', 'unknown')
-                    params_raw = best_fit['params']
-                    if model == 'single' and len(params_raw) >= 3:
-                        A, k, C = params_raw[:3]
-                        st.write(f"- Amplitude (A): {A}")
-                        st.write(f"- Rate constant (k): {k}")
-                        st.write(f"- Offset (C): {C}")
-                        st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
-                    elif model == 'double' and len(params_raw) >= 5:
-                        A1, k1, A2, k2, C = params_raw[:5]
-                        st.write(f"- A1: {A1}, k1: {k1}")
-                        st.write(f"- A2: {A2}, k2: {k2}")
-                        st.write(f"- Offset (C): {C}")
-                        total_A = A1 + A2
-                        st.write(f"- Total amplitude: {total_A}")
-                        st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
-                    elif model == 'triple' and len(params_raw) >= 6:
-                        A1, k1, A2, k2, A3, k3, C = params_raw[:6]
-                        st.write(f"- A1: {A1}, k1: {k1}")
-                        st.write(f"- A2: {A2}, k2: {k2}")
-                        st.write(f"- A3: {A3}, k3: {k3}")
-                        st.write(f"- Offset (C): {C}")
-                        total_A = A1 + A2 + A3
-                        st.write(f"- Total amplitude: {total_A}")
-                        st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+                    # Show raw fitting parameters for debugging
+                    if 'params' in best_fit:
+                        st.write("**Raw fitting parameters:**")
+                        model = best_fit.get('model', 'unknown')
+                        params_raw = best_fit['params']
+                        if model == 'single' and len(params_raw) >= 3:
+                            A, k, C = params_raw[:3]
+                            st.write(f"- Amplitude (A): {A}")
+                            st.write(f"- Rate constant (k): {k}")
+                            st.write(f"- Offset (C): {C}")
+                            st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
+                        elif model == 'double' and len(params_raw) >= 5:
+                            A1, k1, A2, k2, C = params_raw[:5]
+                            st.write(f"- A1: {A1}, k1: {k1}")
+                            st.write(f"- A2: {A2}, k2: {k2}")
+                            st.write(f"- Offset (C): {C}")
+                            total_A = A1 + A2
+                            st.write(f"- Total amplitude: {total_A}")
+                            st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+                        elif model == 'triple' and len(params_raw) >= 6:
+                            A1, k1, A2, k2, A3, k3, C = params_raw[:6]
+                            st.write(f"- A1: {A1}, k1: {k1}")
+                            st.write(f"- A2: {A2}, k2: {k2}")
+                            st.write(f"- A3: {A3}, k3: {k3}")
+                            st.write(f"- Offset (C): {C}")
+                            total_A = A1 + A2 + A3
+                            st.write(f"- Total amplitude: {total_A}")
+                            st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
         
             # Add Reference Database Comparison Widget
             st.markdown("---")
@@ -1697,30 +1697,30 @@ with tab1:
                 compartment="Nucleoplasm"  # Default, can be made configurable
             )
         else:
-            st.error("Could not determine a best fit for this file.")
-            logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
-            logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
-            logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
+                st.error("Could not determine a best fit for this file.")
+                logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
+                logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
+                logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
 
-            # Show debugging information for failed fits
-            if file_data.get('fits'):
-                st.markdown("### Available Fits (Debug)")
-                for i, fit in enumerate(file_data['fits']):
-                    st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
-                    st.write(f"- R²: {fit.get('r2', 'N/A')}")
-                    st.write(f"- AIC: {fit.get('aic', 'N/A')}")
-                    st.write(f"- Parameters: {fit.get('params', 'N/A')}")
-            else:
-                st.warning("No fit attempts were made. This might indicate a data loading issue.")
+                # Show debugging information for failed fits
+                if file_data.get('fits'):
+                    st.markdown("### Available Fits (Debug)")
+                    for i, fit in enumerate(file_data['fits']):
+                        st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
+                        st.write(f"- R²: {fit.get('r2', 'N/A')}")
+                        st.write(f"- AIC: {fit.get('aic', 'N/A')}")
+                        st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+                else:
+                    st.warning("No fit attempts were made. This might indicate a data loading issue.")
 
-            # Show raw data info
-            st.markdown("### Raw Data Info")
-            st.write(f"- Time points: {len(file_data.get('time', []))}")
-            st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
-            if len(file_data.get('time', [])) > 0:
-                st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
-            if len(file_data.get('intensity', [])) > 0:
-                st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
+                # Show raw data info
+                st.markdown("### Raw Data Info")
+                st.write(f"- Time points: {len(file_data.get('time', []))}")
+                st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+                if len(file_data.get('time', [])) > 0:
+                    st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+                if len(file_data.get('intensity', [])) > 0:
+                    st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
 
         # Add biophysical parameters section for successful fits
         if best_fit:
