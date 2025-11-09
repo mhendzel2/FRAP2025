@@ -749,6 +749,55 @@ class FRAPDataManager:
                 return True
         return False
 
+    def collate_group_datasets(self):
+        """Return a DataFrame with all group-linked time series annotated with group metadata."""
+        collated_frames = []
+
+        for group_name, group in self.groups.items():
+            file_paths = group.get('files') or []
+            for file_path in file_paths:
+                file_info = self.files.get(file_path)
+                if not file_info:
+                    continue
+
+                base_df = file_info.get('data')
+                if isinstance(base_df, pd.DataFrame):
+                    export_df = base_df.copy()
+                else:
+                    time_vals = file_info.get('time')
+                    intensity_vals = file_info.get('intensity')
+                    if time_vals is None or intensity_vals is None:
+                        continue
+                    export_df = pd.DataFrame({
+                        'time_seconds': time_vals,
+                        'normalized_intensity': intensity_vals
+                    })
+
+                export_df.insert(0, 'group_name', group_name)
+                export_df.insert(1, 'file_name', file_info.get('name', os.path.basename(file_path)))
+                export_df.insert(2, 'file_path', file_path)
+
+                features = file_info.get('features') or {}
+                best_fit = file_info.get('best_fit') or {}
+
+                export_df['model'] = features.get('model', best_fit.get('model'))
+                export_df['r2'] = features.get('r2', best_fit.get('r2'))
+                export_df['mobile_fraction_percent'] = features.get('mobile_fraction')
+                export_df['immobile_fraction_percent'] = features.get('immobile_fraction')
+                export_df['rate_constant_fast'] = features.get('rate_constant_fast', features.get('rate_constant'))
+                export_df['rate_constant_slow'] = features.get('rate_constant_slow')
+                export_df['rate_constant_medium'] = features.get('rate_constant_medium')
+
+                collated_frames.append(export_df)
+
+        if not collated_frames:
+            return pd.DataFrame()
+
+        combined_df = pd.concat(collated_frames, ignore_index=True)
+        combined_df['group_rank'] = combined_df['group_name'].astype('category').cat.codes
+
+        return combined_df
+
     def fit_group_models(self, group_name, model='single', excluded_files=None):
         """
         Perform global simultaneous fitting for a group with shared kinetic parameters
@@ -2897,6 +2946,21 @@ with tab5:
 
                 except Exception as e:
                     st.error(f"Error creating Excel export: {e}")
+
+            st.markdown("### Export Collated Datasets")
+            collated_df = dm.collate_group_datasets()
+            if collated_df.empty:
+                st.info("No collated datasets available yet. Add files to groups to enable export.")
+            else:
+                collated_csv = collated_df.to_csv(index=False)
+                st.download_button(
+                    label="⬇️ Download Collated Dataset (CSV)",
+                    data=collated_csv,
+                    file_name=f"FRAP_All_Groups_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Download all group-associated recovery curves in a single CSV file"
+                )
+                st.caption("Each row represents a timepoint from a recovery curve and includes group and fit metadata.")
 
             # CSV export for individual groups
             st.markdown("### Export Individual Groups")
