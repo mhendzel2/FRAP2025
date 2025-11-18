@@ -569,23 +569,28 @@ class FRAPAnalysisCore:
         """
         Preprocess the data by applying background correction and proper FRAP normalization.
         
-        IMPORTANT: This now implements PROPER FRAP normalization where:
-        - 1.0 represents the theoretical maximum recovery (if all molecules were mobile)
-        - Pre-bleach intensity is normalized to 1.0  
-        - Accounts for imaging-induced photobleaching via reference ROI
-        - Mobile fraction = plateau intensity * 100% (e.g., plateau at 0.95 = 95% mobile)
-        - Assumes theoretical bleach depth to 0, actual depth reflects diffusion during bleaching
+        IMPORTANT: This implements PROPER FRAP normalization where:
+        - ROI2 (total nuclear signal) is used to correct for acquisition photobleaching
+        - The correction maintains ROI2 post-bleach value constant (100%)
+        - This correction factor is applied to the bleached region (ROI1)
+        - Pre-bleach intensity is normalized to 1.0
+        - Mobile fraction = plateau intensity * 100%
+        
+        Normalization formula:
+        I_norm(t) = [(ROI1(t) - BG) / (ROI1_pre - BG)] * [ROI2_post / ROI2(t)]
+        
+        Where ROI2_post is the reference value immediately after bleaching, kept constant.
         
         Parameters:
         -----------
         df : pandas.DataFrame
             Raw data with time, roi1, roi2, roi3 columns
-            roi1 = bleached region, roi2 = reference region, roi3 = background
+            roi1 = bleached region, roi2 = total nuclear signal, roi3 = background
             
         Returns:
         --------
         pandas.DataFrame
-            Processed dataframe with proper normalization columns
+            Processed dataframe with corrected normalization columns
         """
         try:
             # Make a copy to avoid modifying the original
@@ -613,7 +618,16 @@ class FRAPAnalysisCore:
             pre_bleach_roi1 = result_df['roi1_bg_corrected'][:pre_bleach_points].mean()
             pre_bleach_roi2 = result_df['roi2_bg_corrected'][:pre_bleach_points].mean()
             
-            # Step 4: Handle edge cases for normalization
+            # Step 4: Calculate post-bleach reference value for ROI2
+            # Use first few frames after bleaching as reference (immediately post-bleach)
+            post_bleach_start = min(bleach_idx + 1, len(result_df) - 1)
+            post_bleach_points = min(3, len(result_df) - post_bleach_start)
+            if post_bleach_points > 0:
+                roi2_post_bleach = result_df['roi2_bg_corrected'][post_bleach_start:post_bleach_start + post_bleach_points].mean()
+            else:
+                roi2_post_bleach = result_df['roi2_bg_corrected'].iloc[bleach_idx]
+            
+            # Step 5: Handle edge cases for normalization
             if pd.isna(pre_bleach_roi1) or pre_bleach_roi1 <= 0:
                 logging.warning("Invalid pre-bleach ROI1 value, using fallback normalization")
                 pre_bleach_roi1 = result_df['roi1_bg_corrected'].iloc[0] if len(result_df) > 0 else 1.0
@@ -625,27 +639,32 @@ class FRAPAnalysisCore:
                 pre_bleach_roi2 = result_df['roi2_bg_corrected'].iloc[0] if len(result_df) > 0 else 1.0
                 if pre_bleach_roi2 <= 0:
                     pre_bleach_roi2 = 1.0
+                    
+            if pd.isna(roi2_post_bleach) or roi2_post_bleach <= 0:
+                logging.warning("Invalid post-bleach ROI2 value, using fallback")
+                roi2_post_bleach = pre_bleach_roi2
             
-            # Step 5: Calculate reference correction factor (accounts for imaging photobleaching)
-            # Reference correction normalizes the reference ROI to its pre-bleach value
-            roi2_normalized = result_df['roi2_bg_corrected'] / pre_bleach_roi2
-            # Clip to reasonable bounds to avoid artifacts
-            roi2_normalized = roi2_normalized.clip(lower=0.1, upper=2.0).fillna(1.0)
+            # Step 6: Calculate photobleaching correction factor
+            # This maintains ROI2 post-bleach value constant (= 100% or 1.0)
+            # Correction factor = ROI2_post / ROI2(t)
+            # When ROI2 decreases due to photobleaching, correction factor > 1 (increases ROI1)
+            photobleaching_correction = roi2_post_bleach / result_df['roi2_bg_corrected']
             
-            # Step 6: Apply proper FRAP normalization
+            # Clip correction factor to reasonable bounds to avoid artifacts
+            photobleaching_correction = photobleaching_correction.clip(lower=0.5, upper=2.0).fillna(1.0)
+            
+            # Step 7: Apply proper FRAP normalization with photobleaching correction
             # Standard FRAP formula: I_norm(t) = [I(t) - I_bg] / [I_pre - I_bg]
-            # With reference correction: I_norm(t) = [I(t) - I_bg] / [I_pre - I_bg] * [R_pre/R(t)]
+            # With photobleaching correction: I_norm(t) = [I(t) - I_bg] / [I_pre - I_bg] * [R_post/R(t)]
             
-            # Simple normalization (without reference correction)
+            # Simple normalization (without photobleaching correction)
             result_df['normalized'] = result_df['roi1_bg_corrected'] / pre_bleach_roi1
             
-            # Double normalization with reference correction (standard FRAP approach)
-            # This corrects for imaging-induced photobleaching using the reference ROI
-            result_df['double_normalized'] = (result_df['roi1_bg_corrected'] / pre_bleach_roi1) / roi2_normalized
+            # Double normalization WITH photobleaching correction (CORRECTED METHOD)
+            # This maintains ROI2 post-bleach constant and applies that correction to ROI1
+            result_df['double_normalized'] = (result_df['roi1_bg_corrected'] / pre_bleach_roi1) * photobleaching_correction
             
-            # Step 7: Calculate bleach depth for validation
-            post_bleach_start = min(bleach_idx + 1, len(result_df) - 1)
-            post_bleach_points = min(3, len(result_df) - post_bleach_start)
+            # Step 8: Calculate bleach depth for validation
             if post_bleach_points > 0:
                 post_bleach_roi1 = result_df['roi1_bg_corrected'][post_bleach_start:post_bleach_start + post_bleach_points].mean()
                 bleach_depth = (pre_bleach_roi1 - post_bleach_roi1) / pre_bleach_roi1
@@ -658,6 +677,8 @@ class FRAPAnalysisCore:
             result_df.attrs['post_bleach_intensity'] = post_bleach_roi1
             result_df.attrs['bleach_depth'] = bleach_depth
             result_df.attrs['bleach_frame'] = bleach_idx
+            result_df.attrs['roi2_post_bleach'] = roi2_post_bleach
+            result_df.attrs['roi2_pre_bleach'] = pre_bleach_roi2
             
             # Fill NaN values using forward fill (modern pandas syntax)
             result_df['normalized'] = result_df['normalized'].ffill()
@@ -668,12 +689,14 @@ class FRAPAnalysisCore:
                 raise ValueError("Normalization failed - all values are NaN")
             
             # Log normalization results
-            logging.info("FRAP preprocessing completed with proper normalization:")
-            logging.info(f"  Pre-bleach intensity: {pre_bleach_roi1:.3f}")
-            logging.info(f"  Post-bleach intensity: {post_bleach_roi1:.3f}")
+            logging.info("FRAP preprocessing completed with corrected photobleaching normalization:")
+            logging.info(f"  Pre-bleach ROI1 intensity: {pre_bleach_roi1:.3f}")
+            logging.info(f"  Post-bleach ROI1 intensity: {post_bleach_roi1:.3f}")
             logging.info(f"  Bleach depth: {bleach_depth:.1%}")
+            logging.info(f"  Pre-bleach ROI2 (total nuclear): {pre_bleach_roi2:.3f}")
+            logging.info(f"  Post-bleach ROI2 (reference): {roi2_post_bleach:.3f}")
             logging.info(f"  Bleach frame: {bleach_idx}")
-            logging.info("  Note: 1.0 now represents theoretical maximum recovery")
+            logging.info("  Note: ROI2 post-bleach value maintained constant for photobleaching correction")
             
             return result_df
             

@@ -27,7 +27,108 @@ import shutil
 st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Import advanced fitting methods
+try:
+    from frap_robust_bayesian import (
+        robust_fit_single_exp, robust_fit_double_exp, 
+        bayesian_fit_single_exp, compare_fitting_methods,
+        AdvancedFitResult
+    )
+    ADVANCED_FITTING_AVAILABLE = True
+except ImportError:
+    ADVANCED_FITTING_AVAILABLE = False
+    logger.warning("Advanced fitting methods (robust/Bayesian) not available")
 os.makedirs('data', exist_ok=True)
+
+
+def apply_advanced_fitting(t: np.ndarray, intensity: np.ndarray, 
+                          fitting_method: str, 
+                          bleach_radius_um: float = 1.0) -> Optional[Dict[str, Any]]:
+    """
+    Apply advanced fitting methods (robust or Bayesian) to FRAP recovery data.
+    
+    Args:
+        t: Time array (post-bleach)
+        intensity: Normalized intensity array
+        fitting_method: One of 'robust_soft_l1', 'robust_huber', 'robust_tukey', 'bayesian'
+        bleach_radius_um: Bleach spot radius in microns
+        
+    Returns:
+        Dictionary with fit results compatible with CoreFRAPAnalysis format, or None if failed
+    """
+    if not ADVANCED_FITTING_AVAILABLE:
+        logger.warning("Advanced fitting requested but not available")
+        return None
+    
+    try:
+        # Map fitting method to function call
+        if fitting_method == 'robust_soft_l1':
+            result = robust_fit_single_exp(t, intensity, loss_type='soft_l1')
+        elif fitting_method == 'robust_huber':
+            result = robust_fit_single_exp(t, intensity, loss_type='huber')
+        elif fitting_method == 'robust_tukey':
+            result = robust_fit_single_exp(t, intensity, loss_type='tukey')
+        elif fitting_method == 'bayesian':
+            result = bayesian_fit_single_exp(t, intensity)
+        else:
+            return None
+        
+        if not result.success:
+            logger.warning(f"Advanced fitting failed: {result.message}")
+            return None
+        
+        # Convert AdvancedFitResult to format compatible with CoreFRAPAnalysis
+        params = result.params
+        
+        # Calculate derived quantities
+        A = params.get('A', 0)
+        C = params.get('C', 0)
+        k = params.get('k', 0)
+        
+        # Mobile/immobile fractions
+        total = A + C if (A + C) > 0 else 1.0
+        mobile_frac = A / total if total > 0 else 0
+        immobile_frac = C / total if total > 0 else 0
+        
+        # Diffusion coefficient: D = (w² × k) / 4
+        D = (bleach_radius_um**2 * k) / 4.0 if k > 0 else 0
+        
+        # Half-time
+        t_half = np.log(2) / k if k > 0 else 0
+        
+        # Format as standard fit result
+        fit_result = {
+            'model': 'single',
+            'params': params,
+            'params_std': result.params_std,
+            'r2': result.r2,
+            'rmse': result.rmse,
+            'aic': result.aic,
+            'bic': result.bic,
+            'fitted_values': result.fitted_values,
+            'residuals': result.residuals,
+            'mobile_fraction': mobile_frac,
+            'immobile_fraction': immobile_frac,
+            'koff': k,
+            'D': D,
+            't_half': t_half,
+            'n_outliers': result.n_outliers,
+            'fitting_method': fitting_method
+        }
+        
+        # Add Bayesian-specific info if available
+        if result.params_median:
+            fit_result['params_median'] = result.params_median
+            fit_result['params_lower'] = result.params_lower
+            fit_result['params_upper'] = result.params_upper
+            
+        return fit_result
+        
+    except Exception as e:
+        logger.error(f"Advanced fitting error: {e}")
+        return None
+
 
 def validate_frap_data(df: pd.DataFrame, file_path: str = "") -> bool:
     """
@@ -556,21 +657,73 @@ class FRAPDataManager:
                         if pre_bleach_mean > 0:
                             intensity = intensity / pre_bleach_mean
 
-                fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
-                best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+                # Initialize variables
+                fits = {}
+                best_fit = None
+                params = {}
+                
+                # Check if advanced fitting method is selected
+                fitting_method = st.session_state.settings.get('fitting_method', 'least_squares')
+                
+                if fitting_method != 'least_squares' and ADVANCED_FITTING_AVAILABLE:
+                    # Use advanced fitting methods
+                    # Get post-bleach data
+                    t_post, y_post, _ = CoreFRAPAnalysis.get_post_bleach_data(time, intensity)
+                    
+                    # Get bleach radius for calculations
+                    bleach_radius_um = (st.session_state.settings.get('default_bleach_radius', 1.0) * 
+                                       st.session_state.settings.get('default_pixel_size', 1.0))
+                    
+                    # Apply advanced fitting
+                    advanced_fit = apply_advanced_fitting(t_post, y_post, fitting_method, bleach_radius_um)
+                    
+                    if advanced_fit:
+                        # Use advanced fit as best fit
+                        best_fit = advanced_fit
+                        params = CoreFRAPAnalysis.extract_clustering_features(
+                            best_fit,
+                            bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
+                            pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
+                            calibration=self.calibration
+                        )
+                    else:
+                        # Fallback to standard fitting
+                        fits = CoreFRAPAnalysis.fit_all_models(time, intensity)
+                        best_fit = CoreFRAPAnalysis.select_best_fit(fits, st.session_state.settings['default_criterion'])
+                        if best_fit:
+                            params = CoreFRAPAnalysis.extract_clustering_features(
+                                best_fit,
+                                bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
+                                pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
+                                calibration=self.calibration
+                            )
+                        else:
+                            params = {}
+                else:
+                    # Standard fitting
+                    fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
+                    best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
 
-                if best_fit:
-                    params = CoreFRAPAnalysis.extract_clustering_features(
-                        best_fit,
-                        bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
-                        pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
-                        calibration=self.calibration
-                    )
-                    # Validate the analysis results
+                    if best_fit:
+                        params = CoreFRAPAnalysis.extract_clustering_features(
+                            best_fit,
+                            bleach_spot_radius=st.session_state.settings.get('default_bleach_radius', 1.0),
+                            pixel_size=st.session_state.settings.get('default_pixel_size', 1.0),
+                            calibration=self.calibration
+                        )
+                    else:
+                        params = {}
+                        logger.error(f"No valid fit found for {file_name}")
+                
+                # Validate the analysis results
+                if params:
                     params = validate_analysis_results(params)
                 else:
                     params = {}
-                    logger.error(f"No valid fit found for {file_name}")
+
+                # Store fits for compatibility (may not be available for advanced methods)
+                if 'fits' not in locals():
+                    fits = {'single': best_fit} if best_fit else {}
 
                 # Add stabilization data to features if it exists in the dataframe
                 for col in ['roi_centroid_x', 'roi_centroid_y', 'roi_radius_per_frame',
@@ -2722,19 +2875,52 @@ with tab6:
     col_fit1, col_fit2 = st.columns(2)
 
     with col_fit1:
-        # fitting_method = st.selectbox(
-        #     "Curve Fitting Method",
-        #     ["least_squares", "robust", "bayesian"],
-        #     index=0,
-        #     format_func=lambda x: {
-        #         "least_squares": "Standard Least Squares",
-        #         "robust": "Robust Fitting (outlier resistant)",
-        #         "bayesian": "Bayesian MCMC (full uncertainty)"
-        #     }[x],
-        #     help="Choose fitting algorithm for kinetic analysis"
-        # )
-        st.info("Advanced fitting methods (Robust, Bayesian) are planned for a future release.")
-        fitting_method = "least_squares" # Hardcode to the only implemented method
+        if ADVANCED_FITTING_AVAILABLE:
+            fitting_method = st.selectbox(
+                "Curve Fitting Method",
+                ["least_squares", "robust_soft_l1", "robust_huber", "robust_tukey", "bayesian"],
+                index=0,
+                format_func=lambda x: {
+                    "least_squares": "Standard Least Squares",
+                    "robust_soft_l1": "Robust (Soft L1 - recommended)",
+                    "robust_huber": "Robust (Huber M-estimator)",
+                    "robust_tukey": "Robust (Tukey Biweight)",
+                    "bayesian": "Bayesian MCMC (full uncertainty)"
+                }[x],
+                help="""Choose fitting algorithm:
+                - Standard: Fast, assumes no outliers
+                - Robust: Outlier-resistant, good for noisy data
+                - Bayesian: Full uncertainty quantification via MCMC"""
+            )
+        else:
+            st.warning("Advanced fitting methods not available. Install with: pip install emcee")
+            fitting_method = "least_squares"
+        
+        # Add explanatory information
+        with st.expander("ℹ️ About Fitting Methods"):
+            st.markdown("""
+            **Standard Least Squares**
+            - Fast and simple
+            - Assumes no outliers
+            - Good for clean, high-quality data
+            
+            **Robust Methods (Outlier-Resistant)**
+            - *Soft L1*: Balanced approach, recommended for most cases
+            - *Huber*: Moderate outlier resistance
+            - *Tukey Biweight*: Strong outlier rejection
+            - Best for: Noisy data, photobleaching artifacts
+            
+            **Bayesian MCMC**
+            - Full uncertainty quantification
+            - Provides credible intervals (95% CI)
+            - Computationally intensive (~30-60 sec per curve)
+            - Best for: Critical measurements, publication-quality analysis
+            
+            📊 **When to use each:**
+            - Standard → Clean data, quick analysis
+            - Robust → Typical experiments with noise
+            - Bayesian → Final analysis, rigorous uncertainty estimates
+            """)
 
         max_iterations = st.number_input(
             "Max Fitting Iterations",
