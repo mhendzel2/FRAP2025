@@ -122,9 +122,13 @@ def fit_recovery(
     
     p0 = [A_init, B_init, k_init]
     
-    # Parameter bounds
+    # BIOLOGICAL CONSTRAINTS for normalized FRAP data (pre-bleach = 1.0):
+    # - A (plateau) must be ≤ 1.05 (allowing 5% noise tolerance)
+    # - B (amplitude) must be ≤ A (can't recover more than plateau)
+    # - C = A - B (immobile fraction) must be ≥ 0
+    # These constraints prevent over-recovery artifacts from normalization issues
     bounds_lower = [y_min * 0.8, 0, bounds_k[0]]
-    bounds_upper = [y_max * 1.2, y_max * 2, bounds_k[1]]
+    bounds_upper = [min(1.05, y_max * 1.1), min(1.05, y_max * 1.1), bounds_k[1]]
     
     try:
         if robust:
@@ -264,10 +268,14 @@ def fit_recovery_2exp(
     
     p0 = [A_init, B1_init, k1_init, B2_init, k2_init]
     
-    # Bounds
+    # BIOLOGICAL CONSTRAINTS for normalized FRAP data (pre-bleach = 1.0):
+    # - A (plateau) must be ≤ 1.05 (allowing 5% noise tolerance)
+    # - B1 + B2 (total amplitude) should not exceed A to avoid over-recovery
+    # - Individual amplitudes bounded by plateau value
     y_min, y_max = np.min(y), np.max(y)
+    max_plateau = min(1.05, y_max * 1.1)  # Biological upper limit
     bounds_lower = [y_min * 0.8, 0, 1e-6, 0, 1e-6]
-    bounds_upper = [y_max * 1.2, y_max * 2, 10, y_max * 2, 10]
+    bounds_upper = [max_plateau, max_plateau, 10, max_plateau, 10]
     
     try:
         if robust:

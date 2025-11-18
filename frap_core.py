@@ -1020,15 +1020,28 @@ class FRAPAnalysisCore:
                 raise ValueError("Insufficient post-bleach data points for fitting")
             
             # Initial guesses with robust calculation
-            C0 = np.min(intensity_fit)
-            A0 = np.max(intensity_fit) - np.min(intensity_fit)
+            # For proper FRAP: I(t) = A*(1-exp(-k*t)) + C
+            # At t=0: I(0) = C (immobile fraction)
+            # At t=∞: I(∞) = A + C (plateau = mobile fraction)
             
-            # Ensure positive amplitude
-            if A0 <= 0:
-                logging.warning("Non-positive amplitude detected, using fallback value")
-                A0 = np.std(intensity_fit)
-                if A0 <= 0:
-                    A0 = 0.1
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:])  # Estimate plateau from last 3 points
+            
+            # Initial guesses that respect biological constraints
+            # For normalized data, plateau should be ≤ 1.0
+            A0 = min(y_end, 1.0)  # Plateau estimate
+            C0 = max(0, y_min)  # Starting point (post-bleach)
+            
+            # If estimates seem unreasonable, use data range
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+            
+            # Ensure A0 and C0 are within biological bounds
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)  # Leave headroom for optimizer
+            C0 = min(C0, max_plateau * 0.5)
             
             # Calculate rate constant guess with error handling
             time_span = t_fit[-1] - t_fit[0]
@@ -1038,15 +1051,27 @@ class FRAPAnalysisCore:
             k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
             
             # Ensure reasonable bounds for k0
-            k0 = max(1e-6, min(k0, 100.0))
+            k0 = max(1e-6, min(k0, 10.0))
             
-            logging.info(f"Initial parameter estimates: A0={A0:.4f}, k0={k0:.4f}, C0={C0:.4f}")
+            logging.info(f"Initial parameter estimates: A0={A0:.4f}, k0={k0:.4f}, C0={C0:.4f}, max_plateau={max_plateau:.4f}")
             
             # Single Component Fit.
             try:
                 p0 = [A0, k0, C0]
-                bounds = ([0, 1e-6, -np.inf], [np.inf, np.inf, np.inf])
-                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
+                # BIOLOGICAL CONSTRAINTS: For normalized data (pre-bleach = 1.0),
+                # A + C must be ≤ 1.05 to prevent over-recovery artifacts
+                max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+                bounds = ([0, 1e-6, -0.1], [max_amplitude, 10.0, max_amplitude])
+                
+                try:
+                    popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds, maxfev=2000)
+                except (RuntimeError, ValueError) as e:
+                    # If strict bounds fail, try with slightly relaxed bounds (but still reasonable)
+                    logging.warning(f"Strict bounds failed for single-exp, trying relaxed bounds: {e}")
+                    max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                    bounds_relaxed = ([0, 1e-6, -0.2], [max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                    popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds_relaxed, maxfev=2000)
+                
                 fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -1061,6 +1086,8 @@ class FRAPAnalysisCore:
                              'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Single-component fit failed: {e}")
+                logging.debug(f"  Initial guess: A={p0[0]:.4f}, k={p0[1]:.4f}, C={p0[2]:.4f}")
+                logging.debug(f"  Data range: [{np.min(intensity_fit):.4f}, {np.max(intensity_fit):.4f}]")
                 
             # Two Component Fit.
             try:
@@ -1069,8 +1096,18 @@ class FRAPAnalysisCore:
                 A2_0 = A0 / 2
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
-                bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
+                # BIOLOGICAL CONSTRAINTS: A1 + A2 + C must be ≤ 1.05 for normalized data
+                max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+                bounds_double = ([0, 1e-6, 0, 1e-6, -0.1], [max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude])
+                
+                try:
+                    popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double, maxfev=2000)
+                except (RuntimeError, ValueError) as e:
+                    logging.warning(f"Strict bounds failed for double-exp, trying relaxed bounds: {e}")
+                    max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                    bounds_double_relaxed = ([0, 1e-6, 0, 1e-6, -0.2], [max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                    popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double_relaxed, maxfev=2000)
+                
                 fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -1085,6 +1122,7 @@ class FRAPAnalysisCore:
                              'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Two-component fit failed: {e}")
+                logging.debug(f"  Initial guess: A1={p0_double[0]:.4f}, A2={p0_double[2]:.4f}, C={p0_double[4]:.4f}")
                 
             # Three Component Fit.
             try:
@@ -1095,8 +1133,20 @@ class FRAPAnalysisCore:
                 A3_0 = A0 / 3
                 k3_0 = k0 / 3
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
-                bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
+                # BIOLOGICAL CONSTRAINTS for normalized data (pre-bleach = 1.0):
+                # A1 + A2 + A3 + C must be ≤ 1.05 (mobile fraction ≤ 105%)
+                # Individual amplitudes bounded to prevent over-recovery artifacts
+                max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+                bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -0.1], [max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude])
+                
+                try:
+                    popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple, maxfev=2000)
+                except (RuntimeError, ValueError) as e:
+                    logging.warning(f"Strict bounds failed for triple-exp, trying relaxed bounds: {e}")
+                    max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                    bounds_triple_relaxed = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -0.2], [max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                    popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple_relaxed, maxfev=2000)
+                
                 fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -1111,6 +1161,7 @@ class FRAPAnalysisCore:
                              'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Three-component fit failed: {e}")
+                logging.debug(f"  Initial guess: A1={p0_triple[0]:.4f}, A2={p0_triple[2]:.4f}, A3={p0_triple[4]:.4f}, C={p0_triple[6]:.4f}")
             
             # Anomalous Diffusion Fit
             try:
@@ -1118,7 +1169,8 @@ class FRAPAnalysisCore:
                 tau0 = time_span / 2
                 beta0 = 0.8  # Start with a subdiffusive guess
                 p0_anomalous = [A0, tau0, beta0, C0]
-                bounds_anomalous = ([0, 1e-6, 1e-3, -np.inf], [np.inf, np.inf, 1.0, np.inf])  # beta <= 1
+                # Apply same biological constraints as exponential models
+                bounds_anomalous = ([0, 1e-6, 1e-3, -0.1], [max_amplitude, np.inf, 1.0, max_amplitude])
                 
                 popt, pcov = curve_fit(FRAPAnalysisCore.anomalous_diffusion, t_fit, intensity_fit, p0=p0_anomalous, bounds=bounds_anomalous)
                 fitted = FRAPAnalysisCore.anomalous_diffusion(t_fit, *popt)
@@ -1283,6 +1335,70 @@ class FRAPAnalysisCore:
     def extract_clustering_features(best_fit, bleach_spot_radius=1.0, pixel_size=1.0, calibration=None):
         """
         Extract features for clustering from the best fit model.
+        
+        MOBILE FRACTION CALCULATION ACCURACY:
+        ===================================
+        
+        The mobile fraction is calculated as: mobile_fraction = plateau_intensity × 100%
+        
+        This is theoretically correct for FRAP data where:
+        1. Pre-bleach intensity is normalized to 1.0
+        2. Background subtraction is accurate
+        3. Reference correction accounts for imaging photobleaching
+        4. The curve reaches a true plateau
+        
+        POTENTIAL SOURCES OF INACCURACY:
+        --------------------------------
+        1. NORMALIZATION ISSUES:
+           - If pre-bleach intensity ≠ 1.0 due to poor normalization
+           - Background subtraction errors affecting baseline
+           - Reference ROI correction over/under-compensating
+        
+        2. INCOMPLETE RECOVERY:
+           - Data truncated before plateau is reached
+           - Recovery ongoing beyond measurement window
+           - Non-exponential recovery kinetics
+        
+        3. BIOLOGICAL FACTORS:
+           - Over-recovery due to cell movement/drift
+           - Photobleaching during recovery measurement
+           - Multiple binding states not captured by simple exponential
+        
+        4. MODEL FITTING ISSUES:
+           - Poor fit quality (low R²)
+           - Parameter bounds not physiologically realistic
+           - Wrong model selection (single vs double exponential)
+        
+        DIAGNOSTIC FLAGS:
+        ----------------
+        - 'over_recovery': plateau > 100% (normalization issue)
+        - 'very_high_mobile': >95% mobile (check normalization)
+        - 'very_low_mobile': <10% mobile (incomplete recovery?)
+        - 'plateau_not_reached': curve still rising at end
+        
+        VALIDATION RECOMMENDATIONS:
+        ---------------------------
+        1. Check that pre-bleach intensity ≈ 1.0 in normalized data
+        2. Verify background subtraction by checking ROI3 values
+        3. Ensure reference ROI (ROI2) doesn't drift significantly
+        4. Visual inspection of fit quality and plateau achievement
+        5. Compare single vs multi-component fits for consistency
+        
+        Parameters:
+        -----------
+        best_fit : dict
+            Best fit model results with 'model', 'params', 'fitted_values'
+        bleach_spot_radius : float, default=1.0
+            Radius of bleach spot in pixels
+        pixel_size : float, default=1.0
+            Size of one pixel in micrometers
+        calibration : Calibration, optional
+            Calibration object for molecular weight estimation
+            
+        Returns:
+        --------
+        dict or None
+            Feature dictionary with mobile fraction and diagnostic flags
         """
         if best_fit is None:
             return None
@@ -1308,10 +1424,24 @@ class FRAPAnalysisCore:
         if model == 'single' and len(params) >= 3:
             A, k, C = params
             endpoint = A + C
-            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
-            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
-            # If curve starts at 0.7 and plateaus at 0.95, mobile fraction = 95%
-            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
+            
+            # CRITICAL VALIDATION: Check if parameters make biological sense
+            if not all(np.isfinite([A, k, C])) or k <= 0:
+                mobile_fraction = np.nan
+            elif endpoint < 0:  # Negative plateau is impossible
+                logging.warning(f"Negative plateau detected: A={A:.3f}, C={C:.3f}, endpoint={endpoint:.3f}")
+                mobile_fraction = np.nan
+            else:
+                # Standard calculation: Mobile fraction = plateau intensity × 100%
+                # DO NOT clamp to 100% - report the actual plateau value
+                # If plateau is 70-80%, mobile fraction should be 70-80%, not 100%
+                mobile_fraction = endpoint * 100
+                
+                # Only warn about extreme values, don't clamp them
+                if endpoint > 1.2:
+                    logging.warning(f"Over-recovery detected: A={A:.3f}, C={C:.3f}, endpoint={endpoint:.3f} (>{endpoint*100:.1f}%)")
+                elif endpoint > 1.0:
+                    logging.info(f"Slight over-recovery: plateau at {endpoint*100:.1f}% (possible normalization artifact)")
             features.update({
                 'amplitude': A, 'rate_constant': k, 'offset': C,
                 'mobile_fraction': mobile_fraction,
@@ -1330,9 +1460,22 @@ class FRAPAnalysisCore:
             k_fast, A_fast = components[0]
             k_slow, A_slow = components[1]
 
-            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
-            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
-            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
+            # CRITICAL VALIDATION: Check if parameters make biological sense
+            if not all(np.isfinite([A1, k1, A2, k2, C])) or k1 <= 0 or k2 <= 0:
+                mobile_fraction = np.nan
+            elif endpoint < 0:  # Negative plateau is impossible
+                logging.warning(f"Negative plateau detected: A1={A1:.3f}, A2={A2:.3f}, C={C:.3f}, endpoint={endpoint:.3f}")
+                mobile_fraction = np.nan
+            else:
+                # Standard calculation: Mobile fraction = plateau intensity × 100%
+                # DO NOT clamp to 100% - report the actual plateau value
+                mobile_fraction = endpoint * 100
+                
+                # Only warn about extreme values, don't clamp them
+                if endpoint > 1.2:
+                    logging.warning(f"Double-exp over-recovery: A1+A2+C={endpoint:.3f} (>{endpoint*100:.1f}%)")
+                elif endpoint > 1.0:
+                    logging.info(f"Double-exp slight over-recovery: plateau at {endpoint*100:.1f}%")
             
             features.update({
                 'mobile_fraction': mobile_fraction,
@@ -1355,9 +1498,22 @@ class FRAPAnalysisCore:
             k_med, A_med = components[1]
             k_slow, A_slow = components[2]
 
-            # CORRECTED: Mobile fraction is the plateau value in properly normalized curve
-            # Where 1.0 = 100% theoretical recovery accounting for diffusion during bleaching
-            mobile_fraction = min(endpoint * 100, 100.0) if np.isfinite(endpoint) else np.nan
+            # CRITICAL VALIDATION: Check if parameters make biological sense
+            if not all(np.isfinite([A1, k1, A2, k2, A3, k3, C])) or any(k <= 0 for k in [k1, k2, k3]):
+                mobile_fraction = np.nan
+            elif endpoint < 0:  # Negative plateau is impossible
+                logging.warning(f"Negative plateau detected: A1={A1:.3f}, A2={A2:.3f}, A3={A3:.3f}, C={C:.3f}, endpoint={endpoint:.3f}")
+                mobile_fraction = np.nan
+            else:
+                # Standard calculation: Mobile fraction = plateau intensity × 100%
+                # DO NOT clamp to 100% - report the actual plateau value
+                mobile_fraction = endpoint * 100
+                
+                # Only warn about extreme values, don't clamp them
+                if endpoint > 1.2:
+                    logging.warning(f"Triple-exp over-recovery: A1+A2+A3+C={endpoint:.3f} (>{endpoint*100:.1f}%)")
+                elif endpoint > 1.0:
+                    logging.info(f"Triple-exp slight over-recovery: plateau at {endpoint*100:.1f}%")
             
             features.update({
                 'mobile_fraction': mobile_fraction,
@@ -1373,6 +1529,56 @@ class FRAPAnalysisCore:
             features['proportion_of_total_slow'] = (A_slow / endpoint) * 100 if endpoint > 0 else 0
             features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
             features['half_time_fast'] = features.get('half_time_binding')
+
+        elif model and 'anomalous' in model and len(params) >= 4:
+            # Anomalous diffusion: I(t) = A*(1-exp(-(t/tau)^beta)) + C
+            A, tau, beta, C = params
+            endpoint = A + C  # Plateau at t -> infinity
+            
+            # Validate parameters
+            if not all(np.isfinite([A, tau, beta, C])) or tau <= 0 or beta <= 0:
+                mobile_fraction = np.nan
+            elif endpoint < 0:
+                logging.warning(f"Anomalous diffusion: negative plateau detected: A={A:.3f}, C={C:.3f}")
+                mobile_fraction = np.nan
+            else:
+                mobile_fraction = endpoint * 100
+                if endpoint > 1.2:
+                    logging.warning(f"Anomalous diffusion over-recovery: A+C={endpoint:.3f} (>{endpoint*100:.1f}%)")
+            
+            features.update({
+                'mobile_fraction': mobile_fraction,
+                'anomalous_amplitude': A,
+                'anomalous_tau': tau,
+                'anomalous_beta': beta,
+                'anomalous_offset': C,
+                'rate_constant_fast': 1.0 / tau if tau > 0 else np.nan,  # Approximate as 1/tau
+                'half_time_fast': tau * 0.693 if tau > 0 else np.nan  # Approximate half-time
+            })
+
+        # Add diagnostic information for mobile fraction accuracy
+        diagnostic_flags = []
+        current_mobile = features.get('mobile_fraction', np.nan)
+        
+        # Check for over-recovery (biologically impossible - indicates normalization issues)
+        if np.isfinite(current_mobile) and current_mobile > 100:
+            diagnostic_flags.append("over_recovery")
+        
+        # Check for very high mobile fractions (might indicate normalization issues)
+        elif np.isfinite(current_mobile) and current_mobile > 95:
+            diagnostic_flags.append("very_high_mobile")
+            
+        # Check for extremely low mobile fractions (might indicate incomplete recovery or truncated data)
+        if np.isfinite(current_mobile) and current_mobile < 10:
+            diagnostic_flags.append("very_low_mobile")
+            
+        # Check if plateau was reached (based on fitted values)
+        if not plateau_reached:
+            diagnostic_flags.append("plateau_not_reached")
+            
+        # Store diagnostic information
+        features['mobile_fraction_flags'] = diagnostic_flags
+        features['mobile_fraction_reliability'] = 'high' if len(diagnostic_flags) == 0 else 'low'
 
         # Ensure immobile fraction = 100% - mobile fraction (only if mobile fraction is finite)
         mobile_frac = features.get('mobile_fraction', np.nan)

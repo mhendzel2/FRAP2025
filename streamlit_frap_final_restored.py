@@ -1366,9 +1366,37 @@ with tab1:
 
                 col1,col2,col3,col4=st.columns(4)
                 with col1:
-                    # Ensure mobile fraction is displayed correctly
-                    display_mobile = max(0, min(100, mobile_frac))  # Clamp to 0-100%
-                    st.metric("Mobile Fraction",f"{display_mobile:.1f}%")
+                    # Display actual mobile fraction without clamping - important for diagnosing issues
+                    # If plateau is 70%, show 70%, not clamp to some arbitrary range
+                    display_mobile = mobile_frac if np.isfinite(mobile_frac) else 0
+                    
+                    # Check for mobile fraction reliability
+                    reliability = features.get('mobile_fraction_reliability', 'unknown')
+                    flags = features.get('mobile_fraction_flags', [])
+                    
+                    # Color-code based on reliability and values
+                    if np.isfinite(mobile_frac):
+                        if reliability == 'high':
+                            st.metric("Mobile Fraction", f"{display_mobile:.1f}%")
+                        else:
+                            # Show with warning for unreliable values
+                            delta_color = "inverse" if mobile_frac > 100 else "normal"
+                            st.metric("Mobile Fraction", f"{display_mobile:.1f}%", 
+                                     delta=f"⚠️ {reliability} reliability",
+                                     help=f"Issues detected: {', '.join(flags) if flags else 'unknown'}")
+                            
+                            if flags:
+                                flag_messages = {
+                                    'over_recovery': 'Over-recovery (>100%) - normalization issue likely',
+                                    'very_high_mobile': 'Very high mobile fraction - check normalization', 
+                                    'very_low_mobile': 'Very low mobile fraction - incomplete recovery?',
+                                    'plateau_not_reached': 'Plateau not reached - data may be truncated'
+                                }
+                                for flag in flags:
+                                    if flag in flag_messages:
+                                        st.caption(f"⚠️ {flag_messages[flag]}")
+                    else:
+                        st.metric("Mobile Fraction", "N/A", help="Could not calculate mobile fraction")
                 with col2:
                     half_time = features.get('half_time_fast',features.get('half_time',0))
                     st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
