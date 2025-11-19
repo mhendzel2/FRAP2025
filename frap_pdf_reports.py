@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER
@@ -99,10 +99,13 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
             g = data_manager.groups.get(gname)
             if not g or g.get('features_df') is None or g['features_df'].empty:
                 continue
+
+            group_elements = []
             df = g['features_df']
-            elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
-            elements.append(Paragraph(f"Total Files: {len(g.get('files', []))}, Analyzed: {len(df)}", styles['FRAPBody']))
+            group_elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
+            group_elements.append(Paragraph(f"Total Files: {len(g.get('files', []))}, Analyzed: {len(df)}", styles['FRAPBody']))
             avail = [m for m in key_metrics if m in df.columns]
+
             if avail:
                 rows = [["Metric", "Mean", "Std", "Median", "Min", "Max"]]
                 for m in avail:
@@ -120,8 +123,8 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                     ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
                     ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
                 ]))
-                elements.append(mtbl)
-            # component summary
+                group_elements.append(mtbl)
+
             comp_rows = [["Component", "% Mobile", "Rate (k)", "Half-time (s)"]]
             has_comp = False
             for comp in component_metrics:
@@ -138,9 +141,10 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                             f"{hvals.mean():.2f}" if len(hvals) else 'N/A'
                         ])
                         has_comp = True
+
             if has_comp:
-                elements.append(Spacer(1, 0.05 * inch))
-                elements.append(Paragraph("Component Analysis", styles['FRAPBody']))
+                group_elements.append(Spacer(1, 0.05 * inch))
+                group_elements.append(Paragraph("Component Analysis", styles['FRAPBody']))
                 ctbl = Table(comp_rows, colWidths=[1.3*inch]*4)
                 ctbl.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
@@ -148,7 +152,9 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                     ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
                     ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
                 ]))
-                elements.append(ctbl)
+                group_elements.append(ctbl)
+
+            elements.append(KeepTogether(group_elements))
             elements.append(Spacer(1, 0.2 * inch))
 
         # Statistical comparison
