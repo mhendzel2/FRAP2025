@@ -95,7 +95,8 @@ def interpret_kinetics(k: float,
                        bleach_radius_um: float,
                        gfp_d: float = 25.0,
                        gfp_rg: float = 2.82,
-                       gfp_mw: float = 27.0) -> dict[str, float]:
+                       gfp_mw: float = 27.0,
+                       calibration_params: Optional[Dict] = None) -> dict[str, float]:
     """
     Dual interpretation (diffusion / binding) using the *correct* D formula.
     """
@@ -105,10 +106,24 @@ def interpret_kinetics(k: float,
                  "half_time_diffusion", "half_time_binding")}
 
     D = diffusion_coefficient(bleach_radius_um, k)
+
+    if calibration_params and 'slope' in calibration_params and 'intercept' in calibration_params:
+        if D > 0:
+            log_d = np.log10(D)
+            log_mw = calibration_params['slope'] * log_d + calibration_params['intercept']
+            apparent_mw = 10**log_mw
+        else:
+            apparent_mw = np.nan
+    else:
+        if D > 0:
+            apparent_mw = gfp_mw * (gfp_d / D)**3
+        else:
+            apparent_mw = np.nan
+
     return {
         "k_off": k,
         "diffusion_coefficient": D,
-        "apparent_mw": gfp_mw * (gfp_d / D)**3,
+        "apparent_mw": apparent_mw,
         "half_time_diffusion": np.log(2) / k,
         "half_time_binding": np.log(2) / k,
     }
@@ -705,7 +720,7 @@ class FRAPAnalysisCore:
             try:
                 p0 = [A0, k0, C0]
                 bounds = ([0, 1e-6, -np.inf], [np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
+                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit, p0=p0, bounds=bounds)
                 fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -713,7 +728,15 @@ class FRAPAnalysisCore:
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
-                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt,
+
+                # Calculate confidence intervals
+                perr = np.sqrt(np.diag(pcov))
+                ci = {}
+                param_names = ['A', 'k', 'C']
+                for i, name in enumerate(param_names):
+                    ci[name] = perr[i] * 1.96 # 95% CI
+
+                fits.append({'model': 'single', 'func': FRAPAnalysisCore.single_component, 'params': popt, 'ci': ci,
                              'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
@@ -727,7 +750,7 @@ class FRAPAnalysisCore:
                 k2_0 = k0 / 2
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 bounds_double = ([0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
+                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, p0=p0_double, bounds=bounds_double)
                 fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -735,7 +758,15 @@ class FRAPAnalysisCore:
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_double))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_double))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_double))
-                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt,
+
+                # Calculate confidence intervals
+                perr = np.sqrt(np.diag(pcov))
+                ci = {}
+                param_names = ['A1', 'k1', 'A2', 'k2', 'C']
+                for i, name in enumerate(param_names):
+                    ci[name] = perr[i] * 1.96
+
+                fits.append({'model': 'double', 'func': FRAPAnalysisCore.two_component, 'params': popt, 'ci': ci,
                              'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
@@ -751,7 +782,7 @@ class FRAPAnalysisCore:
                 k3_0 = k0 / 3
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
                 bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -np.inf], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
-                popt, _ = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
+                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit, p0=p0_triple, bounds=bounds_triple)
                 fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
                 rss = np.sum((intensity_fit - fitted)**2)
                 r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
@@ -759,7 +790,15 @@ class FRAPAnalysisCore:
                 aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_triple))
                 bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_triple))
                 red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_triple))
-                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt,
+
+                # Calculate confidence intervals
+                perr = np.sqrt(np.diag(pcov))
+                ci = {}
+                param_names = ['A1', 'k1', 'A2', 'k2', 'A3', 'k3', 'C']
+                for i, name in enumerate(param_names):
+                    ci[name] = perr[i] * 1.96
+
+                fits.append({'model': 'triple', 'func': FRAPAnalysisCore.three_component, 'params': popt, 'ci': ci,
                              'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'bic': bic,
                              'red_chi2': red_chi2, 'fitted_values': fitted})
             except Exception as e:
@@ -1282,6 +1321,7 @@ class FRAPAnalysisCore:
         features['r2'] = best_fit.get('r2', np.nan)
         features['aic'] = best_fit.get('aic', np.nan)
         features['bic'] = best_fit.get('bic', np.nan)
+        features['ci'] = best_fit.get('ci', {})
         
         # Add available rate constant names for easier access
         rate_constants = []

@@ -338,7 +338,7 @@ class FRAPImageAnalyzer:
         st.success(f"Added '{roi_info['name']}' as {roi_name} ({roi_type})")
         return True
     
-    def extract_intensity_profiles(self, apply_background_correction: bool = True, enable_stabilization: bool = True) -> pd.DataFrame:
+    def extract_intensity_profiles(self, apply_background_correction: bool = True, use_global_drift: bool = False, use_optical_flow: bool = False) -> pd.DataFrame:
         """
         Extract intensity profiles from defined ROIs, with optional motion stabilization.
         
@@ -346,8 +346,10 @@ class FRAPImageAnalyzer:
         -----------
         apply_background_correction : bool
             Whether to apply background correction.
-        enable_stabilization : bool
-            Whether to perform motion stabilization before intensity extraction.
+        use_global_drift : bool
+            Whether to perform global drift correction.
+        use_optical_flow : bool
+            Whether to use optical flow for local tracking.
             
         Returns:
         --------
@@ -377,7 +379,7 @@ class FRAPImageAnalyzer:
         motion_qc_reason = "Stabilization not enabled."
         stabilized_stack = self.image_stack
 
-        if enable_stabilization:
+        if use_global_drift or use_optical_flow:
             try:
                 st.info("Performing motion stabilization...")
                 bleach_roi_data = self.rois[roi_map['ROI1']]
@@ -387,8 +389,8 @@ class FRAPImageAnalyzer:
                     init_center=self.bleach_coordinates,
                     radius=bleach_roi_data['radius'],
                     pixel_size_um=self.pixel_size,
-                    use_optical_flow=True,
-                    do_global=True,
+                    use_optical_flow=use_optical_flow,
+                    do_global=use_global_drift,
                     kalman=True
                 )
 
@@ -715,7 +717,7 @@ def create_image_analysis_interface(dm):
             bleach_radius = st.number_input("Bleach Spot Radius (pixels)", value=10, min_value=3, max_value=50, key="ia_bleach_radius")
             detection_method = st.selectbox("Bleach Detection", ["intensity_drop", "gradient"], key="ia_detection_method")
         with col3:
-            enable_tracking = st.checkbox("Enable ROI Tracking", value=True, help="Track bleach spot over time with image inversion.", key="ia_enable_tracking")
+            pass
 
         analyzer.pixel_size = pixel_size
         analyzer.time_interval = time_interval
@@ -752,7 +754,10 @@ def create_image_analysis_interface(dm):
             st.write(f"**Current ROIs:** {len(analyzer.rois)}")
             if st.button("📈 Extract Intensity Profiles", key="ia_extract_profiles"):
                 with st.spinner("Extracting intensity profiles..."):
-                    df = analyzer.extract_intensity_profiles(enable_stabilization=enable_tracking)
+                    df = analyzer.extract_intensity_profiles(
+                        use_global_drift=st.session_state.app_config['motion']['global_drift'],
+                        use_optical_flow=st.session_state.app_config['motion']['optical_flow']
+                    )
                     st.session_state.image_analysis_df = df
 
                     st.subheader("📊 Extracted Intensity Data")
