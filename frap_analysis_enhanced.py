@@ -336,21 +336,34 @@ class FRAPGroupAnalyzer:
         
     def detect_subpopulations(self, n_components_range=range(1, 4)):
         """
-        Uses GMM to detect subpopulations.
+        Uses GMM to detect subpopulations based on numerical features only.
         """
         if self.features is None or self.features.empty:
+            logger.warning("No features available for clustering")
             return
             
-        # Select features for clustering
-        # e.g., diffusion time, mobile fraction
-        # Need to handle NaNs
-        data_clean = self.features.dropna()
+        # Select ONLY numerical features for clustering
+        numerical_features = self.features.select_dtypes(include=[np.number])
+        
+        # Remove any existing clustering columns
+        numerical_features = numerical_features.drop(columns=['subpopulation', 'is_outlier'], errors='ignore')
+        
+        if numerical_features.empty:
+            logger.warning("No numerical features available for clustering")
+            return
+            
+        # Handle NaNs
+        data_clean = numerical_features.dropna()
         
         if data_clean.empty:
+            logger.warning("No valid data after removing NaNs")
             return
+            
+        logger.info(f"Clustering {len(data_clean)} curves using {len(data_clean.columns)} features: {list(data_clean.columns)}")
 
         best_gmm = None
         best_bic = np.inf
+        best_n = 1
         
         # Try different number of components
         max_components = min(len(data_clean), max(n_components_range))
@@ -362,30 +375,58 @@ class FRAPGroupAnalyzer:
             gmm.fit(data_clean)
             bic = gmm.bic(data_clean)
             
+            logger.info(f"GMM with {n} components: BIC = {bic:.2f}")
+            
             if bic < best_bic:
                 best_bic = bic
                 best_gmm = gmm
+                best_n = n
                 
         # Assign labels
         if best_gmm is not None:
             labels = best_gmm.predict(data_clean)
             self.features.loc[data_clean.index, 'subpopulation'] = labels
+            
+            # Log cluster statistics
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            logger.info(f"Identified {best_n} subpopulations (BIC={best_bic:.2f}):")
+            for label, count in zip(unique_labels, counts):
+                logger.info(f"  Subpopulation {label}: {count} curves")
+        else:
+            logger.warning("Clustering failed: no valid GMM model")
         
     def detect_outliers(self):
         """
-        Uses Isolation Forest to detect outliers.
+        Uses Isolation Forest to detect outliers based on numerical features only.
         """
         if self.features is None or self.features.empty:
+            logger.warning("No features available for outlier detection")
             return
             
-        data_clean = self.features.dropna()
-        if data_clean.empty:
+        # Select ONLY numerical features
+        numerical_features = self.features.select_dtypes(include=[np.number])
+        
+        # Remove any existing outlier/clustering columns
+        numerical_features = numerical_features.drop(columns=['subpopulation', 'is_outlier'], errors='ignore')
+        
+        if numerical_features.empty:
+            logger.warning("No numerical features available for outlier detection")
             return
+            
+        data_clean = numerical_features.dropna()
+        if data_clean.empty:
+            logger.warning("No valid data after removing NaNs")
+            return
+            
+        logger.info(f"Detecting outliers in {len(data_clean)} curves using {len(data_clean.columns)} features")
             
         iso = IsolationForest(contamination=0.1, random_state=42)
         outliers = iso.fit_predict(data_clean)
         # -1 is outlier, 1 is inlier
         self.features.loc[data_clean.index, 'is_outlier'] = (outliers == -1)
+        
+        n_outliers = (outliers == -1).sum()
+        logger.info(f"Identified {n_outliers} outliers ({n_outliers/len(data_clean)*100:.1f}%)")
 
 class FRAPStatisticalComparator:
     """

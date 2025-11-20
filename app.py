@@ -583,33 +583,78 @@ elif page == "3. Subpopulations":
         analyzer = st.session_state.data_groups[group_select]
         
         if analyzer.features is None or analyzer.features.empty:
-            st.warning("Please run model fitting first.")
+            st.warning("⚠️ Please run model fitting first on the 'Model Fitting' page.")
         else:
+            # Display current data info
+            st.info(f"📊 **{len(analyzer.curves)} curves** loaded with **{len(analyzer.features)} fitted results**")
+            
+            # Show current features
+            with st.expander("📋 View Fitted Parameters", expanded=False):
+                st.dataframe(analyzer.features, use_container_width=True)
+            
             col1, col2 = st.columns([1, 3])
             with col1:
                 st.subheader("Clustering")
-                max_k = st.slider("Max Components", 2, 5, 3)
-                if st.button("Detect Subpopulations"):
-                    analyzer.detect_subpopulations(range(1, max_k + 1))
-                    st.success("Clustering complete.")
                 
-                if st.button("Detect Outliers"):
-                    analyzer.detect_outliers()
-                    st.success("Outlier detection complete.")
+                # Get numerical columns only
+                numerical_cols = analyzer.features.select_dtypes(include=[np.number]).columns.tolist()
+                if len(numerical_cols) < 2:
+                    st.warning("Need at least 2 numerical parameters for clustering")
+                else:
+                    max_k = st.slider("Max Components", 2, min(5, len(analyzer.features)), 3)
+                    if st.button("🔍 Detect Subpopulations"):
+                        with st.spinner("Running clustering analysis..."):
+                            analyzer.detect_subpopulations(range(1, max_k + 1))
+                        st.success("✅ Clustering complete!")
+                        st.rerun()
+                    
+                    if st.button("🎯 Detect Outliers"):
+                        with st.spinner("Running outlier detection..."):
+                            analyzer.detect_outliers()
+                        st.success("✅ Outlier detection complete!")
+                        st.rerun()
             
             with col2:
                 if 'subpopulation' in analyzer.features.columns:
-                    st.subheader("Cluster Visualization")
-                    # Dynamic parameter selection
-                    params = [c for c in analyzer.features.columns if c not in ['subpopulation', 'is_outlier']]
-                    x_axis = st.selectbox("X Axis", params, index=0)
-                    y_axis = st.selectbox("Y Axis", params, index=min(1, len(params)-1))
+                    st.subheader("🎨 Cluster Visualization")
                     
-                    fig = FRAPVisualizer.plot_subpopulations(analyzer.features, x_axis, y_axis)
-                    st.pyplot(fig)
+                    # Check how many curves have cluster assignments
+                    clustered_data = analyzer.features.dropna(subset=['subpopulation'])
+                    n_clustered = len(clustered_data)
+                    n_total = len(analyzer.features)
                     
-                    st.write("Subpopulation Counts:")
-                    st.write(analyzer.features['subpopulation'].value_counts())
+                    if n_clustered == 0:
+                        st.warning("⚠️ No curves were successfully clustered. This may occur if all curves have missing values.")
+                    else:
+                        st.info(f"✅ Successfully clustered **{n_clustered}/{n_total}** curves")
+                        
+                        # Dynamic parameter selection - only numerical
+                        numerical_params = [c for c in analyzer.features.select_dtypes(include=[np.number]).columns 
+                                           if c not in ['subpopulation', 'is_outlier']]
+                        
+                        if len(numerical_params) >= 2:
+                            x_axis = st.selectbox("X Axis", numerical_params, index=0)
+                            y_axis = st.selectbox("Y Axis", numerical_params, index=min(1, len(numerical_params)-1))
+                            
+                            try:
+                                fig = FRAPVisualizer.plot_subpopulations(clustered_data, x_axis, y_axis)
+                                st.pyplot(fig)
+                            except Exception as e:
+                                st.error(f"Error creating visualization: {e}")
+                            
+                            st.write("**Subpopulation Counts:**")
+                            counts = clustered_data['subpopulation'].value_counts().sort_index()
+                            
+                            # Display in columns for better layout
+                            cols = st.columns(min(len(counts), 4))
+                            for idx, (pop, count) in enumerate(counts.items()):
+                                with cols[idx % len(cols)]:
+                                    st.metric(f"Cluster {int(pop)}", f"{count} curves", 
+                                            delta=f"{count/n_clustered*100:.1f}%")
+                        else:
+                            st.warning("Need at least 2 numerical parameters for visualization")
+                else:
+                    st.info("👆 Click 'Detect Subpopulations' to cluster your data")
 
 # --- Page 4: Compare Groups ---
 elif page == "4. Compare Groups":
@@ -633,10 +678,15 @@ elif page == "4. Compare Groups":
             if analyzer1.features is None or analyzer2.features is None:
                 st.warning("Both groups must be fitted first.")
             else:
-                param = st.selectbox("Parameter to Compare", analyzer1.features.columns)
-                
-                if st.button("Run Statistical Test"):
-                    result = FRAPStatisticalComparator.compare_groups(analyzer1.features, analyzer2.features, param)
+                # Filter to only numerical columns
+                numerical_cols = analyzer1.features.select_dtypes(include=[np.number]).columns.tolist()
+                if not numerical_cols:
+                    st.error("No numerical parameters available for comparison.")
+                else:
+                    param = st.selectbox("Parameter to Compare", numerical_cols)
+                    
+                    if st.button("Run Statistical Test"):
+                        result = FRAPStatisticalComparator.compare_groups(analyzer1.features, analyzer2.features, param)
                     
                     st.subheader("Results")
                     st.json(result)
