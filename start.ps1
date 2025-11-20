@@ -36,8 +36,8 @@ python --version
 Write-Host ""
 
 # Check if we're in the correct directory
-if (-not (Test-Path "streamlit_frap_final_restored.py")) {
-    Write-Host "[ERROR] Cannot find streamlit_frap_final_restored.py" -ForegroundColor Red
+if (-not (Test-Path "app.py")) {
+    Write-Host "[ERROR] Cannot find app.py" -ForegroundColor Red
     Write-Host ""
     Write-Host "Please run this script from the FRAP2025 directory" -ForegroundColor Yellow
     Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
@@ -46,7 +46,7 @@ if (-not (Test-Path "streamlit_frap_final_restored.py")) {
 }
 
 Write-Host "[INFO] Checking required files..." -ForegroundColor Cyan
-if (Test-Path "streamlit_frap_final_restored.py") { Write-Host "  [OK] streamlit_frap_final_restored.py" -ForegroundColor Green }
+if (Test-Path "app.py") { Write-Host "  [OK] app.py" -ForegroundColor Green }
 if (Test-Path "frap_singlecell_api.py") { Write-Host "  [OK] frap_singlecell_api.py" -ForegroundColor Green }
 if (Test-Path "frap_data_model.py") { Write-Host "  [OK] frap_data_model.py" -ForegroundColor Green }
 Write-Host ""
@@ -90,7 +90,7 @@ Write-Host ("=" * 78)
 Write-Host ""
 
 # Launch Streamlit with optimal settings
-streamlit run streamlit_frap_final_restored.py `
+streamlit run app.py `
     --server.port=8501 `
     --server.address=localhost `
     --browser.gatherUsageStats=false `
@@ -104,7 +104,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Troubleshooting:" -ForegroundColor Yellow
     Write-Host "1. Make sure all dependencies are installed: pip install -r requirements.txt"
     Write-Host "2. Check that no other application is using port 8501"
-    Write-Host "3. Try running: python -m streamlit run streamlit_frap_final_restored.py"
+    Write-Host "3. Try running: python -m streamlit run app.py"
     Write-Host ""
     Read-Host "Press Enter to exit"
     exit 1
