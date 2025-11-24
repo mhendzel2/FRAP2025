@@ -1336,7 +1336,211 @@ with st.sidebar:
                     st.success(f"Removed {removed_count} files from {selected_group_name}")
                     st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📥 Import & Preprocess", "📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
+
+with tab0:
+    st.header("📥 Import & Preprocess Data")
+    st.markdown("### Start here to load and organize your FRAP data files")
+    
+    # Create prominent sections for different upload methods
+    upload_method = st.radio(
+        "Choose your upload method:",
+        ["🚀 Bulk Upload (ZIP with Groups - Recommended)", "📄 Individual Files"],
+        help="Bulk upload allows you to organize files into groups automatically using ZIP folder structure"
+    )
+    
+    st.markdown("---")
+    
+    if upload_method == "🚀 Bulk Upload (ZIP with Groups - Recommended)":
+        st.subheader("📦 Bulk Upload: ZIP File with Group Subfolders")
+        st.success("💡 **Recommended for multiple experiments!** Upload a ZIP file where each subfolder becomes a group automatically.")
+        
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            st.markdown("""
+            **Expected ZIP Structure:**
+            ```
+            your_archive.zip
+            ├── Control_Group/
+            │   ├── cell1.xls
+            │   ├── cell2.xls
+            │   └── cell3.xls
+            ├── Treatment_A/
+            │   ├── cell1.xlsx
+            │   └── cell2.xlsx
+            └── Treatment_B/
+                ├── cell1.csv
+                └── cell2.tif
+            ```
+            **How it works:**
+            - Each subfolder in the ZIP becomes a separate group
+            - All files within a subfolder are automatically added to that group
+            - Files are loaded and preprocessed immediately
+            - Supports: `.xls`, `.xlsx`, `.csv`, `.tif`, `.tiff`
+            """)
+        
+        with col2:
+            st.info("""
+            **✨ Benefits:**
+            - ⚡ Fast bulk processing
+            - 📁 Auto group creation
+            - 🗂️ Preserves organization
+            - 📊 Progress tracking
+            - 🎯 Ready for analysis
+            
+            **Perfect for:**
+            - Multiple experimental groups
+            - Large datasets
+            - Organized workflows
+            """)
+        
+        st.markdown("---")
+        uploaded_zip_main = st.file_uploader(
+            "📂 Select your ZIP file containing grouped FRAP data", 
+            type=['zip'], 
+            key="zip_uploader_main",
+            help="Upload a ZIP archive with subfolders - each subfolder becomes a group"
+        )
+    
+        
+        if uploaded_zip_main:
+            zip_file_id_main = f"{uploaded_zip_main.name}_{uploaded_zip_main.size}"
+            
+            st.info(f"📦 **Selected file:** {uploaded_zip_main.name} ({uploaded_zip_main.size / 1024:.1f} KB)")
+            
+            col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 3])
+            with col_btn1:
+                if st.button(f"🚀 Process ZIP Archive", type="primary", use_container_width=True):
+                    if zip_file_id_main in st.session_state.processed_zip_files:
+                        st.warning(f"⚠️ This ZIP file has already been processed. Upload a different file or clear groups first.")
+                    else:
+                        with st.spinner(f"🔄 Processing '{uploaded_zip_main.name}'..."):
+                            success = dm.load_groups_from_zip_archive(uploaded_zip_main)
+                            if success:
+                                st.session_state.processed_zip_files.add(zip_file_id_main)
+                                if dm.groups:
+                                    st.success(f"✅ **Success!** Created {len(dm.groups)} groups from ZIP archive")
+                                    
+                                    # Show groups in an expandable section
+                                    with st.expander("📊 View Created Groups", expanded=True):
+                                        for group_name, group_data in dm.groups.items():
+                                            file_count = len(group_data.get('files', []))
+                                            st.markdown(f"**📁 {group_name}**: {file_count} files")
+                                            
+                                    st.balloons()
+                                    st.info("🎯 **Next steps:** Go to 'Group Analysis' tab to analyze your data!")
+                            else:
+                                st.error("❌ Failed to process ZIP archive. Check file structure and formats.")
+            
+            with col_btn2:
+                if st.button("🔄 Upload Different File", use_container_width=True):
+                    st.rerun()
+    
+    else:  # Individual Files mode
+        st.subheader("📄 Individual File Upload")
+        st.markdown("Upload individual FRAP data files one at a time. You'll need to assign them to groups manually.")
+        st.warning("💡 **Tip:** For multiple files, consider using the Bulk Upload (ZIP) method instead - it's faster!")
+        
+        uploaded_files_main = st.file_uploader(
+            "Select FRAP data files to upload", 
+            type=['xls', 'xlsx', 'csv', 'tif', 'tiff'], 
+            accept_multiple_files=True, 
+            key="individual_file_uploader_main",
+            help="You can select multiple files at once"
+        )
+        
+        if uploaded_files_main:
+            st.info(f"📂 **Selected {len(uploaded_files_main)} file(s)** for upload")
+            
+            if st.button("📤 Process Selected Files", type="primary", use_container_width=True):
+                progress_bar_main = st.progress(0)
+                status_text_main = st.empty()
+                
+                new_files_loaded = False
+                success_files = []
+                failed_files = []
+                
+                for idx, uf in enumerate(uploaded_files_main):
+                    status_text_main.text(f"Processing {idx + 1}/{len(uploaded_files_main)}: {uf.name}")
+                    progress_bar_main.progress((idx + 1) / len(uploaded_files_main))
+                    
+                    file_ext = os.path.splitext(uf.name)[1].lower()
+                    
+                    if file_ext in ['.tif', '.tiff']:
+                        # Handle image files
+                        try:
+                            # Save temporary file
+                            temp_image_path = f"temp_{uf.name}"
+                            with open(temp_image_path, 'wb') as f:
+                                f.write(uf.getbuffer())
+                            
+                            # Process image
+                            analyzer = FRAPImageAnalyzer()
+                            if analyzer.load_image_stack(temp_image_path):
+                                settings = st.session_state.settings
+                                analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
+                                analyzer.time_interval = settings.get('default_time_interval', 1.0)
+                                
+                                bleach_frame, bleach_coords = analyzer.detect_bleach_event()
+                                if bleach_frame is not None and bleach_coords is not None:
+                                    bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
+                                    analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
+                                    intensity_df = analyzer.extract_intensity_profiles()
+                                    intensity_df = intensity_df.rename(columns={'Time': 'time'})
+                                    
+                                    # Save as CSV
+                                    base_name = os.path.splitext(uf.name)[0]
+                                    csv_path = f"data/{base_name}_{hash(uf.getvalue())}.csv"
+                                    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+                                    intensity_df.to_csv(csv_path, index=False)
+                                    
+                                    if dm.load_file(csv_path, base_name):
+                                        success_files.append(uf.name)
+                                        new_files_loaded = True
+                                    else:
+                                        failed_files.append(uf.name)
+                                else:
+                                    failed_files.append(f"{uf.name} (bleach detection failed)")
+                            else:
+                                failed_files.append(f"{uf.name} (failed to load)")
+                            
+                            # Cleanup
+                            if os.path.exists(temp_image_path):
+                                os.remove(temp_image_path)
+                        except Exception as e:
+                            failed_files.append(f"{uf.name} ({str(e)})")
+                    else:
+                        # Handle tabular files
+                        tp = f"data/{uf.name}_{hash(uf.getvalue())}"
+                        if tp not in dm.files:
+                            os.makedirs(os.path.dirname(tp), exist_ok=True)
+                            with open(tp, "wb") as f:
+                                f.write(uf.getbuffer())
+                            if dm.load_file(tp, uf.name):
+                                success_files.append(uf.name)
+                                new_files_loaded = True
+                            else:
+                                failed_files.append(uf.name)
+                        else:
+                            success_files.append(f"{uf.name} (already loaded)")
+                
+                progress_bar_main.empty()
+                status_text_main.empty()
+                
+                if success_files:
+                    st.success(f"✅ Successfully processed {len(success_files)} file(s)")
+                    with st.expander("View successful files"):
+                        for fname in success_files:
+                            st.write(f"✓ {fname}")
+                
+                if failed_files:
+                    st.error(f"❌ Failed to process {len(failed_files)} file(s)")
+                    with st.expander("View failed files"):
+                        for fname in failed_files:
+                            st.write(f"✗ {fname}")
+                
+                if new_files_loaded:
+                    st.info("📂 **Files loaded!** Assign them to groups using the sidebar, then analyze in other tabs.")
 
 with tab1:
     st.header("Single File Analysis")

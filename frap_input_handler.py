@@ -39,21 +39,37 @@ class FRAPInputHandler:
     """
     
     @staticmethod
-    def load_csv(filepath: str, metadata: Optional[dict] = None) -> FRAPCurveData:
+    def load_file(filepath: str, metadata: Optional[dict] = None) -> FRAPCurveData:
         """
-        Loads FRAP data from a CSV file.
+        Loads FRAP data from CSV, XLS, or XLSX file.
         Expected columns: 'Time', 'ROI', 'Reference', 'Background'
         """
         try:
-            df = pd.read_csv(filepath)
+            # Determine file type and load accordingly
+            if filepath.lower().endswith('.csv'):
+                df = pd.read_csv(filepath)
+            elif filepath.lower().endswith(('.xls', '.xlsx')):
+                # For .xls files, use xlrd engine; for .xlsx use openpyxl
+                if filepath.lower().endswith('.xls'):
+                    df = pd.read_excel(filepath, engine='xlrd')
+                else:
+                    df = pd.read_excel(filepath, engine='openpyxl')
+            else:
+                raise ValueError(f"Unsupported file format: {filepath}. Expected CSV, XLS, or XLSX.")
             
-            # Map columns (flexible mapping can be added later)
-            # For now, assume standard names or map common variations
+            # Map columns with extensive variations
             col_map = {
-                'Time': ['Time', 'time', 't'],
-                'ROI': ['ROI', 'roi', 'Bleach', 'bleach'],
-                'Reference': ['Reference', 'ref', 'Ref', 'Control'],
-                'Background': ['Background', 'bg', 'BG', 'background']
+                'Time': ['Time', 'time', 't', 'T', 'TIME', 'Time (s)', 'Time(s)', 'Time_s', 
+                        'Time [s]', 'Time[s]', 'Slice', 'slice', 'Frame', 'frame', 'Timepoint', 'timepoint'],
+                'ROI': ['ROI', 'roi', 'Bleach', 'bleach', 'BLEACH', 'ROI1', 'roi1', 
+                       'Intensity', 'intensity', 'Mean', 'mean', 'FRAP', 'frap',
+                       'Cell', 'cell', 'Bleached', 'bleached', 'Intensity Region 1', 'Region 1', 'Region1'],
+                'Reference': ['Reference', 'ref', 'Ref', 'REF', 'Control', 'control', 'CONTROL',
+                             'ROI2', 'roi2', 'Reference Region', 'Whole Cell', 'Unbleached', 'unbleached',
+                             'Intensity Region 2', 'Region 2', 'Region2'],
+                'Background': ['Background', 'bg', 'BG', 'Bg', 'BACKGROUND', 'background',
+                              'ROI3', 'roi3', 'Background Region', 'Bkgd', 'bkgd',
+                              'Intensity Region 3', 'Region 3', 'Region3']
             }
             
             mapped_cols = {}
@@ -65,7 +81,14 @@ class FRAPInputHandler:
                         found = True
                         break
                 if not found:
-                    raise ValueError(f"Column for '{key}' not found in CSV. Expected one of: {candidates}")
+                    # Provide helpful error message with actual columns found
+                    actual_columns = list(df.columns)
+                    raise ValueError(
+                        f"Column for '{key}' not found in file.\n"
+                        f"Expected one of: {candidates}\n"
+                        f"Actual columns in file: {actual_columns}\n"
+                        f"File: {filepath}"
+                    )
             
             return FRAPCurveData(
                 time=df[mapped_cols['Time']].values,
@@ -76,8 +99,16 @@ class FRAPInputHandler:
             )
             
         except Exception as e:
-            logger.error(f"Error loading CSV {filepath}: {e}")
+            logger.error(f"Error loading file {filepath}: {e}")
             raise
+    
+    @staticmethod
+    def load_csv(filepath: str, metadata: Optional[dict] = None) -> FRAPCurveData:
+        """
+        Loads FRAP data from a CSV file. (Wrapper for backward compatibility)
+        Expected columns: 'Time', 'ROI', 'Reference', 'Background'
+        """
+        return FRAPInputHandler.load_file(filepath, metadata)
 
     @staticmethod
     def double_normalization(data: FRAPCurveData, bleach_frame_idx: int, pre_bleach_frames: int = 5) -> FRAPCurveData:

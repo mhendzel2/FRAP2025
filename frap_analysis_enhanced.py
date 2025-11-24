@@ -201,43 +201,169 @@ class FRAPGroupAnalyzer:
         self.curves.append(curve)
         
     def analyze_group(self, model_name: str = 'soumpasis'):
+        """
+        Analyze group with specified model or all models.
+        If model_name is None, fits all available models and selects best.
+        """
+        # Import here to avoid circular dependency
+        from frap_core import FRAPAnalysisCore
+        
         fitter = FRAPFitter()
         results = []
         feature_rows = []
         
         for i, curve in enumerate(self.curves):
-            res = fitter.fit_model(curve, model_name)
-            results.append(res)
-            
-            if res.success:
-                row = res.params.copy()
-                row['r2'] = res.metrics['r2']
-                row['aic'] = res.metrics['aic']
-                row['bic'] = res.metrics['bic']
-                feature_rows.append(row)
+            # If model_name is None, fit all models and select best
+            if model_name is None:
+                # Use core's fit_all_models which fits single, double, triple, and anomalous
+                try:
+                    # Use normalized data - the core function will handle post-bleach extraction
+                    if curve.normalized_intensity is None:
+                        logger.warning(f"Curve {i} has no normalized data, skipping")
+                        results.append(FitResult('error', {}, {}, None, None, False, 'No normalized data'))
+                        feature_rows.append({})
+                        continue
+                    
+                    time_data = curve.time
+                    intensity_data = curve.normalized_intensity
+                    
+                    # Fit all models - the core function handles post-bleach extraction internally
+                    fits = FRAPAnalysisCore.fit_all_models(time_data, intensity_data)
+                    
+                    if fits:
+                        # Select best fit
+                        best_fit = FRAPAnalysisCore.select_best_fit(fits, criterion='aicc')
+                        
+                        if best_fit:
+                            # Get post-bleach data length for residuals
+                            fitted_values = best_fit.get('fitted_values')
+                            if fitted_values is not None:
+                                residuals = None  # Will calculate later if needed
+                            else:
+                                residuals = None
+                            
+                            # Convert to FitResult format
+                            res = FitResult(
+                                model_name=best_fit['model'],
+                                params=dict(zip(['param_{}'.format(j) for j in range(len(best_fit['params']))], best_fit['params'])),
+                                metrics={
+                                    'r2': best_fit.get('r2', 0),
+                                    'aic': best_fit.get('aic', np.inf),
+                                    'aicc': best_fit.get('aicc', np.inf),
+                                    'bic': best_fit.get('bic', np.inf),
+                                    'adj_r2': best_fit.get('adj_r2', 0),
+                                    'red_chi2': best_fit.get('red_chi2', np.inf)
+                                },
+                                fitted_curve=fitted_values,
+                                residuals=residuals,
+                                success=True,
+                                message='Fit successful'
+                            )
+                            results.append(res)
+                            
+                            # Extract features
+                            row = {
+                                'model': best_fit['model'],
+                                'r2': best_fit.get('r2', np.nan),
+                                'adj_r2': best_fit.get('adj_r2', np.nan),
+                                'aic': best_fit.get('aic', np.nan),
+                                'aicc': best_fit.get('aicc', np.nan),
+                                'bic': best_fit.get('bic', np.nan),
+                                'red_chi2': best_fit.get('red_chi2', np.nan)
+                            }
+                            
+                            # Extract model-specific parameters
+                            params = best_fit['params']
+                            model_type = best_fit['model']
+                            
+                            # Calculate mobile fraction and kinetics
+                            if model_type == 'single':
+                                # Single: params = [A, k, C]
+                                if len(params) >= 3:
+                                    A, k, C = params[0], params[1], params[2]
+                                    row['mobile_fraction'] = A * 100  # Convert to percentage
+                                    row['k_fast'] = k
+                                    row['half_time_fast'] = np.log(2) / k if k > 0 else np.nan
+                            elif model_type == 'double':
+                                # Double: params = [A1, k1, A2, k2, C]
+                                if len(params) >= 5:
+                                    A1, k1, A2, k2, C = params[0], params[1], params[2], params[3], params[4]
+                                    row['mobile_fraction'] = (A1 + A2) * 100
+                                    row['k_fast'] = k1
+                                    row['k_slow'] = k2
+                                    row['half_time_fast'] = np.log(2) / k1 if k1 > 0 else np.nan
+                                    row['half_time_slow'] = np.log(2) / k2 if k2 > 0 else np.nan
+                                    row['fraction_fast'] = A1 / (A1 + A2) if (A1 + A2) > 0 else np.nan
+                            elif model_type == 'triple':
+                                # Triple: params = [A1, k1, A2, k2, A3, k3, C]
+                                if len(params) >= 7:
+                                    A1, k1, A2, k2, A3, k3, C = params[0], params[1], params[2], params[3], params[4], params[5], params[6]
+                                    row['mobile_fraction'] = (A1 + A2 + A3) * 100
+                                    row['k_fast'] = k1
+                                    row['k_medium'] = k2
+                                    row['k_slow'] = k3
+                                    row['half_time_fast'] = np.log(2) / k1 if k1 > 0 else np.nan
+                            
+                            feature_rows.append(row)
+                        else:
+                            results.append(FitResult('none', {}, {}, None, None, False, 'No successful fits'))
+                            feature_rows.append({})
+                    else:
+                        results.append(FitResult('none', {}, {}, None, None, False, 'Fit failed'))
+                        feature_rows.append({})
+                        
+                except Exception as e:
+                    logger.error(f"Error fitting all models for curve {i}: {e}")
+                    results.append(FitResult('error', {}, {}, None, None, False, str(e)))
+                    feature_rows.append({})
             else:
-                feature_rows.append({}) # Empty or NaN
+                # Fit single specified model
+                res = fitter.fit_model(curve, model_name)
+                results.append(res)
+                
+                if res.success:
+                    row = res.params.copy()
+                    row['model'] = model_name
+                    row['r2'] = res.metrics['r2']
+                    row['aic'] = res.metrics['aic']
+                    row['bic'] = res.metrics['bic']
+                    feature_rows.append(row)
+                else:
+                    feature_rows.append({})
                 
         self.fit_results = results
         self.features = pd.DataFrame(feature_rows)
         
     def detect_subpopulations(self, n_components_range=range(1, 4)):
         """
-        Uses GMM to detect subpopulations.
+        Uses GMM to detect subpopulations based on numerical features only.
         """
         if self.features is None or self.features.empty:
+            logger.warning("No features available for clustering")
             return
             
-        # Select features for clustering
-        # e.g., diffusion time, mobile fraction
-        # Need to handle NaNs
-        data_clean = self.features.dropna()
+        # Select ONLY numerical features for clustering
+        numerical_features = self.features.select_dtypes(include=[np.number])
+        
+        # Remove any existing clustering columns
+        numerical_features = numerical_features.drop(columns=['subpopulation', 'is_outlier'], errors='ignore')
+        
+        if numerical_features.empty:
+            logger.warning("No numerical features available for clustering")
+            return
+            
+        # Handle NaNs
+        data_clean = numerical_features.dropna()
         
         if data_clean.empty:
+            logger.warning("No valid data after removing NaNs")
             return
+            
+        logger.info(f"Clustering {len(data_clean)} curves using {len(data_clean.columns)} features: {list(data_clean.columns)}")
 
         best_gmm = None
         best_bic = np.inf
+        best_n = 1
         
         # Try different number of components
         max_components = min(len(data_clean), max(n_components_range))
@@ -249,30 +375,58 @@ class FRAPGroupAnalyzer:
             gmm.fit(data_clean)
             bic = gmm.bic(data_clean)
             
+            logger.info(f"GMM with {n} components: BIC = {bic:.2f}")
+            
             if bic < best_bic:
                 best_bic = bic
                 best_gmm = gmm
+                best_n = n
                 
         # Assign labels
         if best_gmm is not None:
             labels = best_gmm.predict(data_clean)
             self.features.loc[data_clean.index, 'subpopulation'] = labels
+            
+            # Log cluster statistics
+            unique_labels, counts = np.unique(labels, return_counts=True)
+            logger.info(f"Identified {best_n} subpopulations (BIC={best_bic:.2f}):")
+            for label, count in zip(unique_labels, counts):
+                logger.info(f"  Subpopulation {label}: {count} curves")
+        else:
+            logger.warning("Clustering failed: no valid GMM model")
         
     def detect_outliers(self):
         """
-        Uses Isolation Forest to detect outliers.
+        Uses Isolation Forest to detect outliers based on numerical features only.
         """
         if self.features is None or self.features.empty:
+            logger.warning("No features available for outlier detection")
             return
             
-        data_clean = self.features.dropna()
-        if data_clean.empty:
+        # Select ONLY numerical features
+        numerical_features = self.features.select_dtypes(include=[np.number])
+        
+        # Remove any existing outlier/clustering columns
+        numerical_features = numerical_features.drop(columns=['subpopulation', 'is_outlier'], errors='ignore')
+        
+        if numerical_features.empty:
+            logger.warning("No numerical features available for outlier detection")
             return
+            
+        data_clean = numerical_features.dropna()
+        if data_clean.empty:
+            logger.warning("No valid data after removing NaNs")
+            return
+            
+        logger.info(f"Detecting outliers in {len(data_clean)} curves using {len(data_clean.columns)} features")
             
         iso = IsolationForest(contamination=0.1, random_state=42)
         outliers = iso.fit_predict(data_clean)
         # -1 is outlier, 1 is inlier
         self.features.loc[data_clean.index, 'is_outlier'] = (outliers == -1)
+        
+        n_outliers = (outliers == -1).sum()
+        logger.info(f"Identified {n_outliers} outliers ({n_outliers/len(data_clean)*100:.1f}%)")
 
 class FRAPStatisticalComparator:
     """
