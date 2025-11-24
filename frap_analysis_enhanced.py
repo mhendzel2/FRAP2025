@@ -71,12 +71,15 @@ class FRAPFitter:
         self.models = {
             'soumpasis': soumpasis_diffusion,
             'single_exp': single_exponential,
-            'double_exp': double_exponential
+            'double_exp': double_exponential,
+            # Add aliases for UI compatibility
+            'single': single_exponential,
+            'double': double_exponential
         }
 
     def fit_model(self, data: FRAPCurveData, model_name: str, p0: dict = None) -> FitResult:
         if model_name not in self.models:
-            raise ValueError(f"Unknown model: {model_name}")
+            raise ValueError(f"Unknown model: {model_name}. Available: {list(self.models.keys())}")
         
         func = self.models[model_name]
         model = lmfit.Model(func)

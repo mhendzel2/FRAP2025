@@ -571,32 +571,174 @@ elif page == "2. Subpopulations & Outliers":
         # Check if initial features exist
         if analyzer.features is None or analyzer.features.empty:
             st.warning("⚠️ Need initial fitting to extract features for clustering.")
-            st.info("Performing quick single-exponential fit to extract basic parameters...")
+            st.info("💡 Click below to automatically fit all models and extract parameters for analysis.")
             
-            if st.button("🚀 Extract Basic Features"):
-                with st.spinner("Extracting features from curves..."):
-                    analyzer.analyze_group(model_name='single')
-                st.success("✅ Basic features extracted!")
+            if st.button("🚀 Extract Basic Features", type="primary", use_container_width=True):
+                with st.spinner("Fitting models and extracting features from curves..."):
+                    # Use None to fit all models and select best
+                    analyzer.analyze_group(model_name=None)
+                st.success("✅ Basic features extracted! You can now perform clustering and outlier detection below.")
                 st.rerun()
-        
-        # Advanced fitting method selection
-        fitting_method_type = "standard"
-        if ROBUST_FITTING_AVAILABLE:
-            fitting_method_type = st.sidebar.radio(
-                "Fitting Algorithm:",
-                ["standard", "robust", "bayesian"],
-                format_func=lambda x: {
-                    "standard": "Standard Least Squares",
-                    "robust": "Robust (Outlier-Resistant)",
-                    "bayesian": "Bayesian MCMC"
-                }[x],
-                help="Advanced methods improve fit quality for noisy data"
-            )
+        else:
+            # Display current data info
+            st.info(f"📊 **{len(analyzer.curves)} curves** loaded with **{len(analyzer.features)} fitted results**")
             
-            if fitting_method_type == "robust":
-                st.sidebar.info("✓ Robust fitting automatically detects and downweights outliers")
-            elif fitting_method_type == "bayesian":
-                st.sidebar.info("✓ Bayesian fitting provides full uncertainty quantification")
+            # Create tabs for different analyses
+            tab_cluster, tab_outlier, tab_viz = st.tabs([
+                "🎯 Clustering", 
+                "⚠️ Outlier Detection",
+                "📊 Visualizations"
+            ])
+            
+            with tab_cluster:
+                st.subheader("Subpopulation Detection")
+                st.markdown("""
+                Automatically identify distinct subpopulations in your data using unsupervised clustering.
+                Useful for detecting heterogeneous protein behaviors.
+                """)
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    # Get numerical columns only
+                    numerical_cols = analyzer.features.select_dtypes(include=[np.number]).columns.tolist()
+                    if len(numerical_cols) < 2:
+                        st.warning("Need at least 2 numerical parameters for clustering")
+                    else:
+                        max_k = st.slider("Max Components", 2, min(5, len(analyzer.features)), 3)
+                        if st.button("🔍 Detect Subpopulations", use_container_width=True):
+                            with st.spinner("Running clustering analysis..."):
+                                analyzer.detect_subpopulations(range(1, max_k + 1))
+                            st.success("✅ Clustering complete!")
+                            st.rerun()
+                
+                with col2:
+                    if 'subpopulation' in analyzer.features.columns:
+                        # Show cluster statistics
+                        clustered_data = analyzer.features.dropna(subset=['subpopulation'])
+                        n_clustered = len(clustered_data)
+                        
+                        st.metric("Clustered Curves", f"{n_clustered}/{len(analyzer.features)}")
+                        
+                        st.write("**Cluster Distribution:**")
+                        counts = clustered_data['subpopulation'].value_counts().sort_index()
+                        
+                        # Display in columns
+                        cols = st.columns(min(len(counts), 4))
+                        for idx, (pop, count) in enumerate(counts.items()):
+                            with cols[idx % len(cols)]:
+                                st.metric(f"Cluster {int(pop)}", f"{count} curves", 
+                                        delta=f"{count/n_clustered*100:.1f}%")
+                    else:
+                        st.info("👆 Run clustering to see results")
+            
+            with tab_outlier:
+                st.subheader("Outlier Detection")
+                st.markdown("""
+                Identify curves that deviate significantly from the population.
+                Multiple methods available for robust detection.
+                """)
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    outlier_method = "iqr"
+                    if OUTLIER_DETECTION_AVAILABLE:
+                        outlier_method = st.selectbox(
+                            "Detection Method:",
+                            ["iqr", "zscore", "isolation_forest", "lof"],
+                            format_func=lambda x: {
+                                "iqr": "IQR (Interquartile Range)",
+                                "zscore": "Z-Score (Statistical)",
+                                "isolation_forest": "Isolation Forest (ML)",
+                                "lof": "Local Outlier Factor (ML)"
+                            }[x]
+                        )
+                    
+                    outlier_threshold = st.slider("Sensitivity:", 1.0, 3.0, 1.5, 0.1,
+                                                 help="Lower = more sensitive")
+                    
+                    if st.button("⚠️ Detect Outliers", use_container_width=True):
+                        with st.spinner(f"Running {outlier_method} outlier detection..."):
+                            if OUTLIER_DETECTION_AVAILABLE and outlier_method in ["isolation_forest", "lof"]:
+                                # Use ML-based detection
+                                detector = FRAPOutlierDetector()
+                                outlier_results = detector.detect_outliers(
+                                    analyzer.features, 
+                                    method=outlier_method
+                                )
+                                analyzer.features['is_outlier'] = outlier_results['is_outlier']
+                            else:
+                                # Use statistical detection
+                                analyzer.detect_outliers(method=outlier_method, threshold=outlier_threshold)
+                        st.success("✅ Outlier detection complete!")
+                        st.rerun()
+                
+                with col2:
+                    if 'is_outlier' in analyzer.features.columns:
+                        n_outliers = analyzer.features['is_outlier'].sum()
+                        n_total = len(analyzer.features)
+                        
+                        st.metric("Outliers Detected", f"{n_outliers}/{n_total}",
+                                delta=f"{n_outliers/n_total*100:.1f}%",
+                                delta_color="inverse")
+                        
+                        if n_outliers > 0:
+                            st.warning(f"⚠️ {n_outliers} curves flagged as outliers")
+                            
+                            if st.checkbox("Show outlier details"):
+                                outlier_data = analyzer.features[analyzer.features['is_outlier']==True]
+                                st.dataframe(outlier_data)
+                            
+                            if st.button("🗑️ Remove Outliers from Analysis"):
+                                analyzer.features = analyzer.features[analyzer.features['is_outlier']==False]
+                                st.success(f"Removed {n_outliers} outliers")
+                                st.rerun()
+                    else:
+                        st.info("👆 Run detection to identify outliers")
+            
+            with tab_viz:
+                st.subheader("Data Visualization")
+                
+                if 'subpopulation' in analyzer.features.columns or 'is_outlier' in analyzer.features.columns:
+                    # Parameter selection for visualization
+                    numerical_params = [c for c in analyzer.features.select_dtypes(include=[np.number]).columns 
+                                       if c not in ['subpopulation', 'is_outlier']]
+                    
+                    if len(numerical_params) >= 2:
+                        col_x, col_y, col_color = st.columns(3)
+                        with col_x:
+                            x_axis = st.selectbox("X Axis", numerical_params, index=0)
+                        with col_y:
+                            y_axis = st.selectbox("Y Axis", numerical_params, index=min(1, len(numerical_params)-1))
+                        with col_color:
+                            color_by = st.selectbox("Color By", 
+                                                   ["None"] + (["subpopulation"] if 'subpopulation' in analyzer.features.columns else []) +
+                                                   (["is_outlier"] if 'is_outlier' in analyzer.features.columns else []))
+                        
+                        # Create visualization
+                        if 'subpopulation' in analyzer.features.columns and color_by == "subpopulation":
+                            clustered_data = analyzer.features.dropna(subset=['subpopulation'])
+                            if len(clustered_data) > 0:
+                                fig = FRAPVisualizer.plot_subpopulations(clustered_data, x_axis, y_axis)
+                                st.pyplot(fig)
+                        else:
+                            # Standard scatter plot
+                            fig, ax = plt.subplots(figsize=(10, 6))
+                            if color_by == "is_outlier" and 'is_outlier' in analyzer.features.columns:
+                                outliers = analyzer.features[analyzer.features['is_outlier']==True]
+                                normals = analyzer.features[analyzer.features['is_outlier']==False]
+                                ax.scatter(normals[x_axis], normals[y_axis], alpha=0.6, label='Normal')
+                                ax.scatter(outliers[x_axis], outliers[y_axis], alpha=0.6, 
+                                         color='red', marker='x', s=100, label='Outlier')
+                                ax.legend()
+                            else:
+                                ax.scatter(analyzer.features[x_axis], analyzer.features[y_axis], alpha=0.6)
+                            ax.set_xlabel(x_axis)
+                            ax.set_ylabel(y_axis)
+                            ax.set_title(f"{x_axis} vs {y_axis}")
+                            ax.grid(alpha=0.3)
+                            st.pyplot(fig)
+                else:
+                    st.info("Run clustering or outlier detection first to visualize groupings")
         
         # Fitting mode selection
         fitting_mode = st.radio(
