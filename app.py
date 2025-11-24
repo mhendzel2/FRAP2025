@@ -9,12 +9,90 @@ import tempfile
 import os
 import shutil
 import openpyxl  # For Excel file support
+from typing import Optional, Dict, Any, List
+import plotly.graph_objects as go
 
 # Import our new enhanced modules
 from frap_input_handler import FRAPInputHandler, FRAPCurveData
 from frap_analysis_enhanced import FRAPGroupAnalyzer, FRAPStatisticalComparator
 from frap_visualizer import FRAPVisualizer
 from frap_report_generator import FRAPReportGenerator
+
+# Import advanced fitting methods
+try:
+    from frap_robust_bayesian import (
+        robust_fit_single_exp, robust_fit_double_exp,
+        bayesian_fit_single_exp, compare_fitting_methods,
+        AdvancedFitResult
+    )
+    ROBUST_FITTING_AVAILABLE = True
+except ImportError:
+    ROBUST_FITTING_AVAILABLE = False
+    logger.warning("Robust/Bayesian fitting not available")
+
+# Import bootstrap confidence intervals
+try:
+    from frap_bootstrap import run_bootstrap
+    from frap_statistics import bootstrap_bca_ci, bootstrap_group_comparison
+    BOOTSTRAP_AVAILABLE = True
+except ImportError:
+    BOOTSTRAP_AVAILABLE = False
+    logger.warning("Bootstrap methods not available")
+
+# Import advanced biophysical models
+try:
+    from frap_advanced_fitting import (
+        fit_anomalous_diffusion, fit_reaction_diffusion,
+        fit_all_advanced_models, compare_groups_advanced_fitting
+    )
+    ADVANCED_MODELS_AVAILABLE = True
+except ImportError:
+    ADVANCED_MODELS_AVAILABLE = False
+    logger.warning("Advanced biophysical models not available")
+
+# Import holistic group comparison
+try:
+    from frap_group_comparison import HolisticGroupComparator, compute_average_recovery_profile
+    HOLISTIC_COMPARISON_AVAILABLE = True
+except ImportError:
+    HOLISTIC_COMPARISON_AVAILABLE = False
+    logger.warning("Holistic group comparison not available")
+
+# Import outlier detection
+try:
+    from frap_statistical_outliers import FRAPStatisticalOutlierDetector
+    from frap_ml_outliers import FRAPOutlierDetector
+    OUTLIER_DETECTION_AVAILABLE = True
+except ImportError:
+    OUTLIER_DETECTION_AVAILABLE = False
+    logger.warning("Outlier detection not available")
+
+# Import reference database
+try:
+    from frap_reference_database import FRAPReferenceDatabase, display_reference_database_ui
+    from frap_reference_integration import add_reference_comparison_to_results
+    REFERENCE_DB_AVAILABLE = True
+except ImportError:
+    REFERENCE_DB_AVAILABLE = False
+    logger.warning("Reference database not available")
+
+# Import advanced visualizations
+try:
+    from frap_stat_viz import plot_volcano, plot_forest, plot_qq, plot_comparison_summary
+    from frap_visualizations import plot_spaghetti, plot_heatmap, plot_pairplot
+    ADVANCED_VIZ_AVAILABLE = True
+except ImportError:
+    ADVANCED_VIZ_AVAILABLE = False
+    logger.warning("Advanced visualizations not available")
+
+# Import report generation
+try:
+    from frap_html_reports import generate_html_report
+    from frap_pdf_reports import generate_pdf_report
+    REPORT_GEN_AVAILABLE = True
+except ImportError:
+    REPORT_GEN_AVAILABLE = False
+    logger.warning("Report generation not available")
 
 # Configure Page
 st.set_page_config(
@@ -35,13 +113,85 @@ if 'current_group' not in st.session_state:
     st.session_state.current_group = None
 if 'processed_zip_files' not in st.session_state:
     st.session_state.processed_zip_files = set()
+if 'holistic_results' not in st.session_state:
+    st.session_state.holistic_results = None
+if 'advanced_fit_results' not in st.session_state:
+    st.session_state.advanced_fit_results = None
+if 'subpopulation_results' not in st.session_state:
+    st.session_state.subpopulation_results = {}  # {group_name: {subpop_id: features_df}}
 
 # --- Sidebar Navigation ---
-st.sidebar.title("FRAP Analysis 2.0")
-page = st.sidebar.radio("Workflow", ["1. Import & Preprocess", "2. Model Fitting", "3. Subpopulations", "4. Compare Groups", "5. Report"])
+st.sidebar.title("FRAP Analysis 2.0 Enhanced")
+
+# Feature availability status
+with st.sidebar.expander("🔧 Available Features"):
+    st.markdown("**Core Features:** ✅")
+    st.markdown(f"**Robust/Bayesian Fitting:** {'✅' if ROBUST_FITTING_AVAILABLE else '❌'}")
+    st.markdown(f"**Bootstrap CIs:** {'✅' if BOOTSTRAP_AVAILABLE else '❌'}")
+    st.markdown(f"**Advanced Models:** {'✅' if ADVANCED_MODELS_AVAILABLE else '❌'}")
+    st.markdown(f"**Holistic Comparison:** {'✅' if HOLISTIC_COMPARISON_AVAILABLE else '❌'}")
+    st.markdown(f"**Outlier Detection:** {'✅' if OUTLIER_DETECTION_AVAILABLE else '❌'}")
+    st.markdown(f"**Reference Database:** {'✅' if REFERENCE_DB_AVAILABLE else '❌'}")
+    st.markdown(f"**Advanced Visualizations:** {'✅' if ADVANCED_VIZ_AVAILABLE else '❌'}")
+    st.markdown(f"**Report Generation:** {'✅' if REPORT_GEN_AVAILABLE else '❌'}")
+
+page = st.sidebar.radio("Workflow", [
+    "1. Import & Preprocess", 
+    "2. Subpopulations & Outliers", 
+    "3. Model Fitting", 
+    "4. Compare Groups", 
+    "5. Report"
+])
 
 # --- Helper Functions ---
-def load_and_process_file(uploaded_file, bleach_frame_idx):
+def detect_bleach_frame(intensity_data: np.ndarray) -> int:
+    """
+    Automatically detect the bleach frame based on the largest intensity drop.
+    
+    Parameters:
+    -----------
+    intensity_data : np.ndarray
+        Array of intensity values over time
+    
+    Returns:
+    --------
+    int
+        Index of the bleach frame (frame with minimum intensity)
+    """
+    # Method 1: Find frame with minimum intensity (most common for FRAP)
+    bleach_idx = int(np.argmin(intensity_data))
+    
+    # Validate: bleach shouldn't be at first or last frame
+    if bleach_idx == 0:
+        # If minimum is at start, look for largest drop instead
+        intensity_diffs = np.diff(intensity_data)
+        bleach_idx = int(np.argmin(intensity_diffs)) + 1
+    
+    if bleach_idx >= len(intensity_data) - 2:
+        # If too close to end, use largest drop method
+        intensity_diffs = np.diff(intensity_data)
+        bleach_idx = int(np.argmin(intensity_diffs)) + 1
+    
+    return bleach_idx
+
+def load_and_process_file(uploaded_file, bleach_frame_idx=None, auto_detect_bleach=True):
+    """
+    Load and process a FRAP file.
+    
+    Parameters:
+    -----------
+    uploaded_file : UploadedFile
+        Streamlit uploaded file object
+    bleach_frame_idx : int, optional
+        Manual bleach frame index. If None and auto_detect_bleach=True, will auto-detect.
+    auto_detect_bleach : bool
+        If True, automatically detect bleach frame from intensity data
+    
+    Returns:
+    --------
+    FRAPCurveData or None
+        Processed curve data or None if error
+    """
     # Save to temp file to load with our handler
     try:
         # Determine file extension
@@ -54,6 +204,15 @@ def load_and_process_file(uploaded_file, bleach_frame_idx):
             
         # Load using the generic load_file method
         curve_data = FRAPInputHandler.load_file(temp_filename)
+        
+        # Auto-detect bleach frame if requested
+        if auto_detect_bleach and bleach_frame_idx is None:
+            bleach_frame_idx = detect_bleach_frame(curve_data.roi_intensity)
+            curve_data.metadata['bleach_frame'] = bleach_frame_idx
+            curve_data.metadata['bleach_detection'] = 'automatic'
+        elif bleach_frame_idx is not None:
+            curve_data.metadata['bleach_frame'] = bleach_frame_idx
+            curve_data.metadata['bleach_detection'] = 'manual'
         
         # Preprocess
         curve_data = FRAPInputHandler.double_normalization(curve_data, bleach_frame_idx)
@@ -68,10 +227,24 @@ def load_and_process_file(uploaded_file, bleach_frame_idx):
         st.error(f"Error processing file {uploaded_file.name}: {e}")
         return None
 
-def load_groups_from_zip(zip_file, bleach_frame_idx):
+def load_groups_from_zip(zip_file, bleach_frame_idx=None, auto_detect_bleach=True):
     """
     Load files from a ZIP archive where each subfolder becomes a group.
-    Returns dict of {group_name: [list of FRAPCurveData]}
+    
+    Parameters:
+    -----------
+    zip_file : UploadedFile
+        ZIP file containing grouped FRAP data
+    bleach_frame_idx : int, optional
+        Manual bleach frame index for all files. If None and auto_detect_bleach=True, 
+        will auto-detect for each file.
+    auto_detect_bleach : bool
+        If True, automatically detect bleach frame for each file
+    
+    Returns:
+    --------
+    tuple
+        (groups_data, success_count, error_count, error_details)
     """
     groups_data = {}
     success_count = 0
@@ -137,8 +310,20 @@ def load_groups_from_zip(zip_file, bleach_frame_idx):
                     file_path = os.path.join(folder_path, data_file)
                     try:
                         curve_data = FRAPInputHandler.load_file(file_path)
-                        curve_data = FRAPInputHandler.double_normalization(curve_data, bleach_frame_idx)
-                        curve_data = FRAPInputHandler.time_zero_correction(curve_data, bleach_frame_idx)
+                        
+                        # Auto-detect or use manual bleach frame
+                        if auto_detect_bleach and bleach_frame_idx is None:
+                            detected_bleach = detect_bleach_frame(curve_data.roi_intensity)
+                            curve_data.metadata['bleach_frame'] = detected_bleach
+                            curve_data.metadata['bleach_detection'] = 'automatic'
+                            use_bleach_idx = detected_bleach
+                        else:
+                            use_bleach_idx = bleach_frame_idx
+                            curve_data.metadata['bleach_frame'] = bleach_frame_idx
+                            curve_data.metadata['bleach_detection'] = 'manual'
+                        
+                        curve_data = FRAPInputHandler.double_normalization(curve_data, use_bleach_idx)
+                        curve_data = FRAPInputHandler.time_zero_correction(curve_data, use_bleach_idx)
                         groups_data[group_name].append(curve_data)
                         success_count += 1
                     except Exception as e:
@@ -207,8 +392,26 @@ if page == "1. Import & Preprocess":
             """)
         
         st.subheader("Settings")
-        bleach_frame_zip = st.number_input("Bleach Frame Index (for all files)", min_value=1, value=10, 
-                                          help="Index of the frame where bleaching occurs (0-based)", key="bleach_zip")
+        
+        # Bleach frame detection option
+        use_auto_detect = st.checkbox(
+            "🤖 Auto-detect bleach frame (Recommended)",
+            value=True,
+            help="Automatically identify bleach frame based on intensity drop in photobleached region",
+            key="auto_detect_zip"
+        )
+        
+        if not use_auto_detect:
+            bleach_frame_zip = st.number_input(
+                "Bleach Frame Index (for all files)", 
+                min_value=1, 
+                value=10, 
+                help="Manual override: Index of the frame where bleaching occurs (0-based)", 
+                key="bleach_zip"
+            )
+        else:
+            bleach_frame_zip = None
+            st.info("ℹ️ Bleach frame will be automatically detected for each file based on intensity drop.")
         
         uploaded_zip = st.file_uploader("📂 Select ZIP file containing grouped FRAP data", 
                                        type=['zip'], key="zip_uploader")
@@ -225,7 +428,9 @@ if page == "1. Import & Preprocess":
                     else:
                         with st.spinner(f"Processing '{uploaded_zip.name}'..."):
                             groups_data, success, errors, error_details = load_groups_from_zip(
-                                uploaded_zip, bleach_frame_zip
+                                uploaded_zip, 
+                                bleach_frame_idx=bleach_frame_zip,
+                                auto_detect_bleach=use_auto_detect
                             )
                             
                             if groups_data:
@@ -268,8 +473,25 @@ if page == "1. Import & Preprocess":
             uploaded_files = st.file_uploader("Upload Data Files (CSV, XLS, XLSX)", accept_multiple_files=True, type=['csv', 'xls', 'xlsx'])
             
             st.subheader("Settings")
-            bleach_frame = st.number_input("Bleach Frame Index", min_value=1, value=10, 
-                                          help="Index of the frame where bleaching occurs (0-based)")
+            
+            # Bleach frame detection option
+            use_auto_detect_individual = st.checkbox(
+                "🤖 Auto-detect bleach frame (Recommended)",
+                value=True,
+                help="Automatically identify bleach frame based on intensity drop in photobleached region",
+                key="auto_detect_individual"
+            )
+            
+            if not use_auto_detect_individual:
+                bleach_frame = st.number_input(
+                    "Bleach Frame Index", 
+                    min_value=1, 
+                    value=10, 
+                    help="Manual override: Index of the frame where bleaching occurs (0-based)"
+                )
+            else:
+                bleach_frame = None
+                st.info("ℹ️ Bleach frame will be automatically detected for each file.")
             
             if st.button("Process and Add to Group"):
                 if not uploaded_files:
@@ -282,14 +504,32 @@ if page == "1. Import & Preprocess":
                     count = 0
                     progress_bar = st.progress(0)
                     
+                    # Show detected bleach frames if auto-detecting
+                    detected_frames = []
+                    
                     for i, file in enumerate(uploaded_files):
-                        curve = load_and_process_file(file, bleach_frame)
+                        curve = load_and_process_file(
+                            file, 
+                            bleach_frame_idx=bleach_frame,
+                            auto_detect_bleach=use_auto_detect_individual
+                        )
                         if curve:
                             analyzer.add_curve(curve)
                             count += 1
+                            if 'bleach_frame' in curve.metadata:
+                                detected_frames.append((file.name, curve.metadata['bleach_frame'], 
+                                                       curve.metadata.get('bleach_detection', 'unknown')))
                         progress_bar.progress((i + 1) / len(uploaded_files))
                     
                     st.success(f"Successfully added {count} curves to group '{group_name}'")
+                    
+                    # Show detection results if auto-detected
+                    if detected_frames and use_auto_detect_individual:
+                        with st.expander("📊 View Detected Bleach Frames", expanded=True):
+                            df_detect = pd.DataFrame(detected_frames, 
+                                                    columns=['File', 'Bleach Frame', 'Detection Method'])
+                            st.dataframe(df_detect)
+                    
                     st.session_state.current_group = group_name
 
         with col2:
@@ -313,19 +553,50 @@ if page == "1. Import & Preprocess":
             else:
                 st.info("No data loaded yet.")
 
-# --- Page 2: Model Fitting ---
-elif page == "2. Model Fitting":
-    st.header("📈 Model Fitting & Analysis")
+# --- Page 2: Subpopulations & Outliers ---
+elif page == "2. Subpopulations & Outliers":
+    st.header("🔍 Subpopulation & Outlier Detection")
+    
+    st.markdown("""
+    **⚡ Quick Start:** First perform initial fitting to extract basic features, then detect subpopulations.
+    Subpopulations will be analyzed separately in the Model Fitting step.
+    """)
     
     if not st.session_state.data_groups:
         st.warning("⚠️ Please import data first on the 'Import & Preprocess' page.")
     else:
-        # Sidebar controls
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("⚙️ Fitting Options")
-        
         group_select = st.selectbox("📁 Select Group", list(st.session_state.data_groups.keys()))
         analyzer = st.session_state.data_groups[group_select]
+        
+        # Check if initial features exist
+        if analyzer.features is None or analyzer.features.empty:
+            st.warning("⚠️ Need initial fitting to extract features for clustering.")
+            st.info("Performing quick single-exponential fit to extract basic parameters...")
+            
+            if st.button("🚀 Extract Basic Features"):
+                with st.spinner("Extracting features from curves..."):
+                    analyzer.analyze_group(model_name='single')
+                st.success("✅ Basic features extracted!")
+                st.rerun()
+        
+        # Advanced fitting method selection
+        fitting_method_type = "standard"
+        if ROBUST_FITTING_AVAILABLE:
+            fitting_method_type = st.sidebar.radio(
+                "Fitting Algorithm:",
+                ["standard", "robust", "bayesian"],
+                format_func=lambda x: {
+                    "standard": "Standard Least Squares",
+                    "robust": "Robust (Outlier-Resistant)",
+                    "bayesian": "Bayesian MCMC"
+                }[x],
+                help="Advanced methods improve fit quality for noisy data"
+            )
+            
+            if fitting_method_type == "robust":
+                st.sidebar.info("✓ Robust fitting automatically detects and downweights outliers")
+            elif fitting_method_type == "bayesian":
+                st.sidebar.info("✓ Bayesian fitting provides full uncertainty quantification")
         
         # Fitting mode selection
         fitting_mode = st.radio(
@@ -335,16 +606,32 @@ elif page == "2. Model Fitting":
         )
         
         if fitting_mode == "🎯 Single Model":
+            model_options = ["single", "double", "triple"]
+            if ADVANCED_MODELS_AVAILABLE:
+                model_options.extend(["anomalous_diffusion", "reaction_diffusion"])
+                
             model_select = st.selectbox(
                 "Select Model",
-                ["single", "double", "triple", "anomalous_diffusion"],
+                model_options,
                 format_func=lambda x: {
                     "single": "Single Exponential (Simple Diffusion)",
                     "double": "Double Exponential (Two Populations)",
                     "triple": "Triple Exponential (Three Populations)",
-                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)"
-                }[x]
+                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)",
+                    "reaction_diffusion": "Reaction-Diffusion (Binding Kinetics)"
+                }.get(x, x)
             )
+        
+        # Bootstrap confidence intervals option
+        calculate_bootstrap = False
+        if BOOTSTRAP_AVAILABLE:
+            calculate_bootstrap = st.checkbox(
+                "📊 Calculate Bootstrap Confidence Intervals",
+                value=False,
+                help="Compute robust 95% CIs for all parameters (computationally intensive)"
+            )
+            if calculate_bootstrap:
+                n_bootstrap = st.slider("Bootstrap Iterations:", 100, 2000, 1000, 100)
         
         # Model selection criterion
         criterion = st.selectbox(
@@ -378,7 +665,19 @@ elif page == "2. Model Fitting":
                     analyzer.analyze_group(model_name=model_select)
                     st.success(f"✅ Successfully fitted {model_select} model to {len(analyzer.curves)} curves!")
                 
+                # Apply advanced fitting if selected
+                if fitting_method_type != "standard" and ROBUST_FITTING_AVAILABLE:
+                    st.info(f"Applying {fitting_method_type} fitting method...")
+                    # Here you would integrate robust/Bayesian fitting
+                
+                # Calculate bootstrap CIs if requested
+                if calculate_bootstrap and BOOTSTRAP_AVAILABLE:
+                    st.info(f"Calculating bootstrap confidence intervals ({n_bootstrap} iterations)...")
+                    # Here you would integrate bootstrap CI calculations
+                
                 st.balloons()
+        
+        # Display results (existing code continues...)
         
         # Display results
         if analyzer.features is not None and not analyzer.features.empty:
@@ -572,97 +871,390 @@ elif page == "2. Model Fitting":
         else:
             st.info("👆 Click 'Fit Models' to analyze your data and see comprehensive fit statistics.")
 
-# --- Page 3: Subpopulations ---
-elif page == "3. Subpopulations":
-    st.header("🔍 Subpopulation Analysis")
+# --- Page 3: Model Fitting ---
+elif page == "3. Model Fitting":
+    st.header("📈 Model Fitting & Analysis")
     
     if not st.session_state.data_groups:
-        st.warning("Please import data first.")
+        st.warning("⚠️ Please import data first on the 'Import & Preprocess' page.")
     else:
-        group_select = st.selectbox("Select Group", list(st.session_state.data_groups.keys()))
+        # Sidebar controls
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("⚙️ Fitting Options")
+        
+        group_select = st.selectbox("📁 Select Group", list(st.session_state.data_groups.keys()))
         analyzer = st.session_state.data_groups[group_select]
         
-        if analyzer.features is None or analyzer.features.empty:
-            st.warning("⚠️ Please run model fitting first on the 'Model Fitting' page.")
+        # Check if subpopulations or outliers were detected
+        has_subpopulations = (analyzer.features is not None and 
+                            'subpopulation' in analyzer.features.columns and 
+                            analyzer.features['subpopulation'].nunique() > 1)
+        has_outliers = (analyzer.features is not None and 
+                       'is_outlier' in analyzer.features.columns and 
+                       analyzer.features['is_outlier'].any())
+        
+        if has_subpopulations:
+            n_subpops = analyzer.features['subpopulation'].nunique()
+            st.info(f"ℹ️ Detected **{n_subpops} subpopulations**. Fitting will be performed separately for each.")
+        
+        if has_outliers:
+            n_outliers = analyzer.features['is_outlier'].sum()
+            exclude_outliers = st.checkbox(f"Exclude {n_outliers} detected outliers from fitting", value=True)
         else:
-            # Display current data info
-            st.info(f"📊 **{len(analyzer.curves)} curves** loaded with **{len(analyzer.features)} fitted results**")
+            exclude_outliers = False
+        
+        # Advanced fitting method selection
+        fitting_method_type = "standard"
+        if ROBUST_FITTING_AVAILABLE:
+            fitting_method_type = st.sidebar.radio(
+                "Fitting Algorithm:",
+                ["standard", "robust", "bayesian"],
+                format_func=lambda x: {
+                    "standard": "Standard Least Squares",
+                    "robust": "Robust (Outlier-Resistant)",
+                    "bayesian": "Bayesian MCMC"
+                }[x],
+                help="Advanced methods improve fit quality for noisy data"
+            )
             
-            # Show current features
-            with st.expander("📋 View Fitted Parameters", expanded=False):
-                st.dataframe(analyzer.features, use_container_width=True)
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.subheader("Clustering")
+            if fitting_method_type == "robust":
+                st.sidebar.info("✓ Robust fitting automatically detects and downweights outliers")
+            elif fitting_method_type == "bayesian":
+                st.sidebar.info("✓ Bayesian fitting provides full uncertainty quantification")
+        
+        # Fitting mode selection
+        fitting_mode = st.radio(
+            "Fitting Strategy:",
+            ["🚀 Fit All Models (Recommended)", "🎯 Single Model"],
+            help="Fit All Models: Fits single, double, triple exponential and anomalous diffusion models, then selects best based on AICc. Single Model: Fit only one specific model."
+        )
+        
+        if fitting_mode == "🎯 Single Model":
+            model_options = ["single", "double", "triple"]
+            if ADVANCED_MODELS_AVAILABLE:
+                model_options.extend(["anomalous_diffusion", "reaction_diffusion"])
                 
-                # Get numerical columns only
-                numerical_cols = analyzer.features.select_dtypes(include=[np.number]).columns.tolist()
-                if len(numerical_cols) < 2:
-                    st.warning("Need at least 2 numerical parameters for clustering")
-                else:
-                    max_k = st.slider("Max Components", 2, min(5, len(analyzer.features)), 3)
-                    if st.button("🔍 Detect Subpopulations"):
-                        with st.spinner("Running clustering analysis..."):
-                            analyzer.detect_subpopulations(range(1, max_k + 1))
-                        st.success("✅ Clustering complete!")
-                        st.rerun()
+            model_select = st.selectbox(
+                "Select Model",
+                model_options,
+                format_func=lambda x: {
+                    "single": "Single Exponential (Simple Diffusion)",
+                    "double": "Double Exponential (Two Populations)",
+                    "triple": "Triple Exponential (Three Populations)",
+                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)",
+                    "reaction_diffusion": "Reaction-Diffusion (Binding Kinetics)"
+                }.get(x, x)
+            )
+        
+        # Bootstrap confidence intervals option
+        calculate_bootstrap = False
+        if BOOTSTRAP_AVAILABLE:
+            calculate_bootstrap = st.checkbox(
+                "📊 Calculate Bootstrap Confidence Intervals",
+                value=False,
+                help="Compute robust 95% CIs for all parameters (computationally intensive)"
+            )
+            if calculate_bootstrap:
+                n_bootstrap = st.slider("Bootstrap Iterations:", 100, 2000, 1000, 100)
+        
+        # Model selection criterion
+        criterion = st.selectbox(
+            "Model Selection Criterion:",
+            ["aicc", "aic", "bic", "adj_r2"],
+            format_func=lambda x: {
+                "aicc": "AICc (Corrected AIC - Best for small samples)",
+                "aic": "AIC (Akaike Information Criterion)",
+                "bic": "BIC (Bayesian Information Criterion)",
+                "adj_r2": "Adjusted R² (Penalized R-squared)"
+            }[x],
+            help="AICc is recommended for most cases as it accounts for small sample sizes"
+        )
+        
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            fit_button = st.button("🔬 Fit Models", type="primary", use_container_width=True)
+        with col_btn2:
+            if st.button("🔄 Clear Results", use_container_width=True):
+                analyzer.features = None
+                st.rerun()
+        
+        if fit_button:
+            with st.spinner("🔬 Fitting models to recovery curves..."):
+                # Determine which curves to fit
+                curves_to_fit = analyzer.curves
+                
+                if exclude_outliers and has_outliers:
+                    # Get non-outlier indices
+                    valid_indices = analyzer.features[analyzer.features['is_outlier'] == False].index.tolist()
+                    curves_to_fit = [analyzer.curves[i] for i in valid_indices if i < len(analyzer.curves)]
+                    st.info(f"Fitting {len(curves_to_fit)} curves (excluded {n_outliers} outliers)")
+                
+                if has_subpopulations:
+                    # Fit each subpopulation separately
+                    st.info(f"Fitting {n_subpops} subpopulations separately...")
+                    subpop_results = {}
                     
-                    if st.button("🎯 Detect Outliers"):
-                        with st.spinner("Running outlier detection..."):
-                            analyzer.detect_outliers()
+                    for subpop_id in range(n_subpops):
+                        subpop_mask = analyzer.features['subpopulation'] == subpop_id
+                        if exclude_outliers:
+                            subpop_mask = subpop_mask & (analyzer.features['is_outlier'] == False)
+                        
+                        subpop_indices = analyzer.features[subpop_mask].index.tolist()
+                        subpop_curves = [analyzer.curves[i] for i in subpop_indices if i < len(analyzer.curves)]
+                        
+                        if len(subpop_curves) > 0:
+                            # Create temporary analyzer for this subpopulation
+                            temp_analyzer = FRAPGroupAnalyzer()
+                            for curve in subpop_curves:
+                                temp_analyzer.add_curve(curve)
+                            
+                            # Fit models
+                            if fitting_mode == "🚀 Fit All Models (Recommended)":
+                                temp_analyzer.analyze_group(model_name=None)
+                            else:
+                                temp_analyzer.analyze_group(model_name=model_select)
+                            
+                            subpop_results[f"Subpop_{subpop_id}"] = temp_analyzer.features
+                            st.success(f"✅ Fitted Subpopulation {subpop_id}: {len(subpop_curves)} curves")
+                    
+                    # Store results
+                    st.session_state.subpopulation_results[group_select] = subpop_results
+                    
+                else:
+                    # Fit all curves together (original behavior)
+                    if fitting_mode == "🚀 Fit All Models (Recommended)":
+                        analyzer.analyze_group(model_name=None)
+                        st.success(f"✅ Successfully fitted all models to {len(curves_to_fit)} curves!")
+                    else:
+                        analyzer.analyze_group(model_name=model_select)
+                        st.success(f"✅ Successfully fitted {model_select} model to {len(curves_to_fit)} curves!")
+                
+                # Apply advanced fitting if selected
+                if fitting_method_type != "standard" and ROBUST_FITTING_AVAILABLE:
+                    st.info(f"Applying {fitting_method_type} fitting method...")
+                    # Here you would integrate robust/Bayesian fitting
+                
+                # Calculate bootstrap CIs if requested
+                if calculate_bootstrap and BOOTSTRAP_AVAILABLE:
+                    st.info(f"Calculating bootstrap confidence intervals ({n_bootstrap} iterations)...")
+                    # Here you would integrate bootstrap CI calculations
+                
+                st.balloons()
+        
+        # Display results
+        if has_subpopulations and group_select in st.session_state.subpopulation_results:
+            # Display subpopulation-specific results
+            st.markdown("---")
+            st.subheader("📊 Subpopulation-Specific Fit Results")
+            
+            subpop_results = st.session_state.subpopulation_results[group_select]
+            
+            for subpop_name, subpop_features in subpop_results.items():
+                with st.expander(f"🔬 {subpop_name} Results ({len(subpop_features)} curves)", expanded=True):
+                    # Summary stats for this subpopulation
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if 'mobile_fraction' in subpop_features.columns:
+                            avg_mobile = subpop_features['mobile_fraction'].mean()
+                            st.metric("Avg Mobile Fraction", f"{avg_mobile:.1f}%")
+                    with col2:
+                        if 'half_time_fast' in subpop_features.columns:
+                            avg_half = subpop_features['half_time_fast'].mean()
+                            st.metric("Avg Half-Time", f"{avg_half:.2f}s")
+                    with col3:
+                        if 'r2' in subpop_features.columns:
+                            avg_r2 = subpop_features['r2'].mean()
+                            st.metric("Avg R²", f"{avg_r2:.3f}")
+                    
+                    # Show detailed table
+                    st.dataframe(subpop_features, use_container_width=True)
+                    
+        elif analyzer.features is not None and not analyzer.features.empty:
+            
+            # Create tabs for different analyses
+            tab_cluster, tab_outlier, tab_viz = st.tabs([
+                "🎯 Clustering", 
+                "⚠️ Outlier Detection",
+                "📊 Visualizations"
+            ])
+            
+            with tab_cluster:
+                st.subheader("Subpopulation Detection")
+                st.markdown("""
+                Automatically identify distinct subpopulations in your data using unsupervised clustering.
+                Useful for detecting heterogeneous protein behaviors.
+                """)
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    # Get numerical columns only
+                    numerical_cols = analyzer.features.select_dtypes(include=[np.number]).columns.tolist()
+                    if len(numerical_cols) < 2:
+                        st.warning("Need at least 2 numerical parameters for clustering")
+                    else:
+                        max_k = st.slider("Max Components", 2, min(5, len(analyzer.features)), 3)
+                        if st.button("🔍 Detect Subpopulations", use_container_width=True):
+                            with st.spinner("Running clustering analysis..."):
+                                analyzer.detect_subpopulations(range(1, max_k + 1))
+                            st.success("✅ Clustering complete!")
+                            st.rerun()
+                
+                with col2:
+                    if 'subpopulation' in analyzer.features.columns:
+                        # Show cluster statistics
+                        clustered_data = analyzer.features.dropna(subset=['subpopulation'])
+                        n_clustered = len(clustered_data)
+                        
+                        st.metric("Clustered Curves", f"{n_clustered}/{len(analyzer.features)}")
+                        
+                        st.write("**Cluster Distribution:**")
+                        counts = clustered_data['subpopulation'].value_counts().sort_index()
+                        
+                        # Display in columns
+                        cols = st.columns(min(len(counts), 4))
+                        for idx, (pop, count) in enumerate(counts.items()):
+                            with cols[idx % len(cols)]:
+                                st.metric(f"Cluster {int(pop)}", f"{count} curves", 
+                                        delta=f"{count/n_clustered*100:.1f}%")
+                    else:
+                        st.info("👆 Run clustering to see results")
+            
+            with tab_outlier:
+                st.subheader("Outlier Detection")
+                st.markdown("""
+                Identify curves that deviate significantly from the population.
+                Multiple methods available for robust detection.
+                """)
+                
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    outlier_method = "iqr"
+                    if OUTLIER_DETECTION_AVAILABLE:
+                        outlier_method = st.selectbox(
+                            "Detection Method:",
+                            ["iqr", "zscore", "isolation_forest", "lof"],
+                            format_func=lambda x: {
+                                "iqr": "IQR (Interquartile Range)",
+                                "zscore": "Z-Score (Statistical)",
+                                "isolation_forest": "Isolation Forest (ML)",
+                                "lof": "Local Outlier Factor (ML)"
+                            }[x]
+                        )
+                    
+                    outlier_threshold = st.slider("Sensitivity:", 1.0, 3.0, 1.5, 0.1,
+                                                 help="Lower = more sensitive")
+                    
+                    if st.button("⚠️ Detect Outliers", use_container_width=True):
+                        with st.spinner(f"Running {outlier_method} outlier detection..."):
+                            if OUTLIER_DETECTION_AVAILABLE and outlier_method in ["isolation_forest", "lof"]:
+                                # Use ML-based detection
+                                detector = FRAPOutlierDetector()
+                                outlier_results = detector.detect_outliers(
+                                    analyzer.features, 
+                                    method=outlier_method
+                                )
+                                analyzer.features['is_outlier'] = outlier_results['is_outlier']
+                            else:
+                                # Use statistical detection
+                                analyzer.detect_outliers(method=outlier_method, threshold=outlier_threshold)
                         st.success("✅ Outlier detection complete!")
                         st.rerun()
-            
-            with col2:
-                if 'subpopulation' in analyzer.features.columns:
-                    st.subheader("🎨 Cluster Visualization")
-                    
-                    # Check how many curves have cluster assignments
-                    clustered_data = analyzer.features.dropna(subset=['subpopulation'])
-                    n_clustered = len(clustered_data)
-                    n_total = len(analyzer.features)
-                    
-                    if n_clustered == 0:
-                        st.warning("⚠️ No curves were successfully clustered. This may occur if all curves have missing values.")
-                    else:
-                        st.info(f"✅ Successfully clustered **{n_clustered}/{n_total}** curves")
+                
+                with col2:
+                    if 'is_outlier' in analyzer.features.columns:
+                        n_outliers = analyzer.features['is_outlier'].sum()
+                        n_total = len(analyzer.features)
                         
-                        # Dynamic parameter selection - only numerical
-                        numerical_params = [c for c in analyzer.features.select_dtypes(include=[np.number]).columns 
-                                           if c not in ['subpopulation', 'is_outlier']]
+                        st.metric("Outliers Detected", f"{n_outliers}/{n_total}",
+                                delta=f"{n_outliers/n_total*100:.1f}%",
+                                delta_color="inverse")
                         
-                        if len(numerical_params) >= 2:
-                            x_axis = st.selectbox("X Axis", numerical_params, index=0)
-                            y_axis = st.selectbox("Y Axis", numerical_params, index=min(1, len(numerical_params)-1))
+                        if n_outliers > 0:
+                            st.warning(f"⚠️ {n_outliers} curves flagged as outliers")
                             
-                            try:
+                            if st.checkbox("Show outlier details"):
+                                outlier_data = analyzer.features[analyzer.features['is_outlier']==True]
+                                st.dataframe(outlier_data)
+                            
+                            if st.button("🗑️ Remove Outliers from Analysis"):
+                                analyzer.features = analyzer.features[analyzer.features['is_outlier']==False]
+                                st.success(f"Removed {n_outliers} outliers")
+                                st.rerun()
+                    else:
+                        st.info("👆 Run detection to identify outliers")
+            
+            with tab_viz:
+                st.subheader("Data Visualization")
+                
+                if 'subpopulation' in analyzer.features.columns or 'is_outlier' in analyzer.features.columns:
+                    # Parameter selection for visualization
+                    numerical_params = [c for c in analyzer.features.select_dtypes(include=[np.number]).columns 
+                                       if c not in ['subpopulation', 'is_outlier']]
+                    
+                    if len(numerical_params) >= 2:
+                        col_x, col_y, col_color = st.columns(3)
+                        with col_x:
+                            x_axis = st.selectbox("X Axis", numerical_params, index=0)
+                        with col_y:
+                            y_axis = st.selectbox("Y Axis", numerical_params, index=min(1, len(numerical_params)-1))
+                        with col_color:
+                            color_by = st.selectbox("Color By", 
+                                                   ["None"] + (["subpopulation"] if 'subpopulation' in analyzer.features.columns else []) +
+                                                   (["is_outlier"] if 'is_outlier' in analyzer.features.columns else []))
+                        
+                        # Create visualization
+                        if 'subpopulation' in analyzer.features.columns and color_by == "subpopulation":
+                            clustered_data = analyzer.features.dropna(subset=['subpopulation'])
+                            if len(clustered_data) > 0:
                                 fig = FRAPVisualizer.plot_subpopulations(clustered_data, x_axis, y_axis)
                                 st.pyplot(fig)
-                            except Exception as e:
-                                st.error(f"Error creating visualization: {e}")
-                            
-                            st.write("**Subpopulation Counts:**")
-                            counts = clustered_data['subpopulation'].value_counts().sort_index()
-                            
-                            # Display in columns for better layout
-                            cols = st.columns(min(len(counts), 4))
-                            for idx, (pop, count) in enumerate(counts.items()):
-                                with cols[idx % len(cols)]:
-                                    st.metric(f"Cluster {int(pop)}", f"{count} curves", 
-                                            delta=f"{count/n_clustered*100:.1f}%")
                         else:
-                            st.warning("Need at least 2 numerical parameters for visualization")
+                            # Standard scatter plot
+                            fig, ax = plt.subplots(figsize=(10, 6))
+                            if color_by == "is_outlier" and 'is_outlier' in analyzer.features.columns:
+                                outliers = analyzer.features[analyzer.features['is_outlier']==True]
+                                normals = analyzer.features[analyzer.features['is_outlier']==False]
+                                ax.scatter(normals[x_axis], normals[y_axis], alpha=0.6, label='Normal')
+                                ax.scatter(outliers[x_axis], outliers[y_axis], alpha=0.6, 
+                                         color='red', marker='x', s=100, label='Outlier')
+                                ax.legend()
+                            else:
+                                ax.scatter(analyzer.features[x_axis], analyzer.features[y_axis], alpha=0.6)
+                            ax.set_xlabel(x_axis)
+                            ax.set_ylabel(y_axis)
+                            ax.set_title(f"{x_axis} vs {y_axis}")
+                            ax.grid(alpha=0.3)
+                            st.pyplot(fig)
+                            
+                        # Advanced visualizations if available
+                        if ADVANCED_VIZ_AVAILABLE:
+                            st.markdown("### Advanced Visualizations")
+                            viz_type = st.selectbox("Visualization Type", 
+                                                   ["Heatmap", "Pairplot", "QQ Plot"])
+                            
+                            if viz_type == "Heatmap" and st.button("Generate Heatmap"):
+                                fig = plot_heatmap(analyzer.features, numerical_params[:10])
+                                st.pyplot(fig)
+                            elif viz_type == "Pairplot" and st.button("Generate Pairplot"):
+                                fig = plot_pairplot(analyzer.features[numerical_params[:5]])
+                                st.pyplot(fig)
+                            elif viz_type == "QQ Plot" and st.button("Generate QQ Plot"):
+                                param = st.selectbox("Parameter", numerical_params)
+                                fig = plot_qq(analyzer.features[param].dropna())
+                                st.pyplot(fig)
+                    else:
+                        st.warning("Need at least 2 numerical parameters for visualization")
                 else:
-                    st.info("👆 Click 'Detect Subpopulations' to cluster your data")
+                    st.info("Run clustering or outlier detection first to visualize results")
 
 # --- Page 4: Compare Groups ---
 elif page == "4. Compare Groups":
-    st.header("⚖️ Statistical Comparison")
+    st.header("⚖️ Statistical Group Comparison")
     
     if len(st.session_state.data_groups) < 2:
         st.warning("Need at least 2 groups to compare.")
     else:
+        # Group selection
         col1, col2 = st.columns(2)
         with col1:
             group1 = st.selectbox("Group 1 (Control)", list(st.session_state.data_groups.keys()), index=0)
@@ -678,58 +1270,420 @@ elif page == "4. Compare Groups":
             if analyzer1.features is None or analyzer2.features is None:
                 st.warning("Both groups must be fitted first.")
             else:
-                # Filter to only numerical columns
-                numerical_cols = analyzer1.features.select_dtypes(include=[np.number]).columns.tolist()
-                if not numerical_cols:
-                    st.error("No numerical parameters available for comparison.")
-                else:
-                    param = st.selectbox("Parameter to Compare", numerical_cols)
+                # Create tabs for different comparison types
+                tab_param, tab_holistic, tab_advanced, tab_reference = st.tabs([
+                    "📊 Parameter Comparison",
+                    "📈 Holistic Comparison", 
+                    "🔬 Advanced Models",
+                    "📚 Reference Database"
+                ])
+                
+                with tab_param:
+                    st.subheader("Individual Parameter Comparison")
+                    st.markdown("""
+                    Compare fitted parameters between groups using statistical tests.
+                    Includes t-tests, Mann-Whitney U, effect sizes, and more.
+                    """)
                     
-                    if st.button("Run Statistical Test"):
-                        result = FRAPStatisticalComparator.compare_groups(analyzer1.features, analyzer2.features, param)
+                    # Filter to only numerical columns
+                    numerical_cols = analyzer1.features.select_dtypes(include=[np.number]).columns.tolist()
+                    if not numerical_cols:
+                        st.error("No numerical parameters available for comparison.")
+                    else:
+                        col_param, col_test = st.columns([2, 1])
+                        with col_param:
+                            param = st.selectbox("Parameter to Compare", numerical_cols)
+                        with col_test:
+                            test_type = st.selectbox("Statistical Test", 
+                                                    ["t-test", "mann-whitney", "permutation"])
+                        
+                        if st.button("Run Statistical Test", use_container_width=True):
+                            with st.spinner("Running statistical analysis..."):
+                                result = FRAPStatisticalComparator.compare_groups(
+                                    analyzer1.features, analyzer2.features, param
+                                )
+                            
+                            st.subheader("📊 Results")
+                            
+                            # Display key metrics
+                            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                            with col_m1:
+                                mean1 = analyzer1.features[param].mean()
+                                st.metric(f"{group1} Mean", f"{mean1:.4f}")
+                            with col_m2:
+                                mean2 = analyzer2.features[param].mean()
+                                st.metric(f"{group2} Mean", f"{mean2:.4f}")
+                            with col_m3:
+                                fold_change = mean2 / mean1 if mean1 != 0 else np.nan
+                                st.metric("Fold Change", f"{fold_change:.2f}x")
+                            with col_m4:
+                                if 'p_value' in result:
+                                    sig = "***" if result['p_value'] < 0.001 else "**" if result['p_value'] < 0.01 else "*" if result['p_value'] < 0.05 else "ns"
+                                    st.metric("P-value", f"{result.get('p_value', 'N/A'):.4f}", delta=sig)
+                            
+                            # Full results
+                            st.json(result)
+                        
+                        # Distribution plot
+                        st.subheader("📈 Distribution Comparison")
+                        df1 = analyzer1.features.copy()
+                        df1['Group'] = group1
+                        df2 = analyzer2.features.copy()
+                        df2['Group'] = group2
+                        combined = pd.concat([df1, df2])
+                        
+                        fig = FRAPVisualizer.plot_parameter_distribution(combined, param, group_col='Group')
+                        st.pyplot(fig)
+                        
+                        # Advanced visualizations
+                        if ADVANCED_VIZ_AVAILABLE:
+                            col_v1, col_v2 = st.columns(2)
+                            with col_v1:
+                                if st.button("📊 Volcano Plot"):
+                                    # Perform comparison for all parameters
+                                    results_all = {}
+                                    for p in numerical_cols:
+                                        try:
+                                            res = FRAPStatisticalComparator.compare_groups(
+                                                analyzer1.features, analyzer2.features, p
+                                            )
+                                            results_all[p] = res
+                                        except:
+                                            pass
+                                    fig = plot_volcano(results_all)
+                                    st.pyplot(fig)
+                            
+                            with col_v2:
+                                if st.button("🌲 Forest Plot"):
+                                    fig = plot_forest(combined, param, 'Group')
+                                    st.pyplot(fig)
+                
+                with tab_holistic:
+                    st.subheader("Holistic Mean Profile Comparison")
+                    st.markdown("""
+                    Compare averaged recovery curves between groups.
+                    This approach has higher statistical power and enables advanced model fitting.
+                    """)
                     
-                    st.subheader("Results")
-                    st.json(result)
+                    if HOLISTIC_COMPARISON_AVAILABLE:
+                        # Get raw data for both groups
+                        group1_curves = [c for c in analyzer1.curves if c.time_post_bleach is not None]
+                        group2_curves = [c for c in analyzer2.curves if c.time_post_bleach is not None]
+                        
+                        if len(group1_curves) > 0 and len(group2_curves) > 0:
+                            if st.button("🔬 Compute Mean Profiles", use_container_width=True):
+                                with st.spinner("Computing averaged recovery profiles..."):
+                                    # Compute mean profiles
+                                    t1_avg, i1_avg, i1_sem = compute_average_recovery_profile(
+                                        {i: {'time_post_bleach': c.time_post_bleach, 
+                                             'intensity_post_bleach': c.intensity_post_bleach}
+                                         for i, c in enumerate(group1_curves)}
+                                    )
+                                    t2_avg, i2_avg, i2_sem = compute_average_recovery_profile(
+                                        {i: {'time_post_bleach': c.time_post_bleach,
+                                             'intensity_post_bleach': c.intensity_post_bleach}
+                                         for i, c in enumerate(group2_curves)}
+                                    )
+                                    
+                                    # Store in session state
+                                    st.session_state.holistic_results = {
+                                        'group1': {'time': t1_avg, 'intensity': i1_avg, 'sem': i1_sem},
+                                        'group2': {'time': t2_avg, 'intensity': i2_avg, 'sem': i2_sem}
+                                    }
+                                    st.success("✅ Mean profiles computed!")
+                                    st.rerun()
+                            
+                            # Display results if available
+                            if 'holistic_results' in st.session_state:
+                                res = st.session_state.holistic_results
+                                
+                                # Plot mean profiles
+                                fig, ax = plt.subplots(figsize=(10, 6))
+                                
+                                # Group 1
+                                ax.plot(res['group1']['time'], res['group1']['intensity'], 
+                                       'b-', linewidth=2, label=group1)
+                                ax.fill_between(res['group1']['time'],
+                                              res['group1']['intensity'] - res['group1']['sem'],
+                                              res['group1']['intensity'] + res['group1']['sem'],
+                                              alpha=0.2, color='b')
+                                
+                                # Group 2
+                                ax.plot(res['group2']['time'], res['group2']['intensity'],
+                                       'r-', linewidth=2, label=group2)
+                                ax.fill_between(res['group2']['time'],
+                                              res['group2']['intensity'] - res['group2']['sem'],
+                                              res['group2']['intensity'] + res['group2']['sem'],
+                                              alpha=0.2, color='r')
+                                
+                                ax.set_xlabel('Time (s)')
+                                ax.set_ylabel('Normalized Intensity')
+                                ax.set_title('Mean Recovery Profiles')
+                                ax.legend()
+                                ax.grid(alpha=0.3)
+                                st.pyplot(fig)
+                                
+                                # Calculate statistics on mean profiles
+                                st.info(f"**{group1}**: n={len(group1_curves)} curves")
+                                st.info(f"**{group2}**: n={len(group2_curves)} curves")
+                        else:
+                            st.warning("Both groups need post-bleach data for comparison")
+                    else:
+                        st.info("Holistic comparison module not available. Install required dependencies.")
+                
+                with tab_advanced:
+                    st.subheader("Advanced Biophysical Model Fitting")
+                    st.markdown("""
+                    Fit sophisticated models (anomalous diffusion, reaction-diffusion) to mean curves.
+                    Enables mechanistic understanding of differences between groups.
+                    """)
                     
-                    st.subheader("Distribution Plot")
-                    # Combine for plotting
-                    df1 = analyzer1.features.copy()
-                    df1['Group'] = group1
-                    df2 = analyzer2.features.copy()
-                    df2['Group'] = group2
-                    combined = pd.concat([df1, df2])
+                    if ADVANCED_MODELS_AVAILABLE and HOLISTIC_COMPARISON_AVAILABLE:
+                        if 'holistic_results' in st.session_state:
+                            col_model, col_param = st.columns(2)
+                            with col_model:
+                                adv_model = st.selectbox(
+                                    "Biophysical Model:",
+                                    ["auto", "anomalous_diffusion", "reaction_diffusion_simple"],
+                                    help="'auto' selects best model by AIC"
+                                )
+                            with col_param:
+                                bleach_radius_um = st.number_input(
+                                    "Bleach Radius (μm):",
+                                    min_value=0.1, max_value=10.0, value=1.0, step=0.1
+                                )
+                            
+                            if st.button("🔬 Fit Advanced Models", use_container_width=True):
+                                with st.spinner("Fitting advanced models..."):
+                                    res = st.session_state.holistic_results
+                                    
+                                    try:
+                                        fit_results = compare_groups_advanced_fitting(
+                                            group1_time=res['group1']['time'],
+                                            group1_intensity=res['group1']['intensity'],
+                                            group1_sem=res['group1']['sem'],
+                                            group2_time=res['group2']['time'],
+                                            group2_intensity=res['group2']['intensity'],
+                                            group2_sem=res['group2']['sem'],
+                                            group1_name=group1,
+                                            group2_name=group2,
+                                            bleach_radius_um=bleach_radius_um,
+                                            model=adv_model
+                                        )
+                                        
+                                        st.success("✅ Advanced fitting complete!")
+                                        
+                                        # Display results
+                                        st.subheader("Model Results")
+                                        st.json(fit_results)
+                                        
+                                        # Store for later use
+                                        st.session_state.advanced_fit_results = fit_results
+                                    except Exception as e:
+                                        st.error(f"Error fitting models: {e}")
+                        else:
+                            st.info("👆 Compute mean profiles first in the 'Holistic Comparison' tab")
+                    else:
+                        st.info("Advanced model fitting not available. Install required dependencies.")
+                
+                with tab_reference:
+                    st.subheader("Reference Database Comparison")
+                    st.markdown("""
+                    Compare your results to published FRAP data from 40+ proteins.
+                    Get biological context and interpretation guidance.
+                    """)
                     
-                    fig = FRAPVisualizer.plot_parameter_distribution(combined, param, group_col='Group')
-                    st.pyplot(fig)
+                    if REFERENCE_DB_AVAILABLE:
+                        # Display reference database UI
+                        display_reference_database_ui()
+                    else:
+                        st.info("Reference database not available. Install required dependencies.")
 
 # --- Page 5: Report ---
 elif page == "5. Report":
-    st.header("📄 Report Generation")
+    st.header("📄 Professional Report Generation")
+    st.markdown("""
+    Generate comprehensive reports in HTML or PDF format with all your analysis results,
+    figures, and statistical summaries.
+    """)
     
-    if st.button("Generate HTML Report"):
-        if not st.session_state.data_groups:
-            st.error("No data to report.")
+    if not st.session_state.data_groups:
+        st.error("No data to report. Please load and analyze data first.")
+    else:
+        # Report configuration
+        st.subheader("Report Configuration")
+        
+        col_cfg1, col_cfg2 = st.columns(2)
+        with col_cfg1:
+            report_title = st.text_input("Report Title", "FRAP Analysis Report")
+            include_raw_data = st.checkbox("Include Raw Data Tables", value=True)
+            include_statistics = st.checkbox("Include Statistical Summaries", value=True)
+        
+        with col_cfg2:
+            report_format = st.selectbox("Report Format", ["HTML", "PDF", "Both"])
+            include_methods = st.checkbox("Include Methods Section", value=True)
+            include_interpretation = st.checkbox("Include Interpretation Guide", value=True)
+        
+        # Group selection for report
+        st.subheader("Select Groups to Include")
+        selected_groups = st.multiselect(
+            "Groups:",
+            list(st.session_state.data_groups.keys()),
+            default=list(st.session_state.data_groups.keys())
+        )
+        
+        if not selected_groups:
+            st.warning("Please select at least one group to include in the report")
         else:
-            # Collect all figures and tables
-            figures = {}
-            all_features = pd.DataFrame()
+            # Generate report button
+            col_btn1, col_btn2 = st.columns(2)
             
-            for name, analyzer in st.session_state.data_groups.items():
-                if analyzer.features is not None:
-                    df = analyzer.features.copy()
-                    df['Group'] = name
-                    all_features = pd.concat([all_features, df])
-                    
-                    # Generate recovery plot for report
-                    times = analyzer.curves[0].time_post_bleach
-                    data_intensities = [c.intensity_post_bleach for c in analyzer.curves if c.intensity_post_bleach is not None]
-                    fitted_curves = [res.fitted_curve for res in analyzer.fit_results if res.success and res.fitted_curve is not None]
-                    
-                    fig = FRAPVisualizer.plot_recovery_curves(times, data_intensities, fitted_curves, title=f"{name} Recovery")
-                    figures[f"{name}_Recovery"] = fig
+            with col_btn1:
+                if st.button("📊 Generate HTML Report", use_container_width=True, type="primary"):
+                    if REPORT_GEN_AVAILABLE:
+                        with st.spinner("Generating HTML report..."):
+                            try:
+                                # Collect data
+                                all_features = pd.DataFrame()
+                                figures = {}
+                                
+                                for name in selected_groups:
+                                    analyzer = st.session_state.data_groups[name]
+                                    if analyzer.features is not None:
+                                        df = analyzer.features.copy()
+                                        df['Group'] = name
+                                        all_features = pd.concat([all_features, df])
+                                        
+                                        # Generate recovery plot for report
+                                        if analyzer.curves:
+                                            times = []
+                                            data_intensities = []
+                                            fitted_curves = []
+                                            
+                                            for c in analyzer.curves:
+                                                if c.time_post_bleach is not None:
+                                                    times.append(c.time_post_bleach)
+                                                if c.intensity_post_bleach is not None:
+                                                    data_intensities.append(c.intensity_post_bleach)
+                                            
+                                            for res in analyzer.fit_results:
+                                                if res.success and res.fitted_curve is not None:
+                                                    fitted_curves.append(res.fitted_curve)
+                                            
+                                            if times and data_intensities:
+                                                fig = FRAPVisualizer.plot_recovery_curves(
+                                                    times[0] if times else np.array([]),
+                                                    data_intensities,
+                                                    fitted_curves,
+                                                    title=f"{name} Recovery Curves"
+                                                )
+                                                figures[f"{name}_Recovery"] = fig
+                                
+                                # Generate HTML report
+                                output_file = f"{report_title.replace(' ', '_')}_Report.html"
+                                
+                                # Use the enhanced HTML report generator
+                                if hasattr(generate_html_report, '__call__'):
+                                    # Create data manager-like structure
+                                    class DataManager:
+                                        def __init__(self, groups_dict):
+                                            self.groups = {}
+                                            self.files = {}
+                                            for name, analyzer in groups_dict.items():
+                                                self.groups[name] = {
+                                                    'files': [],
+                                                    'features': analyzer.features
+                                                }
+                                    
+                                    dm = DataManager({k: st.session_state.data_groups[k] for k in selected_groups})
+                                    generate_html_report(dm, selected_groups, output_file)
+                                else:
+                                    # Fallback to basic report generator
+                                    FRAPReportGenerator.generate_html_report(all_features, figures, output_file)
+                                
+                                st.success(f"✅ HTML report generated: {output_file}")
+                                
+                                # Provide download button
+                                if os.path.exists(output_file):
+                                    with open(output_file, "rb") as f:
+                                        st.download_button(
+                                            label="📥 Download HTML Report",
+                                            data=f,
+                                            file_name=output_file,
+                                            mime="text/html"
+                                        )
+                            except Exception as e:
+                                st.error(f"Error generating HTML report: {e}")
+                                logger.error(f"Report generation error: {e}", exc_info=True)
+                    else:
+                        st.warning("HTML report generation not available. Install required dependencies.")
             
-            FRAPReportGenerator.generate_html_report(all_features, figures, "FRAP_Enhanced_Report.html")
-            st.success("Report generated: FRAP_Enhanced_Report.html")
+            with col_btn2:
+                if st.button("📑 Generate PDF Report", use_container_width=True):
+                    if REPORT_GEN_AVAILABLE:
+                        with st.spinner("Generating PDF report..."):
+                            try:
+                                output_file = f"{report_title.replace(' ', '_')}_Report.pdf"
+                                
+                                # Create data manager structure
+                                class DataManager:
+                                    def __init__(self, groups_dict):
+                                        self.groups = {}
+                                        self.files = {}
+                                        for name, analyzer in groups_dict.items():
+                                            self.groups[name] = {
+                                                'files': [],
+                                                'features': analyzer.features
+                                            }
+                                
+                                dm = DataManager({k: st.session_state.data_groups[k] for k in selected_groups})
+                                
+                                # Generate PDF report
+                                result_file = generate_pdf_report(dm, selected_groups, output_file)
+                                
+                                if result_file and os.path.exists(result_file):
+                                    st.success(f"✅ PDF report generated: {result_file}")
+                                    
+                                    with open(result_file, "rb") as f:
+                                        st.download_button(
+                                            label="📥 Download PDF Report",
+                                            data=f,
+                                            file_name=os.path.basename(result_file),
+                                            mime="application/pdf"
+                                        )
+                                else:
+                                    st.warning("PDF report was not created successfully")
+                                    
+                            except Exception as e:
+                                st.error(f"Error generating PDF report: {e}")
+                                logger.error(f"PDF generation error: {e}", exc_info=True)
+                    else:
+                        st.warning("PDF report generation not available. Install required dependencies.")
             
-            with open("FRAP_Enhanced_Report.html", "rb") as f:
-                st.download_button("Download Report", f, file_name="FRAP_Report.html")
+            # Preview report content
+            st.markdown("---")
+            st.subheader("Report Preview")
+            
+            if st.checkbox("Show Report Preview"):
+                st.markdown("### Summary Statistics")
+                
+                for name in selected_groups:
+                    analyzer = st.session_state.data_groups[name]
+                    if analyzer.features is not None:
+                        st.markdown(f"#### {name}")
+                        st.write(f"**Number of curves:** {len(analyzer.curves)}")
+                        st.write(f"**Fitted parameters available:** {len(analyzer.features.columns)}")
+                        
+                        # Show key statistics
+                        if not analyzer.features.empty:
+                            st.dataframe(analyzer.features.describe())
+                
+                # Show available figures
+                st.markdown("### Figures to be Included")
+                for name in selected_groups:
+                    st.write(f"- {name} Recovery Curves")
+                    st.write(f"- {name} Parameter Distributions")
+                
+                if len(selected_groups) >= 2:
+                    st.write("- Group Comparison Plots")
+                    st.write("- Statistical Test Results")

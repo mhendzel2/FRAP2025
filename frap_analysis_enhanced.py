@@ -395,9 +395,16 @@ class FRAPGroupAnalyzer:
         else:
             logger.warning("Clustering failed: no valid GMM model")
         
-    def detect_outliers(self):
+    def detect_outliers(self, method: str = 'iqr', threshold: float = 1.5):
         """
-        Uses Isolation Forest to detect outliers based on numerical features only.
+        Detect outliers based on numerical features using statistical methods.
+        
+        Parameters:
+        -----------
+        method : str
+            Detection method ('iqr', 'zscore', 'isolation_forest', 'lof')
+        threshold : float
+            Sensitivity threshold (meaning varies by method)
         """
         if self.features is None or self.features.empty:
             logger.warning("No features available for outlier detection")
@@ -418,14 +425,44 @@ class FRAPGroupAnalyzer:
             logger.warning("No valid data after removing NaNs")
             return
             
-        logger.info(f"Detecting outliers in {len(data_clean)} curves using {len(data_clean.columns)} features")
-            
-        iso = IsolationForest(contamination=0.1, random_state=42)
-        outliers = iso.fit_predict(data_clean)
-        # -1 is outlier, 1 is inlier
-        self.features.loc[data_clean.index, 'is_outlier'] = (outliers == -1)
+        logger.info(f"Detecting outliers in {len(data_clean)} curves using {len(data_clean.columns)} features with method={method}")
         
-        n_outliers = (outliers == -1).sum()
+        # Initialize outlier flags
+        self.features['is_outlier'] = False
+        
+        if method == 'iqr':
+            # IQR-based outlier detection on each parameter
+            for col in data_clean.columns:
+                q1 = data_clean[col].quantile(0.25)
+                q3 = data_clean[col].quantile(0.75)
+                iqr = q3 - q1
+                lower_bound = q1 - threshold * iqr
+                upper_bound = q3 + threshold * iqr
+                outlier_mask = (data_clean[col] < lower_bound) | (data_clean[col] > upper_bound)
+                self.features.loc[data_clean.index[outlier_mask], 'is_outlier'] = True
+                
+        elif method == 'zscore':
+            # Z-score based outlier detection
+            for col in data_clean.columns:
+                z_scores = np.abs(stats.zscore(data_clean[col]))
+                outlier_mask = z_scores > threshold
+                self.features.loc[data_clean.index[outlier_mask], 'is_outlier'] = True
+                
+        elif method == 'isolation_forest':
+            # Isolation Forest (contamination based on threshold)
+            contamination = min(0.5, max(0.01, threshold / 10.0))  # Map threshold to contamination
+            iso = IsolationForest(contamination=contamination, random_state=42)
+            outliers = iso.fit_predict(data_clean)
+            self.features.loc[data_clean.index, 'is_outlier'] = (outliers == -1)
+            
+        else:
+            # Default to isolation forest
+            logger.warning(f"Unknown method '{method}', defaulting to isolation_forest")
+            iso = IsolationForest(contamination=0.1, random_state=42)
+            outliers = iso.fit_predict(data_clean)
+            self.features.loc[data_clean.index, 'is_outlier'] = (outliers == -1)
+        
+        n_outliers = self.features['is_outlier'].sum()
         logger.info(f"Identified {n_outliers} outliers ({n_outliers/len(data_clean)*100:.1f}%)")
 
 class FRAPStatisticalComparator:
