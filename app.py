@@ -739,118 +739,16 @@ elif page == "2. Subpopulations & Outliers":
                             st.pyplot(fig)
                 else:
                     st.info("Run clustering or outlier detection first to visualize groupings")
-        
-        # Fitting mode selection
-        fitting_mode = st.radio(
-            "Fitting Strategy:",
-            ["🚀 Fit All Models (Recommended)", "🎯 Single Model"],
-            help="Fit All Models: Fits single, double, triple exponential and anomalous diffusion models, then selects best based on AICc. Single Model: Fit only one specific model."
-        )
-        
-        if fitting_mode == "🎯 Single Model":
-            model_options = ["single", "double", "triple"]
-            if ADVANCED_MODELS_AVAILABLE:
-                model_options.extend(["anomalous_diffusion", "reaction_diffusion"])
-                
-            model_select = st.selectbox(
-                "Select Model",
-                model_options,
-                format_func=lambda x: {
-                    "single": "Single Exponential (Simple Diffusion)",
-                    "double": "Double Exponential (Two Populations)",
-                    "triple": "Triple Exponential (Three Populations)",
-                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)",
-                    "reaction_diffusion": "Reaction-Diffusion (Binding Kinetics)"
-                }.get(x, x)
-            )
-        
-        # Bootstrap confidence intervals option
-        calculate_bootstrap = False
-        if BOOTSTRAP_AVAILABLE:
-            calculate_bootstrap = st.checkbox(
-                "📊 Calculate Bootstrap Confidence Intervals",
-                value=False,
-                help="Compute robust 95% CIs for all parameters (computationally intensive)"
-            )
-            if calculate_bootstrap:
-                n_bootstrap = st.slider("Bootstrap Iterations:", 100, 2000, 1000, 100)
-        
-        # Model selection criterion
-        criterion = st.selectbox(
-            "Model Selection Criterion:",
-            ["aicc", "aic", "bic", "adj_r2"],
-            format_func=lambda x: {
-                "aicc": "AICc (Corrected AIC - Best for small samples)",
-                "aic": "AIC (Akaike Information Criterion)",
-                "bic": "BIC (Bayesian Information Criterion)",
-                "adj_r2": "Adjusted R² (Penalized R-squared)"
-            }[x],
-            help="AICc is recommended for most cases as it accounts for small sample sizes"
-        )
-        
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            fit_button = st.button("🔬 Fit Models", type="primary", use_container_width=True)
-        with col_btn2:
-            if st.button("🔄 Clear Results", use_container_width=True):
-                analyzer.features = None
-                st.rerun()
-        
-        if fit_button:
-            with st.spinner("🔬 Fitting models to recovery curves..."):
-                if fitting_mode == "🚀 Fit All Models (Recommended)":
-                    # Fit all models for comparison
-                    analyzer.analyze_group(model_name=None)  # None triggers all models
-                    st.success(f"✅ Successfully fitted all models to {len(analyzer.curves)} curves!")
-                else:
-                    # Fit single selected model
-                    analyzer.analyze_group(model_name=model_select)
-                    st.success(f"✅ Successfully fitted {model_select} model to {len(analyzer.curves)} curves!")
-                
-                # Apply advanced fitting if selected
-                if fitting_method_type != "standard" and ROBUST_FITTING_AVAILABLE:
-                    st.info(f"Applying {fitting_method_type} fitting method...")
-                    # Here you would integrate robust/Bayesian fitting
-                
-                # Calculate bootstrap CIs if requested
-                if calculate_bootstrap and BOOTSTRAP_AVAILABLE:
-                    st.info(f"Calculating bootstrap confidence intervals ({n_bootstrap} iterations)...")
-                    # Here you would integrate bootstrap CI calculations
-                
-                st.balloons()
-        
-        # Display results (existing code continues...)
-        
-        # Display results
-        if analyzer.features is not None and not analyzer.features.empty:
-            st.markdown("---")
-            st.subheader("📊 Fit Results Summary")
-            
-            # Summary statistics
-            col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
-            with col_sum1:
-                st.metric("📈 Curves Analyzed", len(analyzer.curves))
-            with col_sum2:
-                if 'model' in analyzer.features.columns:
-                    best_models = analyzer.features['model'].value_counts()
-                    st.metric("🏆 Most Common Model", best_models.index[0].title() if len(best_models) > 0 else "N/A")
-            with col_sum3:
-                if 'mobile_fraction' in analyzer.features.columns:
-                    avg_mobile = analyzer.features['mobile_fraction'].mean()
-                    st.metric("📊 Avg Mobile Fraction", f"{avg_mobile:.1f}%" if np.isfinite(avg_mobile) else "N/A")
-            with col_sum4:
-                if 'r2' in analyzer.features.columns:
-                    avg_r2 = analyzer.features['r2'].mean()
-                    st.metric("✨ Avg R²", f"{avg_r2:.3f}" if np.isfinite(avg_r2) else "N/A")
-            
-            # Model comparison table
-            st.markdown("### 🔬 Model Comparison by Curve")
-            
-            # Create a display dataframe with selected columns
-            display_cols = []
-            for col in ['model', 'r2', 'adj_r2', 'aic', 'aicc', 'bic', 'mobile_fraction', 'half_time_fast', 'k_fast']:
-                if col in analyzer.features.columns:
-                    display_cols.append(col)
+
+# --- Page 3: Model Fitting ---
+elif page == "3. Model Fitting":
+    st.header("📈 Model Fitting & Analysis")
+    
+    if not st.session_state.data_groups:
+        st.warning("⚠️ Please import data first on the 'Import & Preprocess' page.")
+    else:
+        # Sidebar controls
+        st.sidebar.markdown("---")
             
             if display_cols:
                 display_df = analyzer.features[display_cols].copy()
