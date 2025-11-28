@@ -35,12 +35,88 @@ if 'current_group' not in st.session_state:
     st.session_state.current_group = None
 if 'processed_zip_files' not in st.session_state:
     st.session_state.processed_zip_files = set()
+# Experimental parameters
+if 'r2_threshold' not in st.session_state:
+    st.session_state.r2_threshold = 0.5
+if 'bleach_radius' not in st.session_state:
+    st.session_state.bleach_radius = 1.0  # microns
+if 'pixel_size' not in st.session_state:
+    st.session_state.pixel_size = 0.065  # microns/pixel
 
 # --- Sidebar Navigation ---
 st.sidebar.title("FRAP Analysis 2.0")
-page = st.sidebar.radio("Workflow", ["1. Import & Preprocess", "2. Model Fitting", "3. Subpopulations", "4. Compare Groups", "5. Report"])
+page = st.sidebar.radio("Workflow", [
+    "1. Import & Preprocess", 
+    "2. Batch Process All Groups", 
+    "3. Model Fitting", 
+    "4. Subpopulations", 
+    "5. Compare Groups", 
+    "6. Report"
+])
+
+# --- Sidebar Experimental Parameters ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Experimental Parameters")
+
+with st.sidebar.expander("🔬 Physical Parameters", expanded=False):
+    st.session_state.bleach_radius = st.number_input(
+        "Bleach Region Radius (µm)",
+        min_value=0.1,
+        max_value=50.0,
+        value=st.session_state.bleach_radius,
+        step=0.1,
+        help="Radius of the bleached region in micrometers"
+    )
+    
+    st.session_state.pixel_size = st.number_input(
+        "Pixel Size (µm/pixel)",
+        min_value=0.001,
+        max_value=1.0,
+        value=st.session_state.pixel_size,
+        step=0.001,
+        format="%.3f",
+        help="Size of one pixel in micrometers"
+    )
+    
+    # Calculate bleach radius in pixels
+    bleach_radius_pixels = st.session_state.bleach_radius / st.session_state.pixel_size
+    st.info(f"📐 Bleach radius: **{bleach_radius_pixels:.1f} pixels**")
+
+with st.sidebar.expander("📊 Quality Filters", expanded=True):
+    st.session_state.r2_threshold = st.slider(
+        "R² Threshold",
+        min_value=0.0,
+        max_value=1.0,
+        value=st.session_state.r2_threshold,
+        step=0.05,
+        help="Minimum R² value for including fits in analysis. Fits below this threshold will be excluded."
+    )
+    
+    st.caption(f"✅ Keep fits with R² ≥ {st.session_state.r2_threshold}")
+    st.caption(f"❌ Remove fits with R² < {st.session_state.r2_threshold}")
 
 # --- Helper Functions ---
+def apply_r2_filter(features_df, r2_threshold):
+    """
+    Filter DataFrame to only include rows with R² >= threshold.
+    Returns filtered DataFrame and count of removed rows.
+    """
+    if features_df is None or features_df.empty:
+        return features_df, 0
+    
+    if 'r2' not in features_df.columns:
+        logger.warning("R² column not found in features DataFrame")
+        return features_df, 0
+    
+    original_count = len(features_df)
+    filtered_df = features_df[features_df['r2'] >= r2_threshold].copy()
+    removed_count = original_count - len(filtered_df)
+    
+    if removed_count > 0:
+        logger.info(f"R² filter: Removed {removed_count}/{original_count} fits (R² < {r2_threshold})")
+    
+    return filtered_df, removed_count
+
 def load_and_process_file(uploaded_file, bleach_frame_idx):
     # Save to temp file to load with our handler
     try:
@@ -295,6 +371,13 @@ if page == "1. Import & Preprocess":
         with col2:
             st.subheader("Current Data Groups")
             if st.session_state.data_groups:
+                # Quick action button
+                st.markdown("---")
+                if st.button("⚡ Go to Batch Processing →", type="primary", use_container_width=True, key="goto_batch"):
+                    st.session_state.page = "2. Batch Process All Groups"
+                    st.rerun()
+                st.markdown("---")
+                
                 for name, analyzer in st.session_state.data_groups.items():
                     st.info(f"**{name}**: {len(analyzer.curves)} curves loaded")
                     
@@ -313,8 +396,223 @@ if page == "1. Import & Preprocess":
             else:
                 st.info("No data loaded yet.")
 
-# --- Page 2: Model Fitting ---
-elif page == "2. Model Fitting":
+# --- Page 2: Batch Process All Groups ---
+elif page == "2. Batch Process All Groups":
+    st.header("⚡ Batch Process All Groups")
+    
+    if not st.session_state.data_groups:
+        st.warning("⚠️ Please import data first on the 'Import & Preprocess' page.")
+    else:
+        st.info(f"📊 **{len(st.session_state.data_groups)} groups** loaded with {sum(len(a.curves) for a in st.session_state.data_groups.values())} total curves")
+        
+        # Display current experimental parameters
+        with st.expander("🔬 Current Experimental Parameters", expanded=False):
+            col_p1, col_p2, col_p3 = st.columns(3)
+            with col_p1:
+                st.metric("Bleach Radius", f"{st.session_state.bleach_radius} µm")
+            with col_p2:
+                st.metric("Pixel Size", f"{st.session_state.pixel_size} µm/pixel")
+            with col_p3:
+                bleach_pixels = st.session_state.bleach_radius / st.session_state.pixel_size
+                st.metric("Bleach Radius", f"{bleach_pixels:.1f} pixels")
+            st.caption("💡 These parameters can be adjusted in the sidebar under 'Experimental Parameters'")
+        
+        # Configuration section
+        st.subheader("⚙️ Processing Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔬 Model Fitting")
+            fitting_mode = st.radio(
+                "Fitting Strategy:",
+                ["fit_all", "single_model"],
+                format_func=lambda x: "🚀 Fit All Models (Recommended)" if x == "fit_all" else "🎯 Single Model",
+                help="Fit All Models: Tests single, double, triple exponential and anomalous diffusion, selects best"
+            )
+            
+            if fitting_mode == "single_model":
+                model_select = st.selectbox(
+                    "Select Model",
+                    ["single", "double", "triple", "anomalous_diffusion"],
+                    format_func=lambda x: {
+                        "single": "Single Exponential",
+                        "double": "Double Exponential",
+                        "triple": "Triple Exponential",
+                        "anomalous_diffusion": "Anomalous Diffusion"
+                    }[x]
+                )
+            else:
+                model_select = None
+            
+            criterion = st.selectbox(
+                "Model Selection Criterion:",
+                ["aicc", "aic", "bic", "adj_r2"],
+                format_func=lambda x: {
+                    "aicc": "AICc (Corrected AIC)",
+                    "aic": "AIC",
+                    "bic": "BIC",
+                    "adj_r2": "Adjusted R²"
+                }[x]
+            )
+        
+        with col2:
+            st.markdown("#### 🎯 Optional Analyses")
+            
+            st.info(f"📊 **Quality Filter:** R² ≥ {st.session_state.r2_threshold} (set in sidebar)")
+            
+            run_subpopulations = st.checkbox(
+                "🔍 Detect Subpopulations",
+                value=True,
+                help="Use Gaussian Mixture Models to identify subpopulations in your data"
+            )
+            
+            if run_subpopulations:
+                max_k = st.slider("Max Subpopulations", 2, 5, 3, help="Maximum number of subpopulations to test")
+            
+            run_outliers = st.checkbox(
+                "🎯 Detect Outliers",
+                value=False,
+                help="Use Isolation Forest to identify outlier curves"
+            )
+            
+            exclude_outliers = st.checkbox(
+                "🚫 Exclude Outliers from Results",
+                value=False,
+                disabled=not run_outliers,
+                help="Remove detected outliers from final results and reports"
+            )
+        
+        st.markdown("---")
+        
+        # Group selection
+        st.subheader("📁 Select Groups to Process")
+        select_all = st.checkbox("Select All Groups", value=True)
+        
+        if select_all:
+            selected_groups = list(st.session_state.data_groups.keys())
+        else:
+            selected_groups = st.multiselect(
+                "Choose groups:",
+                list(st.session_state.data_groups.keys()),
+                default=list(st.session_state.data_groups.keys())
+            )
+        
+        st.info(f"✅ Will process **{len(selected_groups)}** group(s)")
+        
+        # Process button
+        if st.button("🚀 Run Batch Processing", type="primary", use_container_width=True):
+            if not selected_groups:
+                st.error("Please select at least one group to process")
+            else:
+                # Create progress tracking
+                overall_progress = st.progress(0)
+                status_text = st.empty()
+                
+                results_summary = []
+                
+                for idx, group_name in enumerate(selected_groups):
+                    analyzer = st.session_state.data_groups[group_name]
+                    
+                    status_text.markdown(f"### Processing: **{group_name}** ({idx+1}/{len(selected_groups)})")
+                    
+                    group_results = {
+                        'group': group_name,
+                        'n_curves': len(analyzer.curves),
+                        'fit_success': 0,
+                        'fit_failed': 0,
+                        'r2_filtered': 0,
+                        'subpopulations': 0,
+                        'outliers': 0
+                    }
+                    
+                    # Step 1: Model Fitting
+                    with st.spinner(f"🔬 Fitting models for {group_name}..."):
+                        try:
+                            analyzer.analyze_group(model_name=model_select)
+                            
+                            if analyzer.features is not None:
+                                group_results['fit_success'] = len(analyzer.features.dropna(subset=['r2']))
+                                group_results['fit_failed'] = len(analyzer.features) - group_results['fit_success']
+                                
+                                # Apply R² filter
+                                analyzer.features, removed_count = apply_r2_filter(
+                                    analyzer.features, 
+                                    st.session_state.r2_threshold
+                                )
+                                group_results['r2_filtered'] = removed_count
+                                
+                                if removed_count > 0:
+                                    st.info(f"🔍 R² filter: Removed {removed_count} fits with R² < {st.session_state.r2_threshold}")
+                            
+                            st.success(f"✅ Model fitting complete: {group_results['fit_success']} successful fits, {len(analyzer.features)} after R² filter")
+                        except Exception as e:
+                            st.error(f"❌ Error fitting models: {e}")
+                            logger.error(f"Batch processing error for {group_name}: {e}")
+                    
+                    # Step 2: Subpopulation Detection
+                    if run_subpopulations and analyzer.features is not None and not analyzer.features.empty:
+                        with st.spinner(f"🔍 Detecting subpopulations for {group_name}..."):
+                            try:
+                                analyzer.detect_subpopulations(range(1, max_k + 1))
+                                
+                                if 'subpopulation' in analyzer.features.columns:
+                                    group_results['subpopulations'] = analyzer.features['subpopulation'].nunique()
+                                    st.success(f"✅ Found {group_results['subpopulations']} subpopulation(s)")
+                            except Exception as e:
+                                st.error(f"❌ Error detecting subpopulations: {e}")
+                                logger.error(f"Subpopulation detection error for {group_name}: {e}")
+                    
+                    # Step 3: Outlier Detection
+                    if run_outliers and analyzer.features is not None and not analyzer.features.empty:
+                        with st.spinner(f"🎯 Detecting outliers for {group_name}..."):
+                            try:
+                                analyzer.detect_outliers()
+                                
+                                if 'is_outlier' in analyzer.features.columns:
+                                    group_results['outliers'] = analyzer.features['is_outlier'].sum()
+                                    st.success(f"✅ Detected {group_results['outliers']} outlier(s)")
+                                    
+                                    # Exclude outliers if requested
+                                    if exclude_outliers and group_results['outliers'] > 0:
+                                        original_count = len(analyzer.features)
+                                        analyzer.features = analyzer.features[~analyzer.features['is_outlier']]
+                                        st.info(f"🚫 Excluded {original_count - len(analyzer.features)} outlier(s) from results")
+                            except Exception as e:
+                                st.error(f"❌ Error detecting outliers: {e}")
+                                logger.error(f"Outlier detection error for {group_name}: {e}")
+                    
+                    results_summary.append(group_results)
+                    overall_progress.progress((idx + 1) / len(selected_groups))
+                
+                # Display summary
+                status_text.empty()
+                overall_progress.empty()
+                
+                st.markdown("---")
+                st.subheader("✅ Batch Processing Complete!")
+                
+                # Create summary dataframe
+                summary_df = pd.DataFrame(results_summary)
+                
+                col_summary1, col_summary2 = st.columns([2, 1])
+                
+                with col_summary1:
+                    st.dataframe(summary_df, use_container_width=True)
+                
+                with col_summary2:
+                    st.metric("Total Groups Processed", len(selected_groups))
+                    st.metric("Total Curves", summary_df['n_curves'].sum())
+                    st.metric("Successful Fits", summary_df['fit_success'].sum())
+                    if 'r2_filtered' in summary_df.columns:
+                        st.metric("Removed by R² Filter", summary_df['r2_filtered'].sum())
+                    if run_outliers:
+                        st.metric("Total Outliers", summary_df['outliers'].sum())
+                
+                st.success("🎉 All groups processed successfully! You can now view individual results, compare groups, or generate reports.")
+
+# --- Page 3: Model Fitting ---
+elif page == "3. Model Fitting":
     st.header("📈 Model Fitting & Analysis")
     
     if not st.session_state.data_groups:
@@ -372,11 +670,37 @@ elif page == "2. Model Fitting":
                 if fitting_mode == "🚀 Fit All Models (Recommended)":
                     # Fit all models for comparison
                     analyzer.analyze_group(model_name=None)  # None triggers all models
-                    st.success(f"✅ Successfully fitted all models to {len(analyzer.curves)} curves!")
+                    
+                    # Apply R² filter
+                    if analyzer.features is not None:
+                        original_count = len(analyzer.features)
+                        analyzer.features, removed_count = apply_r2_filter(
+                            analyzer.features, 
+                            st.session_state.r2_threshold
+                        )
+                        
+                        st.success(f"✅ Successfully fitted all models to {len(analyzer.curves)} curves!")
+                        if removed_count > 0:
+                            st.info(f"🔍 R² filter: Removed {removed_count}/{original_count} fits with R² < {st.session_state.r2_threshold}")
+                    else:
+                        st.success(f"✅ Successfully fitted all models to {len(analyzer.curves)} curves!")
                 else:
                     # Fit single selected model
                     analyzer.analyze_group(model_name=model_select)
-                    st.success(f"✅ Successfully fitted {model_select} model to {len(analyzer.curves)} curves!")
+                    
+                    # Apply R² filter
+                    if analyzer.features is not None:
+                        original_count = len(analyzer.features)
+                        analyzer.features, removed_count = apply_r2_filter(
+                            analyzer.features, 
+                            st.session_state.r2_threshold
+                        )
+                        
+                        st.success(f"✅ Successfully fitted {model_select} model to {len(analyzer.curves)} curves!")
+                        if removed_count > 0:
+                            st.info(f"🔍 R² filter: Removed {removed_count}/{original_count} fits with R² < {st.session_state.r2_threshold}")
+                    else:
+                        st.success(f"✅ Successfully fitted {model_select} model to {len(analyzer.curves)} curves!")
                 
                 st.balloons()
         
@@ -572,8 +896,8 @@ elif page == "2. Model Fitting":
         else:
             st.info("👆 Click 'Fit Models' to analyze your data and see comprehensive fit statistics.")
 
-# --- Page 3: Subpopulations ---
-elif page == "3. Subpopulations":
+# --- Page 4: Subpopulations ---
+elif page == "4. Subpopulations":
     st.header("🔍 Subpopulation Analysis")
     
     if not st.session_state.data_groups:
@@ -656,8 +980,8 @@ elif page == "3. Subpopulations":
                 else:
                     st.info("👆 Click 'Detect Subpopulations' to cluster your data")
 
-# --- Page 4: Compare Groups ---
-elif page == "4. Compare Groups":
+# --- Page 5: Compare Groups ---
+elif page == "5. Compare Groups":
     st.header("⚖️ Statistical Comparison")
     
     if len(st.session_state.data_groups) < 2:
@@ -702,34 +1026,202 @@ elif page == "4. Compare Groups":
                     fig = FRAPVisualizer.plot_parameter_distribution(combined, param, group_col='Group')
                     st.pyplot(fig)
 
-# --- Page 5: Report ---
-elif page == "5. Report":
+# --- Page 6: Report ---
+elif page == "6. Report":
     st.header("📄 Report Generation")
     
-    if st.button("Generate HTML Report"):
-        if not st.session_state.data_groups:
-            st.error("No data to report.")
-        else:
-            # Collect all figures and tables
-            figures = {}
-            all_features = pd.DataFrame()
+    if not st.session_state.data_groups:
+        st.warning("⚠️ No data available. Please import and process data first.")
+    else:
+        st.info(f"📊 **{len(st.session_state.data_groups)} groups** available for reporting")
+        
+        # Report configuration
+        st.subheader("⚙️ Report Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            report_format = st.radio(
+                "Report Format:",
+                ["html", "pdf"],
+                format_func=lambda x: "📄 HTML (Interactive)" if x == "html" else "📑 PDF (Printable)"
+            )
             
-            for name, analyzer in st.session_state.data_groups.items():
-                if analyzer.features is not None:
-                    df = analyzer.features.copy()
-                    df['Group'] = name
-                    all_features = pd.concat([all_features, df])
+            include_plots = st.checkbox("Include Recovery Plots", value=True)
+            include_distributions = st.checkbox("Include Parameter Distributions", value=True)
+            include_subpopulations = st.checkbox("Include Subpopulation Analysis", value=True)
+        
+        with col2:
+            # Group selection
+            select_all_groups = st.checkbox("Include All Groups", value=True)
+            
+            if not select_all_groups:
+                selected_report_groups = st.multiselect(
+                    "Select Groups:",
+                    list(st.session_state.data_groups.keys()),
+                    default=list(st.session_state.data_groups.keys())
+                )
+            else:
+                selected_report_groups = list(st.session_state.data_groups.keys())
+        
+        st.markdown("---")
+        
+        # Preview section
+        with st.expander("📊 Data Preview", expanded=False):
+            for name in selected_report_groups:
+                analyzer = st.session_state.data_groups[name]
+                st.markdown(f"### {name}")
+                
+                if analyzer.features is not None and not analyzer.features.empty:
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Curves", len(analyzer.curves))
+                    with col_b:
+                        st.metric("Successful Fits", len(analyzer.features.dropna(subset=['r2'])))
+                    with col_c:
+                        if 'subpopulation' in analyzer.features.columns:
+                            st.metric("Subpopulations", analyzer.features['subpopulation'].nunique())
+                        else:
+                            st.metric("Subpopulations", "N/A")
                     
-                    # Generate recovery plot for report
-                    times = analyzer.curves[0].time_post_bleach
-                    data_intensities = [c.intensity_post_bleach for c in analyzer.curves if c.intensity_post_bleach is not None]
-                    fitted_curves = [res.fitted_curve for res in analyzer.fit_results if res.success and res.fitted_curve is not None]
+                    st.dataframe(analyzer.features.head(), use_container_width=True)
+                else:
+                    st.warning(f"⚠️ No fitted data available for {name}. Please run fitting first.")
+        
+        # Generate report button
+        if st.button("🎨 Generate Report", type="primary", use_container_width=True):
+            if not selected_report_groups:
+                st.error("Please select at least one group for the report")
+            else:
+                with st.spinner("📝 Generating report..."):
+                    try:
+                        # Collect all data
+                        figures = {}
+                        all_features = pd.DataFrame()
+                        
+                        for name in selected_report_groups:
+                            analyzer = st.session_state.data_groups[name]
+                            
+                            if analyzer.features is not None and not analyzer.features.empty:
+                                df = analyzer.features.copy()
+                                df['Group'] = name
+                                all_features = pd.concat([all_features, df], ignore_index=True)
+                                
+                                # Generate recovery plot
+                                if include_plots and analyzer.curves:
+                                    try:
+                                        # Get time data from first curve
+                                        if analyzer.curves[0].time_post_bleach is not None:
+                                            times = analyzer.curves[0].time_post_bleach
+                                        else:
+                                            times = analyzer.curves[0].time
+                                        
+                                        # Collect data intensities
+                                        data_intensities = []
+                                        for c in analyzer.curves[:10]:  # Limit to first 10 for clarity
+                                            if c.intensity_post_bleach is not None:
+                                                data_intensities.append(c.intensity_post_bleach)
+                                            elif c.normalized_intensity is not None:
+                                                data_intensities.append(c.normalized_intensity)
+                                        
+                                        # Collect fitted curves
+                                        fitted_curves = []
+                                        for res in analyzer.fit_results[:10]:
+                                            if res.success and res.fitted_curve is not None:
+                                                fitted_curves.append(res.fitted_curve)
+                                        
+                                        if data_intensities:
+                                            fig = FRAPVisualizer.plot_recovery_curves(
+                                                times, 
+                                                data_intensities, 
+                                                fitted_curves, 
+                                                title=f"{name} Recovery Curves"
+                                            )
+                                            figures[f"{name}_Recovery"] = fig
+                                    except Exception as e:
+                                        logger.warning(f"Could not generate recovery plot for {name}: {e}")
+                                
+                                # Generate parameter distributions
+                                if include_distributions:
+                                    try:
+                                        numerical_params = df.select_dtypes(include=[np.number]).columns
+                                        for param in ['r2', 'mobile_fraction', 'k_fast']:
+                                            if param in numerical_params:
+                                                fig = FRAPVisualizer.plot_parameter_distribution(
+                                                    df, 
+                                                    param, 
+                                                    group_col='Group'
+                                                )
+                                                figures[f"{name}_{param}_dist"] = fig
+                                    except Exception as e:
+                                        logger.warning(f"Could not generate distribution plots for {name}: {e}")
+                                
+                                # Generate subpopulation plots
+                                if include_subpopulations and 'subpopulation' in df.columns:
+                                    try:
+                                        numerical_cols = [c for c in df.select_dtypes(include=[np.number]).columns 
+                                                         if c not in ['subpopulation', 'is_outlier']]
+                                        if len(numerical_cols) >= 2:
+                                            fig = FRAPVisualizer.plot_subpopulations(
+                                                df, 
+                                                numerical_cols[0], 
+                                                numerical_cols[min(1, len(numerical_cols)-1)]
+                                            )
+                                            figures[f"{name}_subpopulations"] = fig
+                                    except Exception as e:
+                                        logger.warning(f"Could not generate subpopulation plot for {name}: {e}")
+                        
+                        if all_features.empty:
+                            st.error("❌ No fitted data available. Please run model fitting on at least one group.")
+                        else:
+                            # Generate report
+                            report_filename = f"FRAP_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.{report_format}"
+                            
+                            if report_format == "html":
+                                FRAPReportGenerator.generate_html_report(
+                                    all_features, 
+                                    figures, 
+                                    report_filename
+                                )
+                            else:
+                                FRAPReportGenerator.generate_pdf_report(
+                                    all_features, 
+                                    figures, 
+                                    report_filename
+                                )
+                            
+                            st.success(f"✅ Report generated successfully: {report_filename}")
+                            
+                            # Download button
+                            if os.path.exists(report_filename):
+                                with open(report_filename, "rb") as f:
+                                    mime_type = "text/html" if report_format == "html" else "application/pdf"
+                                    st.download_button(
+                                        "📥 Download Report", 
+                                        f, 
+                                        file_name=report_filename,
+                                        mime=mime_type,
+                                        use_container_width=True
+                                    )
+                            
+                            # Summary statistics
+                            st.markdown("---")
+                            st.subheader("📊 Report Summary")
+                            
+                            col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+                            with col_sum1:
+                                st.metric("Groups", len(selected_report_groups))
+                            with col_sum2:
+                                st.metric("Total Curves", len(all_features))
+                            with col_sum3:
+                                if 'model' in all_features.columns:
+                                    st.metric("Most Common Model", all_features['model'].mode()[0] if not all_features['model'].mode().empty else "N/A")
+                            with col_sum4:
+                                if 'r2' in all_features.columns:
+                                    st.metric("Avg R²", f"{all_features['r2'].mean():.3f}")
                     
-                    fig = FRAPVisualizer.plot_recovery_curves(times, data_intensities, fitted_curves, title=f"{name} Recovery")
-                    figures[f"{name}_Recovery"] = fig
-            
-            FRAPReportGenerator.generate_html_report(all_features, figures, "FRAP_Enhanced_Report.html")
-            st.success("Report generated: FRAP_Enhanced_Report.html")
-            
-            with open("FRAP_Enhanced_Report.html", "rb") as f:
-                st.download_button("Download Report", f, file_name="FRAP_Report.html")
+                    except Exception as e:
+                        st.error(f"❌ Error generating report: {e}")
+                        logger.error(f"Report generation error: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
