@@ -39,6 +39,15 @@ class FRAPInputHandler:
     """
     
     @staticmethod
+    def detect_bleach_frame(data: FRAPCurveData) -> int:
+        """
+        Detects the bleach frame index based on the minimum ROI intensity.
+        """
+        # Find the index of the minimum intensity
+        bleach_idx = np.argmin(data.roi_intensity)
+        return int(bleach_idx)
+
+    @staticmethod
     def load_file(filepath: str, metadata: Optional[dict] = None) -> FRAPCurveData:
         """
         Loads FRAP data from CSV, XLS, or XLSX file.

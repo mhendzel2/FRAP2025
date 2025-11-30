@@ -117,7 +117,7 @@ def apply_r2_filter(features_df, r2_threshold):
     
     return filtered_df, removed_count
 
-def load_and_process_file(uploaded_file, bleach_frame_idx):
+def load_and_process_file(uploaded_file, bleach_frame_idx=None):
     # Save to temp file to load with our handler
     try:
         # Determine file extension
@@ -130,6 +130,11 @@ def load_and_process_file(uploaded_file, bleach_frame_idx):
             
         # Load using the generic load_file method
         curve_data = FRAPInputHandler.load_file(temp_filename)
+        
+        # Autodetect bleach frame if not provided
+        if bleach_frame_idx is None:
+            bleach_frame_idx = FRAPInputHandler.detect_bleach_frame(curve_data)
+            # logger.info(f"Autodetected bleach frame at index {bleach_frame_idx} for {uploaded_file.name}")
         
         # Preprocess
         curve_data = FRAPInputHandler.double_normalization(curve_data, bleach_frame_idx)
@@ -144,7 +149,7 @@ def load_and_process_file(uploaded_file, bleach_frame_idx):
         st.error(f"Error processing file {uploaded_file.name}: {e}")
         return None
 
-def load_groups_from_zip(zip_file, bleach_frame_idx):
+def load_groups_from_zip(zip_file, bleach_frame_idx=None):
     """
     Load files from a ZIP archive where each subfolder becomes a group.
     Returns dict of {group_name: [list of FRAPCurveData]}
@@ -213,8 +218,14 @@ def load_groups_from_zip(zip_file, bleach_frame_idx):
                     file_path = os.path.join(folder_path, data_file)
                     try:
                         curve_data = FRAPInputHandler.load_file(file_path)
-                        curve_data = FRAPInputHandler.double_normalization(curve_data, bleach_frame_idx)
-                        curve_data = FRAPInputHandler.time_zero_correction(curve_data, bleach_frame_idx)
+                        
+                        # Autodetect bleach frame if not provided
+                        current_bleach_idx = bleach_frame_idx
+                        if current_bleach_idx is None:
+                            current_bleach_idx = FRAPInputHandler.detect_bleach_frame(curve_data)
+                        
+                        curve_data = FRAPInputHandler.double_normalization(curve_data, current_bleach_idx)
+                        curve_data = FRAPInputHandler.time_zero_correction(curve_data, current_bleach_idx)
                         groups_data[group_name].append(curve_data)
                         success_count += 1
                     except Exception as e:
@@ -283,8 +294,13 @@ if page == "1. Import & Preprocess":
             """)
         
         st.subheader("Settings")
-        bleach_frame_zip = st.number_input("Bleach Frame Index (for all files)", min_value=1, value=10, 
-                                          help="Index of the frame where bleaching occurs (0-based)", key="bleach_zip")
+        autodetect_bleach = st.checkbox("Autodetect Bleach Frame", value=True, help="Automatically detect the frame with minimum intensity as the bleach frame.")
+        
+        if not autodetect_bleach:
+            bleach_frame_zip = st.number_input("Bleach Frame Index (for all files)", min_value=1, value=10, 
+                                              help="Index of the frame where bleaching occurs (0-based)", key="bleach_zip")
+        else:
+            bleach_frame_zip = None
         
         uploaded_zip = st.file_uploader("📂 Select ZIP file containing grouped FRAP data", 
                                        type=['zip'], key="zip_uploader")
@@ -344,8 +360,13 @@ if page == "1. Import & Preprocess":
             uploaded_files = st.file_uploader("Upload Data Files (CSV, XLS, XLSX)", accept_multiple_files=True, type=['csv', 'xls', 'xlsx'])
             
             st.subheader("Settings")
-            bleach_frame = st.number_input("Bleach Frame Index", min_value=1, value=10, 
-                                          help="Index of the frame where bleaching occurs (0-based)")
+            autodetect_bleach_ind = st.checkbox("Autodetect Bleach Frame", value=True, key="auto_bleach_ind")
+            
+            if not autodetect_bleach_ind:
+                bleach_frame = st.number_input("Bleach Frame Index", min_value=1, value=10, 
+                                              help="Index of the frame where bleaching occurs (0-based)")
+            else:
+                bleach_frame = None
             
             if st.button("Process and Add to Group"):
                 if not uploaded_files:
