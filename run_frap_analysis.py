@@ -5,7 +5,7 @@ import logging
 from frap_input_handler import FRAPInputHandler
 from frap_analysis_enhanced import FRAPGroupAnalyzer, FRAPStatisticalComparator
 from frap_visualizer import FRAPVisualizer
-from frap_report_generator import FRAPReportGenerator
+from frap_report_generator import EnhancedFRAPReportGenerator
 import matplotlib.pyplot as plt
 
 # Configure logging
@@ -121,10 +121,15 @@ def main():
         
     # 6. Report Generation
     logger.info("Generating report...")
-    FRAPReportGenerator.generate_html_report(
-        analyzer.features,
-        figures,
-        "FRAP_Analysis_Report.html"
+    
+    # Create a dummy data_groups dict
+    data_groups = {'Test Group': analyzer}
+    
+    reporter = EnhancedFRAPReportGenerator(output_dir=".")
+    reporter.generate_report(
+        data_groups=data_groups,
+        selected_groups=['Test Group'],
+        filename="FRAP_Analysis_Report.html"
     )
         
     logger.info("Done. Check FRAP_Analysis_Report.html")

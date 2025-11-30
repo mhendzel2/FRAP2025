@@ -14,7 +14,7 @@ import openpyxl  # For Excel file support
 from frap_input_handler import FRAPInputHandler, FRAPCurveData
 from frap_analysis_enhanced import FRAPGroupAnalyzer, FRAPStatisticalComparator
 from frap_visualizer import FRAPVisualizer
-from frap_report_generator import FRAPReportGenerator
+from frap_report_generator import EnhancedFRAPReportGenerator
 
 # Configure Page
 st.set_page_config(
@@ -1178,17 +1178,15 @@ elif page == "6. Report":
                             report_filename = f"FRAP_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.{report_format}"
                             
                             if report_format == "html":
-                                FRAPReportGenerator.generate_html_report(
-                                    all_features, 
-                                    figures, 
-                                    report_filename
+                                reporter = EnhancedFRAPReportGenerator(output_dir=".")
+                                reporter.generate_report(
+                                    data_groups=st.session_state.data_groups,
+                                    selected_groups=selected_report_groups,
+                                    filename=report_filename
                                 )
                             else:
-                                FRAPReportGenerator.generate_pdf_report(
-                                    all_features, 
-                                    figures, 
-                                    report_filename
-                                )
+                                st.warning("⚠️ PDF reports are not supported in the enhanced analytical engine yet. Please select HTML.")
+
                             
                             st.success(f"✅ Report generated successfully: {report_filename}")
                             
