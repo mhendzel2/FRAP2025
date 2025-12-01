@@ -31,6 +31,20 @@ class EnhancedFRAPReportGenerator:
         self.holistic_comparator = HolisticGroupComparator()
         self.reference_db = FRAPReferenceDatabase()
 
+    def determine_control_group(self, groups: List[str]) -> str:
+        """Heuristically determine the control group from a list of group names."""
+        candidates = ['wt', 'wildtype', 'wild type', 'control', 'ctrl', 'untreated', 'dmso']
+        lower_groups = [g.lower() for g in groups]
+        
+        # Check for matches
+        for cand in candidates:
+            for i, g_name in enumerate(lower_groups):
+                if cand == g_name or f" {cand} " in f" {g_name} " or g_name.endswith(f" {cand}") or g_name.startswith(f"{cand} "):
+                    return groups[i]
+        
+        # Default to first group if no obvious control found
+        return groups[0]
+
     @staticmethod
     def _figure_to_html(fig) -> str:
         """Converts Plotly or Matplotlib figure to HTML string."""
@@ -88,23 +102,33 @@ class EnhancedFRAPReportGenerator:
         # 3. Executive Biological Interpretation (The "Story")
         html_content.append("<h2>1. Biological Interpretation</h2>")
         if len(selected_groups) >= 2:
-            # Compare the first two groups as the primary comparison (usually Control vs Treatment)
-            primary = selected_groups[0]
-            secondary = selected_groups[1]
+            # Determine control group
+            control_group = self.determine_control_group(selected_groups)
+            html_content.append(f"<div class='info-box'><b>Reference Control Group:</b> {control_group}</div>")
             
-            if primary in group_features and secondary in group_features:
-                stats_res = self.holistic_comparator.statistical_comparison(
-                    group_features[primary], group_features[secondary],
-                    group1_name=primary, group2_name=secondary
-                )
+            comparisons_made = False
+            
+            # Compare each group against the control
+            for group in selected_groups:
+                if group == control_group:
+                    continue
                 
-                interpretation_text = self.holistic_comparator.interpret_differences(stats_res)
-                # Format markdown to HTML
-                interpretation_html = interpretation_text.replace('\n', '<br>').replace('**', '<b>').replace('__', '</b>')
-                
-                html_content.append(f"<div class='interpretation-box'>{interpretation_html}</div>")
-            else:
-                html_content.append("<p><i>Insufficient data for comparison.</i></p>")
+                if group in group_features and control_group in group_features:
+                    comparisons_made = True
+                    stats_res = self.holistic_comparator.statistical_comparison(
+                        group_features[control_group], group_features[group],
+                        group1_name=control_group, group2_name=group
+                    )
+                    
+                    interpretation_text = self.holistic_comparator.interpret_differences(stats_res)
+                    # Format markdown to HTML
+                    interpretation_html = interpretation_text.replace('\n', '<br>').replace('**', '<b>').replace('__', '</b>')
+                    
+                    html_content.append(f"<h3>Comparison: {group} vs {control_group}</h3>")
+                    html_content.append(f"<div class='interpretation-box'>{interpretation_html}</div>")
+            
+            if not comparisons_made:
+                html_content.append("<p><i>Insufficient data for comparisons.</i></p>")
         else:
             html_content.append("<p><i>Select at least two groups for automatic biological comparison.</i></p>")
 

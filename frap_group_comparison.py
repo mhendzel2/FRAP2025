@@ -122,8 +122,12 @@ class HolisticGroupComparator:
             model = row.get('model', 'single')
             
             if model == 'single':
-                # Single component - classify the single rate
-                k = row.get('rate_constant', np.nan)
+                # Robustly find the rate constant using common aliases
+                k = row.get('rate_constant', 
+                      row.get('rate_constant_fast', 
+                        row.get('k_fast', 
+                          row.get('k', np.nan))))
+                
                 if np.isfinite(k):
                     k_fast_values.append((k, 1.0))  # 100% in this component
                     regime = self.categorize_kinetics(k)
@@ -131,10 +135,27 @@ class HolisticGroupComparator:
                     
             elif model == 'double':
                 # Double component - get both rates and their abundances
-                k_fast = row.get('rate_constant_fast', np.nan)
-                k_slow = row.get('rate_constant_slow', np.nan)
-                prop_fast = row.get('proportion_of_mobile_fast', np.nan) / 100.0
-                prop_slow = row.get('proportion_of_mobile_slow', np.nan) / 100.0
+                k_fast = row.get('rate_constant_fast', row.get('k_fast', np.nan))
+                k_slow = row.get('rate_constant_slow', row.get('k_slow', np.nan))
+                
+                # Handle proportions (support 0-1 or 0-100 scale)
+                prop_fast = row.get('proportion_of_mobile_fast', np.nan)
+                if np.isfinite(prop_fast) and prop_fast > 1.0:
+                    prop_fast /= 100.0
+                
+                prop_slow = row.get('proportion_of_mobile_slow', np.nan)
+                if np.isfinite(prop_slow) and prop_slow > 1.0:
+                    prop_slow /= 100.0
+                
+                # Fallback calculation if proportions missing
+                if np.isnan(prop_fast) and np.isnan(prop_slow):
+                    # Try to calculate from amplitudes if available
+                    A1 = row.get('A1', row.get('amplitude_fast', 0))
+                    A2 = row.get('A2', row.get('amplitude_slow', 0))
+                    total = A1 + A2
+                    if total > 0:
+                        prop_fast = A1 / total
+                        prop_slow = A2 / total
                 
                 if np.isfinite(k_fast) and np.isfinite(prop_fast):
                     k_fast_values.append((k_fast, prop_fast))
@@ -148,12 +169,21 @@ class HolisticGroupComparator:
                     
             elif model == 'triple':
                 # Triple component - get all rates and abundances
-                k_fast = row.get('rate_constant_fast', np.nan)
-                k_med = row.get('rate_constant_medium', np.nan)
-                k_slow = row.get('rate_constant_slow', np.nan)
-                prop_fast = row.get('proportion_of_mobile_fast', np.nan) / 100.0
-                prop_med = row.get('proportion_of_mobile_medium', np.nan) / 100.0
-                prop_slow = row.get('proportion_of_mobile_slow', np.nan) / 100.0
+                k_fast = row.get('rate_constant_fast', row.get('k_fast', np.nan))
+                k_med = row.get('rate_constant_medium', row.get('k_medium', np.nan))
+                k_slow = row.get('rate_constant_slow', row.get('k_slow', np.nan))
+                
+                prop_fast = row.get('proportion_of_mobile_fast', np.nan)
+                if np.isfinite(prop_fast) and prop_fast > 1.0:
+                    prop_fast /= 100.0
+                    
+                prop_med = row.get('proportion_of_mobile_medium', np.nan)
+                if np.isfinite(prop_med) and prop_med > 1.0:
+                    prop_med /= 100.0
+                    
+                prop_slow = row.get('proportion_of_mobile_slow', np.nan)
+                if np.isfinite(prop_slow) and prop_slow > 1.0:
+                    prop_slow /= 100.0
                 
                 if np.isfinite(k_fast) and np.isfinite(prop_fast):
                     k_fast_values.append((k_fast, prop_fast))

@@ -1,0 +1,531 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>FRAP Interpretive Report</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; color: #333; background-color: #f9f9f9; }
+                h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+                h2 { color: #2980b9; margin-top: 30px; }
+                table { border-collapse: collapse; width: 100%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+                th { background-color: #34495e; color: white; padding: 12px; text-align: left; }
+                td { border: 1px solid #ddd; padding: 10px; }
+                tr:nth-child(even) { background-color: #f2f2f2; }
+                .interpretation-box { background-color: #e8f6f3; border-left: 5px solid #1abc9c; padding: 15px; margin: 20px 0; }
+                .info-box { background-color: #eaf2f8; border-left: 5px solid #3498db; padding: 15px; margin: 20px 0; }
+                .warning { background-color: #fdf2e9; border-left: 5px solid #e67e22; padding: 15px; color: #d35400; }
+                .timestamp { color: #7f8c8d; font-size: 0.9em; }
+            </style>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        </head>
+        <body>
+        
+<h1>FRAP Comparative Analysis Report</h1>
+<p class='timestamp'>Generated: 2025-11-30 23:21</p>
+<p><b>Comparing Groups:</b> 5305-U2OS PARP2, U2OS PARP2, BMN673 GFP-PARP1, DBeQ BMN673 GFP-PARP1, DBeQ GFP-PARP1, GFP-PARP1, DBeQ GFP-PARP2, GFP-PARP2, U2OS ctr-PARP1, U2OS Nimbolide PARP1, U2OS ctr-PARP2, U2OS Nimbolide PARP2, U2OS PARP1, U2OS PDD-PARP1, U2OS PDD-PARP2, 405 PARPi PARP2, BMN673 U2OS D-NTR, BMN673 U2OS D-NTR-RY, BMN673 U2OS E558A, BMN673 U2OS H428A, BMN673 U2OS PARP2, BMN673 U2OS R153A+Y201F, U2OS D-NTR, U2OS D-NTR-RY, U2OS E558A, U2OS H428A, U2OS R153A+Y201F, ABT888, PARP2 ctr</p>
+<h2>1. Biological Interpretation</h2>
+<div class='interpretation-box'><br>📊 <b>Mobile Fraction Comparison:<b><br>   5305-U2OS PARP2: 70.4% ± 8.7%<br>   U2OS PARP2: 73.1% ± 4.9%<br>   ✗ No significant difference in overall mobility (p=0.8017)<br><br>🔬 <b>Population Distribution Analysis:<b><br>   5305-U2OS PARP2:<br>      Diffusion: 0.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br>   U2OS PARP2:<br>      Diffusion: 0.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br><br>🧬 <b>Biological Interpretation:<b></div>
+<h2>2. Population Heterogeneity Analysis</h2>
+<p>Are the cells in each group behaving uniformly, or are there subpopulations?</p>
+<div>                        <script type="text/javascript">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
+        <script charset="utf-8" src="https://cdn.plot.ly/plotly-3.1.1.min.js" integrity="sha256-HUEFyfiTnZJxCxur99FjbKYTvKSzwDaD3/x5TqHpFu4=" crossorigin="anonymous"></script>                <div id="0f5eca31-df30-4d9d-8a37-67b7d930c677" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script type="text/javascript">                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("0f5eca31-df30-4d9d-8a37-67b7d930c677")) {                    Plotly.newPlot(                        "0f5eca31-df30-4d9d-8a37-67b7d930c677",                        [{"hovertemplate":"group=5305-U2OS PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305-U2OS PARP2, 3","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"5305-U2OS PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"El45mm+bsj+ABven8sGxP9a9+lxJDrc\u002fm+fkPw8Iwj\u002f47Mr1MhW3Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"elrbSX0oSEDrjRWgCzpFQDr5cp4juE5A8LvV3UG+UUCrcEBvw19KQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305-U2OS PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305-U2OS PARP2, 0","marker":{"color":"#000001","symbol":"diamond"},"mode":"markers","name":"5305-U2OS PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"qg1eFoGivD8uPGiiNT3GP7GZzBAY8sU\u002fgy9LQ3tryj99Wvg\u002fqbHAPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"zRzWBX\u002fFQUCBFEgUDNhCQCSUjzn39kdASFOSKXDtRkAmvBYlPwBHQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305-U2OS PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305-U2OS PARP2, 2","marker":{"color":"#000001","symbol":"square"},"mode":"markers","name":"5305-U2OS PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"sh7H7Wzyzj\u002fU9cKVH3vQP1SsMgG15dE\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"KU5Oz8loR0AJIAuetiNLQLMZEVPwOEZA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305-U2OS PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305-U2OS PARP2, 1","marker":{"color":"#000001","symbol":"x"},"mode":"markers","name":"5305-U2OS PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"jnwKaSWIwT+UD5p+ulC2P5EpxoqM\u002f7E\u002fe0sHE43uuD8ajzRzFRHDPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"FM72iYHMXUCRafJ5wSZhQKbZUfC1519Ah41wsTgzX0DKOhBmnSJfQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, 3","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"U2OS PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"E8TgzJCKuj8vM+27sw+yP0enjXi6sbk\u002fE8TgzJCKuj8vM+27sw+yP0enjXi6sbk\u002fDN5imMniwj+I5ErGmjvCP1nYSa7jUcM\u002fEmpUYYGvvz8HVYn01\u002fK1P0Ox3qe2ucI\u002frRml82xXwz8ekdhtX5K7P5gBKE6J48A\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"r6ABdLE1SkBgeWZEBg9EQCppAFPyOEpAr6ABdLE1SkBgeWZEBg9EQCppAFPyOEpASgd0nGTbSkBelKYzRgtMQHKXdKmjW1FAORwnS3p9T0BL\u002f174WkFQQLqFagSlHExAJd1EZSreUUBU7wqu6M9QQCJN1iIajk1A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, 0","marker":{"color":"#000002","symbol":"diamond"},"mode":"markers","name":"U2OS PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"5mdgHnZeyT96McpD02nKPy+grtLpzMg\u002fZohzXV4qwj9K9glpYq3HP7VhsyjSo8E\u002fmCnZVYQawz+8nq98W+rMP2f5bAqKIMg\u002fQxarqBIfyj\u002fmZ2Aedl7JP3oxykPTaco\u002fL6Cu0unMyD9miHNdXirCP0r2CWlircc\u002ftWGzKNKjwT+YKdlVhBrDP7yer3xb6sw\u002fZ\u002flsCoogyD9DFquoEh\u002fKP9A95O6WEsk\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"vM\u002fmxMmfQkBrYBg6Ko9BQGZ+R67FSjxAHUoyWbqnQECwOALERP86QFY0sAOaO0FAQOV8QR+7RECnvOqlO8FGQMuQorLY5UhAeIC6J5O8REC8z+bEyZ9CQGtgGDoqj0FAZn5HrsVKPEAdSjJZuqdAQLA4AsRE\u002fzpAVjSwA5o7QUBA5XxBH7tEQKe86qU7wUZAy5CistjlSEB4gLonk7xEQNsmja61A0lA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, 2","marker":{"color":"#000002","symbol":"square"},"mode":"markers","name":"U2OS PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ReNT5oOM1T9F41Pmg4zVP749NdIYV80\u002f5UAK1wez0j80RUkxJ0TGPzvD1N9w1dE\u002fdb8DtHy+yT8PYGsyX+3IP45qiPp0Usc\u002fq31kWymjzD8ZiFGLmAXTP\u002f41lGbL9sw\u002fpT8KKSpvyD8R5MlaDUTLP8m8So1qfNA\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"tyw7L8\u002f5SUC3LDsvz\u002flJQJDJCUFj9lBAgu1DUU5bSUDTvGtZl+tQQL3BlbXWEFFAt2H5bhsyUUDpQqolaQJRQL3YFTkq+VBA3TwN5iXyUUBwhkMiYBxTQMat7N54cFBADyuheOf1SkBoDCnlxK9OQCgaoRaeVk9A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, 1","marker":{"color":"#000002","symbol":"x"},"mode":"markers","name":"U2OS PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"hoTC9X6Evj+GhML1foS+Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AekQftoOYUAB6RB+2g5hQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, -1","marker":{"color":"#000002","symbol":"cross"},"mode":"markers","name":"U2OS PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"vY0X2HN9vj8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f3uJijyzbL8\u002fAAAAAAAA+H\u002fVF5X5iKa0PyTxzwe4BD5AvY0X2HN9vj8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f3uJijyzbL8\u002fAAAAAAAA+H\u002fVF5X5iKa0PyTxzwe4BD5AaoKqpmVJvT+mCUQsl3\u002fIPwFiajD0I9s\u002flaI2rH52wj+IuTUR\u002f4a8PwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"FWBb61i1YUAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f0yKbtK2\u002f2FAAAAAAAAA+H+rljr\u002fKRFiQBZZM+XAOkFAFWBb61i1YUAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f0yKbtK2\u002f2FAAAAAAAAA+H+rljr\u002fKRFiQBZZM+XAOkFAzVnjqmGNY0At7g2v6klkQJwsZxjnaFBAPu2t12jqYUAQrZ\u002fGHu9iQAAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP2, 4","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"U2OS PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"jp0fzHer0z+KYVMNkNbLP4phUw2Q1ss\u002fjp0fzHer0z+KYVMNkNbLP4phUw2Q1ss\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"fd8+8GIFYUCHcW5NCbNfQIdxbk0Js19Afd8+8GIFYUCHcW5NCbNfQIdxbk0Js19A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 GFP-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 GFP-PARP1, 0","marker":{"color":"#000003","symbol":"diamond"},"mode":"markers","name":"BMN673 GFP-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"dZ22uUEGuz9c6fyWkVLEP0+Q6sG9k8Q\u002fVDSuY5tswj+cuuXiYFnKP84+M+MNmr0\u002fPRgtQC1gyD+3i263PprAP8wn1b5pu8c\u002f8KoRmP6rzT+tM5uXoSm8PxXsA6wHwcA\u002fQ46vxXELyT9f9uYiir7CPzJLRUmEqsQ\u002fD8ePPL4pwj+6sCtIVjLCPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"p4fNlq+YQEBUCwv7okk9QP\u002fQH5rTvzlADq1HUPQrQEAqdMBmfk86QI3SaVQPfjxA+S0B061APUCYOypW5I9BQFCVQeXXzkBAy6eYrXj3QUC++Ff7ZC1AQLESfDkf0z5AKXg+H9CTOEAMrqsv\u002fi0+QKgM+rZJuEFAwlYlFjDNO0BIFMPTN4I8QA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 GFP-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 GFP-PARP1, 2","marker":{"color":"#000003","symbol":"square"},"mode":"markers","name":"BMN673 GFP-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"Zx+Bci4L0T9A0DLiXn\u002fQPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"N3sYMEGZUUARrf5nieBGQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 GFP-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 GFP-PARP1, 1","marker":{"color":"#000003","symbol":"x"},"mode":"markers","name":"BMN673 GFP-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"YdC7czNAwj\u002fi9hloduS1Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"63iJMvSLXkDUsizfQDZaQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 GFP-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 GFP-PARP1, -1","marker":{"color":"#000003","symbol":"cross"},"mode":"markers","name":"BMN673 GFP-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8B712c0xbUPwAAAAAAAPh\u002fmWMUjh5O1T8AAAAAAAD4fwAAAAAAAPh\u002fpaiNr8yl1T8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H9fb+uoHRlbQAAAAAAAAPh\u002feEv6kXqLXEAAAAAAAAD4fwAAAAAAAPh\u002fzSJlDhuqOEAAAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 GFP-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 GFP-PARP1, 4","marker":{"color":"#000003","symbol":"circle"},"mode":"markers","name":"BMN673 GFP-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"7a3uZTlLzz+zkNkLWJHPPwsdhWCrjdA\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"V\u002fMyDxPyV0ApgZnnzS5dQCmPwQKSsF1A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ BMN673 GFP-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ BMN673 GFP-PARP1, 0","marker":{"color":"#000004","symbol":"diamond"},"mode":"markers","name":"DBeQ BMN673 GFP-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"Xdc9M5gvyj\u002fUd2\u002frpVbCP8OYkFGu5c4\u002fQLPKBKDfyD\u002fxmmn+q1rNPxNWrjvj1cg\u002fRcIZXJoCxz9vcZW7S3jFP6ru6ORkUcg\u002fiZy1p\u002f3DwT9YFuDx+bvHP69T4Z3+j8c\u002f2Ln\u002fH\u002fcqyT8q2OzyTV7HP9lUvhIKXM8\u002fj6gwYMVnvj9sP93YAGfKP9BKXzJvu8M\u002fvug5R2DNwD8PycBNWK\u002fFPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"4TFnb64rQkASufTcuXw8QKvSf4\u002f4ZEBA4PwLnvdxQUBuldh8eNc7QAW1JOx2mD1AndbhDJ6jQ0Dr\u002fc1KwgFDQGBVD6lRpj5AWnqlGXbAOkDBRCd6pr5CQCGnuJjBiUBAJUc5TM5qRkBoGXWd5n5AQGsNIUK9NEFAH7JLXY62QkDyrPQlTupEQJOpv1LQDj9AcgrD+qtrPUBfuXOO8+09QA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ BMN673 GFP-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ BMN673 GFP-PARP1, 2","marker":{"color":"#000004","symbol":"square"},"mode":"markers","name":"DBeQ BMN673 GFP-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"fY4Obqun1T\u002f6h+Y9m2rPPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"q7+6hIYoR0CH51N7O0RIQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ BMN673 GFP-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ BMN673 GFP-PARP1, 1","marker":{"color":"#000004","symbol":"x"},"mode":"markers","name":"DBeQ BMN673 GFP-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"4FQt0PMtwD\u002fAlC7\u002fm76xP9Xj8A9AVMM\u002fYpcu\u002f5u+sT\u002fAlC7\u002fm76xPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"aPscEFkMX0ChCBmXeqNfQGyw89mmzFpAw8xMum3yX0DrWvXN0X1gQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ BMN673 GFP-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ BMN673 GFP-PARP1, -1","marker":{"color":"#000004","symbol":"cross"},"mode":"markers","name":"DBeQ BMN673 GFP-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4f5bfSGr7UNQ\u002fZrjCDqH41j8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fy9g699sz15A8VhEyoboX0AAAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ BMN673 GFP-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ BMN673 GFP-PARP1, 4","marker":{"color":"#000004","symbol":"circle"},"mode":"markers","name":"DBeQ BMN673 GFP-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"5\u002fsCinKnzj\u002fw6se3mz3OP8pY3zXWztI\u002f3r3xQiPExT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"yoLElPgCXECDp6QAu+VcQFoAn4npMFhAmmrd1bdzXUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, 3","marker":{"color":"#000005","symbol":"circle"},"mode":"markers","name":"DBeQ GFP-PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"HmNV\u002f5u+sT8oUNH0fjW2Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"hnh8I4wMQkC2VVvM0fFBQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, 0","marker":{"color":"#000005","symbol":"diamond"},"mode":"markers","name":"DBeQ GFP-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ArL5VyoixD\u002fDjcTj4tvAP0kUzIWt6sY\u002fRecu02VgxT+9jqz0+\u002ffAP8WTpdAzCco\u002fKG3SFcpVxT\u002fv5Eau32XOP65amG8d28o\u002fbIeyDuRExD8PYmTkKeLNP0W5BIP7Ys0\u002fJmB4V0Fiwj8PwQO8PMPMP0bAyDq+P84\u002foZn5AzDSuj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"7Y4+vgLcQUAnEcedJY9BQJ4KC2Lxc0VAaBfNTA95R0ADAKgvQl5EQGYhsIl7GUlAHj9QF6ZMQEDTXFN\u002fAjpCQJdrmCAixENAd0qCdOsKO0DlkQQeWbxEQM9IGy2QVUVAp9N9x7R2RkBjE1ULeM1AQKDSzZ5VFEJA5RRZlzAHPUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, 2","marker":{"color":"#000005","symbol":"square"},"mode":"markers","name":"DBeQ GFP-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"5IdZI42j0T+mvFtWrR3RP9kkUpJc0M8\u002fsR+0VvVw0D\u002f6C1Z\u002fYrPPP7e5c604B9Q\u002fNyqRWBDF0j8="},"xaxis":"x","y":{"dtype":"f8","bdata":"lOQQKcf6Q0AW0j2X3DBCQJ6P1e6QfkdArbvUMOowQEATcKhfEnZFQNVQOk14okJAN\u002f7V5xkoREA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, 1","marker":{"color":"#000005","symbol":"x"},"mode":"markers","name":"DBeQ GFP-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"Xy21o3P2uj8w9FR5Aui3Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"aZgaQ8S9X0ALUuky97tdQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, -1","marker":{"color":"#000005","symbol":"cross"},"mode":"markers","name":"DBeQ GFP-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H9X1HZBdw7fPwAAAAAAAPh\u002f4M8Q5Bcswz8AAAAAAAD4f+fZ41mTkL4\u002fAAAAAAAA+H8AAAAAAAD4f6aaSIeRktU\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H+mV+F\u002ff7M8QAAAAAAAAPh\u002f4KVR0wPSYUAAAAAAAAD4f4mqMNPWKWxAAAAAAAAA+H8AAAAAAAD4f+e749jCIGBAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP1, 4","marker":{"color":"#000005","symbol":"circle"},"mode":"markers","name":"DBeQ GFP-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"bTucitQ2yz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"vYxiTQ8TXkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, 3","marker":{"color":"#000006","symbol":"circle"},"mode":"markers","name":"GFP-PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"H9KjGC9ntj8La0QtW6a+P4Nn\u002f2NIgrM\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"jFHUCKRRQ0ALyLp4OGxIQNYX29Qx8kxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, 0","marker":{"color":"#000006","symbol":"diamond"},"mode":"markers","name":"GFP-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"vHeJEqtYvz+59m6sYmvJPzl6VRVFvr0\u002f39bCLf4EwD+p+mEi4QvNP9Ne5N5pjcM\u002fbnAqzjKaxT\u002fhOmSVDbnDP6+RjQn6i8k\u002f\u002fJ03WzRkyj\u002fl1lIo0mXOP0pD1n9FSsE\u002fdDHeufSlxz8IIQSJ+wm+P2eaTnYTer8\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"XPzy\u002f1V1PkDxspNGsOVBQF71NYOjUkFAotiZdF\u002fJQEB4lPlg5TBCQH+GQw+5B0NAgwBzlaiGQ0DMYPCtnC9FQJ+52DAtiENA7khj4363QEBQsuZn+kZFQLOIOIsK1kBANhaxsrPPRUBClGUEzmpBQJSD5J1GvUBA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, 2","marker":{"color":"#000006","symbol":"square"},"mode":"markers","name":"GFP-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"jM52TmAe1T+\u002fyhxvVdvSP5YMvsgxa9A\u002fy+uTwPS+0T+PZZv58AHVPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"n1+yJKRyREAJ9Z6lZulFQNaYp2OyaURAF6\u002fFUtwoRkDHsy5R0ktEQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, 1","marker":{"color":"#000006","symbol":"x"},"mode":"markers","name":"GFP-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"wJQu\u002f5u+sT\u002f3GhV2QOPBPxLnug\u002fXFrs\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"MHlIQUY\u002fX0AxI3hZBvpdQPTeYVsoPWFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, -1","marker":{"color":"#000006","symbol":"cross"},"mode":"markers","name":"GFP-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP1, 4","marker":{"color":"#000006","symbol":"circle"},"mode":"markers","name":"GFP-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"yLQIInSl0D99PuEFXXnMPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"cm4k1ILeVkBMMqdFQNVVQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP2, 0","marker":{"color":"#000007","symbol":"diamond"},"mode":"markers","name":"DBeQ GFP-PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"+ee5hl\u002fLxD8cUaKJYqPCP2RHXotv58M\u002fVO+J4YrbyD\u002fxnWBg\u002fPzCP4kx2gzF2sQ\u002ffv6Kq0J1zj8kbZWj89XJP9RtRQ\u002frxcQ\u002fq81DVwPqxD+HcK\u002ftJ4PJP+h6EEHK4sk\u002fwRGXjCs4wD8="},"xaxis":"x","y":{"dtype":"f8","bdata":"x\u002fzQPGNSSEDD\u002fatUHV5EQLUczYR4MkFAcotbt8SPRkB96GfHDDxAQDyIkrS8LztAFaGS787oQ0DxPmpAXbxDQJ7RQuZPFUhAFQsGtIcZQUDAYRJL6k9IQKoLeheocUFAYkpoail1REA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP2, 1","marker":{"color":"#000007","symbol":"x"},"mode":"markers","name":"DBeQ GFP-PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"wJQu\u002f5u+sT8bhgjDSnu0Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"SNKxdvP7YEBgK\u002f0\u002f0\u002fNgQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP2, -1","marker":{"color":"#000007","symbol":"cross"},"mode":"markers","name":"DBeQ GFP-PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4f0QjUaTdGr8\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fYco5sDDFuz8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4f2BwbvrdWWJAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002feL\u002fmJJPHYkAAAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=DBeQ GFP-PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"DBeQ GFP-PARP2, 4","marker":{"color":"#000007","symbol":"circle"},"mode":"markers","name":"DBeQ GFP-PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"5U5wTNOCzT95zkvP8\u002fTLPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"4Ur7d\u002f\u002fcYEA+0ASQhYphQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, 3","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"GFP-PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"0mtOVfQTuz8TxODMkIq6Py8z7buzD7I\u002fR6eNeLqxuT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"aDYC5AFbRUCvoAF0sTVKQGB5ZkQGD0RAKmkAU\u002fI4SkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, 0","marker":{"color":"#000008","symbol":"diamond"},"mode":"markers","name":"GFP-PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"RD2r2SY8zD8kzRtmQBzNP0PIOa3whLk\u002fJ1LUL8bkyz+v9mHjPQPCP937Vo8NesA\u002f+ylc+3vewT8dVQohwTLHP5gp2VWEGsM\u002fvJ6vfFvqzD9n+WwKiiDIP0MWq6gSH8o\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"07Ievcf0QUAwkVs7b8VEQDsLRAMaSkNAHErSkiujQ0B0w9jwOj0\u002fQOvfUkxeYT5A+ay1YN0LQkA3lkeALLdDQEDlfEEfu0RAp7zqpTvBRkDLkKKy2OVIQHiAuieTvERA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, 2","marker":{"color":"#000008","symbol":"square"},"mode":"markers","name":"GFP-PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ReNT5oOM1T8="},"xaxis":"x","y":{"dtype":"f8","bdata":"tyw7L8\u002f5SUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, 1","marker":{"color":"#000008","symbol":"x"},"mode":"markers","name":"GFP-PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"hoTC9X6Evj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AekQftoOYUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, -1","marker":{"color":"#000008","symbol":"cross"},"mode":"markers","name":"GFP-PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f72NF9hzfb4\u002fJPHPB7gEPkA="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fxVgW+tYtWFAFlkz5cA6QUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=GFP-PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"GFP-PARP2, 4","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"GFP-PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"\u002fH0o+spS0D8OH9xtEW7RP46dH8x3q9M\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"O3M1JL4qYUAwcxFQ7oBgQH3fPvBiBWFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, 3","marker":{"color":"#000009","symbol":"circle"},"mode":"markers","name":"U2OS ctr-PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"1JJWvO\u002fruD+Bli7\u002fm76xP4YMdFVppbU\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"s+aiqbYzRUC1jdqwj0xDQP\u002fI4xDJuUFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, 0","marker":{"color":"#000009","symbol":"diamond"},"mode":"markers","name":"U2OS ctr-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"6oOiYSPCyT\u002fdvkLRc5nCP7a7lmSr0Ls\u002fV33cteiqxD\u002fdlhM5JkLFP2T2CyjUt8o\u002f5R31zT6RxT9xoVOKuVzGP30Vzl\u002f4fsM\u002fTPnj1gh6zT\u002fTn4+ckkC3P3GZrJW2o7g\u002fZwr\u002fMgmexj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"Ay8j5kygQUCmEz2gitJDQLXM2WBInkJA8TJpo0KOPUAUi3TBCgg7QNbBPB1iukJAYTyrpHgyREACvRhyDX9DQKwvQmwbb0BADkDrSzzrRED4duRhrytBQK724c9hFT9A\u002fP\u002fKhO0KQ0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, 2","marker":{"color":"#000009","symbol":"square"},"mode":"markers","name":"U2OS ctr-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"jUAIWIs90D\u002fADATGJzbUP+C6MrNLp9E\u002fwT\u002fRf075zj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"eIhGXAfqSEDgUiP1W2RBQDwR8RPu3kFAw9fLBRplREA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, 1","marker":{"color":"#000009","symbol":"x"},"mode":"markers","name":"U2OS ctr-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"xpJAFo1lxT86QqRDDD6\u002fPxH+Z53dFL0\u002fFWHB9j\u002fivz9\u002fBORgObm4P0DBgPcvRb4\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"stCcp\u002fM9X0APJ5KGomVgQFJBC0Xg8mBAL80RcMDtXkCUkTHrr\u002fJZQAPx6He1eF1A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, -1","marker":{"color":"#000009","symbol":"cross"},"mode":"markers","name":"U2OS ctr-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"4CsuRwUb1D8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"WCqMeTVvYEAAAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP1, 4","marker":{"color":"#000009","symbol":"circle"},"mode":"markers","name":"U2OS ctr-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"sqsnLNhT0T9oHbGi\u002fHTRPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"tcWNRoasX0DcaIYIpLZYQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, 3","marker":{"color":"#000010","symbol":"circle"},"mode":"markers","name":"U2OS Nimbolide PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"fhov\u002f5u+sT9J7i7\u002fm76xP0Dt4KfMmrU\u002fwJQu\u002f5u+sT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"X5eKlB88SEBDq2PzyJtFQFqpQrAjZEZAL6oKgCMtS0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, 0","marker":{"color":"#000010","symbol":"diamond"},"mode":"markers","name":"U2OS Nimbolide PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"X1NE7Rjdzj\u002fQOH+lFiuyP5E5sy8qnco\u002fFXSa+iplyD+OxoUqiHTBP0C3imG8QsU\u002fmzzeplI0yD+Z32C\u002fNvPKP5cwV67tCs4\u002fnLWj\u002f9M7yj8FroaI70fBP+RX6YfMrcw\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"IFxiUOWgQUA1FIMQ1DU+QHNQYsLTk0RA1IMNKjzhRkAgJIe7yaNDQOibZtiMV0dA4lEkQgJXQkB1vCdy8cRCQLbbSNe58j9A9icP8f8LQ0DvGLl0sHdCQPH5IttBjEBA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, 2","marker":{"color":"#000010","symbol":"square"},"mode":"markers","name":"U2OS Nimbolide PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"7cTIRbzy0j9Z+\u002fpinJbQP6BOPZN5Hs4\u002f1FNJs3Mb0z8RQ\u002fDcA0\u002fRPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"ZqsP9JeDS0DaY39wXGJAQBfD1EVhp0hA21jXJngVREAsyqH9fEVAQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, 1","marker":{"color":"#000010","symbol":"x"},"mode":"markers","name":"U2OS Nimbolide PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"6FL7KPyEwD86XzWrdvC5P37eBNWz0bc\u002fwJQu\u002f5u+sT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"kvqt6M6QYECmT8QC4XNdQK0+nUcJ919AgGk7uNZUXkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, -1","marker":{"color":"#000010","symbol":"cross"},"mode":"markers","name":"U2OS Nimbolide PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8UzgRDWTnXPwAAAAAAAPh\u002fAAAAAAAA+H\u002fOeF9I\u002fJS0PwAAAAAAAPh\u002ft\u002fcuu+fQ1T82OVOXO0\u002fiP8CULv+bvrE\u002fXEntzS\u002fd3D+NTec2q6nYPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H\u002fLwrTpfi9eQAAAAAAAAPh\u002fAAAAAAAA+H+UiI5ZU4s3QAAAAAAAAPh\u002fwb1Gj7BhUkBZFKIq\u002f3peQDxwLoYDJlpAxVoMZpnUPkB41TMAZzNBQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP1, 4","marker":{"color":"#000010","symbol":"circle"},"mode":"markers","name":"U2OS Nimbolide PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"rDMVSaTAyz97YfRI9XrTP5WWFnUJ9tE\u002ffbmHUSSUyD8BXQFD5g3SP58Yc87LydM\u002fQqM33kYOzj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"vv7++FGHVUB60Hkj4QdbQEKURXNsiVhAIPK3L5q7X0ChyAvt7tpcQKV9\u002fzU75l1AcUQSKdLMWEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP2, 3","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"U2OS ctr-PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"8BkMsex6vz++u\u002fSQFhGzP8soCsGS7L4\u002faWRnqsVxsz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"nt\u002fAjCqFSkCG+enrohZLQOBFbOddAUxAKLvg7\u002fkbTUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP2, 0","marker":{"color":"#000001","symbol":"diamond"},"mode":"markers","name":"U2OS ctr-PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"R31Y2nEBxz+C0g7VWYjIPwe+EQuOeMU\u002feL0C6SWZzD8G1IxCqInGP+PKD5gtWss\u002faH8Oz\u002fd7xT+Jo+Vh05rEP1mft8HCdsk\u002fZqPdFAbWwT+ptm5+wZfBPx8StLVVMMM\u002fu2jaBIkgwj\u002fnSYys3vPGP8CMOB\u002fbdck\u002fpkku89FmxT+J+ZGnByjFPxwnEHDj9co\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"Ss897OfZQUDZykSLjiJGQCU0q8P0Hj1A6xSDSaxdOUBjYvpnrXtBQMrPyaC3dEZANSDJ6rI8SEDpDQomL7VCQO61KA7JLEhAua1IamhdQ0BswLlNsi9CQAqg9IqM+z5AmMfFL66FR0CHLSbzA0FIQLKKa85tuUhAw8nRwhriRkDT20tTlJREQIu0fq\u002fMlEJA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP2, 2","marker":{"color":"#000001","symbol":"square"},"mode":"markers","name":"U2OS ctr-PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"UjFFsyj5zT9u\u002fufBTLrOPw0pXigzU9A\u002fnao5lwl\u002fzz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"rP4CO0qXSkC6VpaRn9JFQHex0LatYUVA83+Twz\u002fGQEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP2, -1","marker":{"color":"#000001","symbol":"cross"},"mode":"markers","name":"U2OS ctr-PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ugIyvdntuz\u002fsQmjdsazCPwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"4OhAm7nBYkBT4Bi+ggVjQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS ctr-PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS ctr-PARP2, 4","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"U2OS ctr-PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"gZqx9so00D8="},"xaxis":"x","y":{"dtype":"f8","bdata":"FMOxP3W5YUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP2, 3","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"U2OS Nimbolide PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ZPUYwVt3uD8qEoBQCqXCP\u002fDluxl7e78\u002fEGqFWJ+Dtj9LwG0slzm3P6HWDaq7770\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"sKqTBG34RUBVR40KM2VJQM1AcMqzwk1AYRg89KbFRkCPUI4Fwl9QQD+7R2eyqU1A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP2, 0","marker":{"color":"#000002","symbol":"diamond"},"mode":"markers","name":"U2OS Nimbolide PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"5NttfH4KwD+4gKNjPI\u002fBPy\u002fYIuA7nMA\u002fozQnp5JNyT9pprFVM3\u002fIP0ToD9\u002feu8M\u002fO0i3tgwBwD+01q3RCaDJP4RRsgQpgsY\u002fpOUvpbuTyz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"3AfHt2LlQ0AUw5tR68BBQMktLdcfbUNAqREJlzS0R0AS4VFC1btFQMymvxyr4UJALQXzG6N6RkD0WNlk\u002f9ZEQGR9xtb47UVA5IK4rw0DREA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP2, 2","marker":{"color":"#000002","symbol":"square"},"mode":"markers","name":"U2OS Nimbolide PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"7lsGHZVayT9ouUo4dyrUP+4U5WmVGM4\u002fMVyH41f9zT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"YEgnjCWdSkBxIZiFPahIQAGnMWYOs0lArG4DQOiYRkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP2, -1","marker":{"color":"#000002","symbol":"cross"},"mode":"markers","name":"U2OS Nimbolide PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f6h6CTfo2cY\u002fAAAAAAAA+H+sf1sUxADBPwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fz06zqpMmWJAAAAAAAAA+H8rb0TkNVpjQAAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS Nimbolide PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS Nimbolide PARP2, 4","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"U2OS Nimbolide PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"7LVZePGqyj+1z2Q2hM3KP6\u002fnj3iGRcc\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"YLYpNwCgYECwuGoyZkthQPlqyWSGjVxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, 3","marker":{"color":"#000003","symbol":"circle"},"mode":"markers","name":"U2OS PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"C2tELVumvj\u002fP0r5PGeu1P4Nn\u002f2NIgrM\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"C8i6eDhsSECxRC1nL+ZGQNYX29Qx8kxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, 0","marker":{"color":"#000003","symbol":"diamond"},"mode":"markers","name":"U2OS PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ufZurGJryT85elUVRb69P9\u002fWwi3+BMA\u002fqfphIuELzT\u002fTXuTeaY3DP+E6ZJUNucM\u002fr5GNCfqLyT\u002f8nTdbNGTKP+XWUijSZc4\u002fSkPWf0VKwT90Md659KXHPwghBIn7Cb4\u002fZ5pOdhN6vz+eH07e6f\u002fMPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"8bKTRrDlQUBe9TWDo1JBQKLYmXRfyUBAeJT5YOUwQkB\u002fhkMPuQdDQMxg8K2cL0VAn7nYMC2IQ0DuSGPjfrdAQFCy5mf6RkVAs4g4iwrWQEA2FrGys89FQEKUZQTOakFAlIPknUa9QED2+Eg8lSc9QA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, 2","marker":{"color":"#000003","symbol":"square"},"mode":"markers","name":"U2OS PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"v8ocb1Xb0j+WDL7IMWvQP8vrk8D0vtE\u002fj2Wb+fAB1T\u002f3TP15wYTTP1tvT+2ypcU\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"CfWepWbpRUDWmKdjsmlEQBevxVLcKEZAx7MuUdJLRECHwoXCvbVEQL9h5E6rB1BA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, 1","marker":{"color":"#000003","symbol":"x"},"mode":"markers","name":"U2OS PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"9xoVdkDjwT8S57oP1xa7P7b5XDee574\u002fbo\u002fSs7JUvT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"MSN4WQb6XUD03mFbKD1hQIDARnccklxACAh+M6+0WkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, -1","marker":{"color":"#000003","symbol":"cross"},"mode":"markers","name":"U2OS PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H9GbEto8ubZP5a3Jsdf4eA\u002fAAAAAAAA+H9GWQ4xg2PdPwAAAAAAAPh\u002fAAAAAAAA+H+yrgG0o3naPwI4P55Jgds\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H+YqpQbZI1dQFcW\u002fkJ0MlpAAAAAAAAA+H\u002fveNhk9opfQAAAAAAAAPh\u002fAAAAAAAA+H+LoOw14bdCQAFbAzQhNz1A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PARP1, 4","marker":{"color":"#000003","symbol":"circle"},"mode":"markers","name":"U2OS PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"yLQIInSl0D\u002fpnIwijvrKP30+4QVdecw\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"cm4k1ILeVkDA4UN+8cFgQEwyp0VA1VVA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, 3","marker":{"color":"#000004","symbol":"circle"},"mode":"markers","name":"U2OS PDD-PARP1, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"wJQu\u002f5u+sT\u002fsfv90gCK1Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"fP7tDzdAQEChs1m5CVhSQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, 0","marker":{"color":"#000004","symbol":"diamond"},"mode":"markers","name":"U2OS PDD-PARP1, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"pskYXKKQyT\u002fReu0oGeXEP1NWpFTROrk\u002fZrWbZs\u002fVxT82I7DVj+PGP2RhArYKE8U\u002fNSYZMR4OxT8WEhftLVPKP1AJEE5TusI\u002fsF1TShUVwj9DjXwUNtTCP1vdjvoBfMU\u002fWAFIYphSxz9UrKrctDXBPxj0RL+wl8o\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"ONgmaJFlQUB+hpUkQoY1QFo38qvNoD9ACbiAEPZZPEDKpasfJ4JFQCQYMHKqeT5AMtVo8h1EQEDD2KvMx805QNl2LJ+jpztAgG2hWGkFQUARGnhC5nM5QCThfxyG1UNAD7nMt+YdOUDZ\u002fXx\u002ftwRBQMU8XncJHEFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, 2","marker":{"color":"#000004","symbol":"square"},"mode":"markers","name":"U2OS PDD-PARP1, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"nca7UT\u002fM0j+Hpa4ooc3QP4D\u002fbOOqLdE\u002f8woWnfG9zz+vH56M+nHNP9T4pxwfxdY\u002fBxgP4Nh41j8="},"xaxis":"x","y":{"dtype":"f8","bdata":"tvOv8yjzO0CekeLr+gdCQNhCYPmqHz9AKVCgJTamPEDbDciOA2BJQORh1WdPvENAI414KtITRkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, 1","marker":{"color":"#000004","symbol":"x"},"mode":"markers","name":"U2OS PDD-PARP1, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"m7oz\u002f5u+sT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"ScEVd01XXkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, -1","marker":{"color":"#000004","symbol":"cross"},"mode":"markers","name":"U2OS PDD-PARP1, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"XT5QwcpZ3D8AAAAAAAD4f7JXPKXtnNI\u002fBMx\u002fb48L4T8pOUe8+X3XPwAAAAAAAPh\u002f6Xuf\u002f5u+sT8G6k3g7wjaPwAAAAAAAPh\u002fwJQu\u002f5u+sT8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"3P5Pfm5NRkAAAAAAAAD4f9jPvxnGSjZACAJt4I6ZV0ASwE84ydxXQAAAAAAAAPh\u002fdO3W4TquOEA5azTpCbNTQAAAAAAAAPh\u002fLPX8dNCGVEAAAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP1\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP1, 4","marker":{"color":"#000004","symbol":"circle"},"mode":"markers","name":"U2OS PDD-PARP1, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"lgXRhgUo0T\u002fb5Ef9JSPEP7Y+AfpAgMM\u002fOWnhYTOUxT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"NFGvKAe2VkA5Q\u002f3GeuxZQBK0cdsiGFhALiujWi9iWkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP2, 0","marker":{"color":"#000005","symbol":"diamond"},"mode":"markers","name":"U2OS PDD-PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"HD+nUbF1uT8yaD4fvjnDP5cDZ6rVZcI\u002fZLCxnWYiwT9qLyZFnJHNP4K\u002fu+Onn8c\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"MuwSPZQ\u002fQUBr3pzoiKBDQJOC0Ald\u002f0NAnP\u002fJUJaXPkC6IXa+KBxCQH\u002fqWq202kVA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP2, 2","marker":{"color":"#000005","symbol":"square"},"mode":"markers","name":"U2OS PDD-PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"aTfZHwBSyz\u002f4zn6MKWHQP9MTeMjIOc8\u002fse1rV9\u002fd0z8kjv70vT3KP30n+AFUrM8\u002f\u002fwHO54F6zT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"i4TSZXaoSkCYw3vzX3pJQLC5xfKUnkVA2Nzzxa4fO0Db+kGtyNlPQI1CXStFREdAgRiyHH5iSUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP2, 1","marker":{"color":"#000005","symbol":"x"},"mode":"markers","name":"U2OS PDD-PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"TYIfeXO2uj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"HPPYDuIrYUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP2, -1","marker":{"color":"#000005","symbol":"cross"},"mode":"markers","name":"U2OS PDD-PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"q+r+lFWD1j8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8QN3E4tea7PwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"4l6\u002fDhMcYUAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8qCYQPtSJiQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS PDD-PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS PDD-PARP2, 4","marker":{"color":"#000005","symbol":"circle"},"mode":"markers","name":"U2OS PDD-PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"TsqgtCxqyT86TjMY0y\u002fRP06Z8e01b88\u002fi4MBiIrbxz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"0wVX\u002fI\u002fYYEC4yZtlRjdhQPJsTBEGjWFAvD48kBBQYUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR, 3","marker":{"color":"#000006","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS D-NTR, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"1Qcv\u002f5u+sT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"ibSHlcFhQ0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR, 0","marker":{"color":"#000006","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS D-NTR, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"dM5LRQUPxj90zktFBQ\u002fGP6rLSKxHKME\u002fqstIrEcowT93o9xpjAbCP3ej3GmMBsI\u002fiUeRwEaEwD8J8JIhsALIP\u002fVIRoqvMcE\u002fItsXcEk0wD9B0MSW8EnAP7ZmbT4zgMQ\u002fyOjzkQ2fxT8UZ\u002fiAGXnEP4OZ8KDyG7w\u002fS5xxupRCwz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"D7lLBVTgQEAPuUsFVOBAQOVCASnzI0RA5UIBKfMjREAYKuhP1H89QBgq6E\u002fUfz1APqTqGGMDO0CEv5DqoH49QCqIpJjaC0VAt2XuYbKoPEAf9MGYn58+QOWnsGxguTpA\u002fdmKgXE7OkCVmhn82+03QIPTVf8GBDdAGnTAbn5TN0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR, 2","marker":{"color":"#000006","symbol":"square"},"mode":"markers","name":"BMN673 U2OS D-NTR, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"r+QecKIixj+v5B5woiLGPwJGO1rvNtY\u002fAkY7Wu821j8="},"xaxis":"x","y":{"dtype":"f8","bdata":"3C2Rh4etSkDcLZGHh61KQMidUz3KO0NAyJ1TPco7Q0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR, 1","marker":{"color":"#000006","symbol":"x"},"mode":"markers","name":"BMN673 U2OS D-NTR, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"oTCW69MHvT+eJMjOace3PwzZOFdGgro\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"DxxPAzVDX0BvZHfJlx5gQL\u002fVr\u002fnUyWBA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR, -1","marker":{"color":"#000006","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS D-NTR, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR-RY\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR-RY, 0","marker":{"color":"#000007","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS D-NTR-RY, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"hIPCogfNwT92v9I4mifAPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"81ldd1hcOUAv9lCwTjJBQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS D-NTR-RY\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS D-NTR-RY, -1","marker":{"color":"#000007","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS D-NTR-RY, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS E558A\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS E558A, 3","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS E558A, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"tWYlJqjiuz+loy7\u002fm76xPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"mFRJsNHbRUAbGtvmn1ZGQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS E558A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS E558A, 0","marker":{"color":"#000008","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS E558A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"vzH27YbTvj92qWQkXF3AP1r6\u002f5n+i8s\u002f9yo7\u002fEPaxz9jI29GmgnDP8HE8nNMX8A\u002fRaFYH7HkwT9ge+1ammPIPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"tCGa9hxlRUDgezjH4ydFQIOY200MckRApSjcUCZZP0CG\u002fqt2hu1DQOOIwgxYwEVAnE1cKsRzRECDlf\u002fbGTVHQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS E558A\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS E558A, -1","marker":{"color":"#000008","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS E558A, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H\u002f5CDboG2zCP4hFYrnvILo\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H80uQpzlixiQJQjXRhd4GFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS E558A\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS E558A, 4","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS E558A, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"hC8YW2FzxT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"EamH4VhdYEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS H428A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS H428A, 0","marker":{"color":"#000009","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS H428A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"Ikm2GqaExj+RvpfFv2\u002fEP9Sh1jDymsk\u002fJB\u002f4Zw2oxD+nv+2POdnMPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"1p01+JuARUDaEYn5+99FQKDGk2P5EElAredt7L9wR0AM7KNnRiVHQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS H428A\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS H428A, 1","marker":{"color":"#000009","symbol":"x"},"mode":"markers","name":"BMN673 U2OS H428A, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"u9vRDVClvT9a0bK40P+9Pxt9HazCVsM\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"xTkTthv2WUDktfXPvZ9gQHcdJpbnBmFA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS H428A\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS H428A, -1","marker":{"color":"#000009","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS H428A, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8Izc5dOpy5P8U1acICZLk\u002fAAAAAAAA+H+LQFNRzo6\u002fPwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H\u002fmcMqManVhQJySkbloEmJAAAAAAAAA+H8QswGlGe1hQAAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, 3","marker":{"color":"#000010","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS PARP2, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"l8+D9wGKsz9nZ5YaqxfEP0oyL\u002f+bvrE\u002fnuku\u002f5u+sT+yJgooMr24P3Mxv\u002f+bvrE\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"ad2g4R3QUEA9y0+fO7FSQAVQqdgHpUdAFFv3MQPWSUAOq6301FtNQOwUikaekEdA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, 0","marker":{"color":"#000010","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS PARP2, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"1mjty13ywT80hkG63pK6P0GvFAZfUsE\u002ftq2rLL9nwz+U4+dClaHCPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"s+rpGys4SEBoEap5xmtDQJEmP2rZvEZAzttAs4FwR0A82MQx1EJGQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, 2","marker":{"color":"#000010","symbol":"square"},"mode":"markers","name":"BMN673 U2OS PARP2, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"7YXulBPzyz8sp5zXKDTGP1PPsKLGMM8\u002fy4XiNJDX0D9M\u002fz0kFxvPP\u002fiM9qnVnNE\u002fSAVWTtqD1D9864PBhxfYP5aSQrqWU8g\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"tKxMlojHSkAd0VaoICVNQGLWjlPYTkVAVNCJV+czRED0lKW9+ghIQOKIgDAtBkpAMDDIHJU9R0BpuYRj0F5GQBffmRWwtE9A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, 1","marker":{"color":"#000010","symbol":"x"},"mode":"markers","name":"BMN673 U2OS PARP2, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"F07geVUQwD8dGThTBnS+P7h8Qhynqbw\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"h58L1CM7XUBtswpP9MBfQEtNVllnvVxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, -1","marker":{"color":"#000010","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS PARP2, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H\u002fRqiHj3c6xPwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H\u002f8uu9Rg6pZQAAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS PARP2\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS PARP2, 4","marker":{"color":"#000010","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS PARP2, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"QGy31ZpFzD+luEthGf\u002fHP3XtzAqa7Mo\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"zow+fqqGXkA\u002fpRUtjRdhQLUkYmvVRWBA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS R153A+Y201F\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS R153A+Y201F, 3","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS R153A+Y201F, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"wJQu\u002f5u+sT+2+9MjvaW7P9SOtyI+8Lo\u002fvuoz2bmFwT\u002fvb5NIHX62P8uU09YpM8A\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"6dba0Vc6REANGKS0hbBQQJn+yqLYH1BAqNshI5GUTkAVXjC4z2tOQJB67GpxcUhA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS R153A+Y201F\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS R153A+Y201F, 0","marker":{"color":"#000001","symbol":"diamond"},"mode":"markers","name":"BMN673 U2OS R153A+Y201F, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"uKWTdkFWxz\u002fV7U5oZui9P90lvYelFsM\u002fdaU9zE7KzD\u002fhjQf1POTGP7wne+uPxbo\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"r6SSCnfSSEDDhhKrAqJDQHjOEah32kRAvQw4pUbCQkByEjTMgCJGQBuLxyZm7kBA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS R153A+Y201F\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS R153A+Y201F, 2","marker":{"color":"#000001","symbol":"square"},"mode":"markers","name":"BMN673 U2OS R153A+Y201F, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"0QueN6dhzD9kykzmCC\u002fVP\u002f0H6vZ87MQ\u002fZpqMS4FRzz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"rhAUzuY0SECk2+\u002fub6hPQJNE4YJ3mVBA5zN3zVl1UUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS R153A+Y201F\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS R153A+Y201F, -1","marker":{"color":"#000001","symbol":"cross"},"mode":"markers","name":"BMN673 U2OS R153A+Y201F, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H9Va\u002fX6f+GzPw68sc30psk\u002f3to43bXkyj8AAAAAAAD4fySTGgh0tMg\u002fDq55P2VexT8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H9ltM7xE6BhQAI1CDZhH2NAx1NkDcBbZEAAAAAAAAD4fwCFFid+IWRA5HJ5pzKzY0AAAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=BMN673 U2OS R153A+Y201F\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"BMN673 U2OS R153A+Y201F, 4","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"BMN673 U2OS R153A+Y201F, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"rtRBdaoX0T8="},"xaxis":"x","y":{"dtype":"f8","bdata":"JJB5v6mbVEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR, 3","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"U2OS D-NTR, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"45KGgijztj+xa4W9lCm0Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"DbZmeM\u002fiSECC7kWsrURGQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR, 0","marker":{"color":"#000002","symbol":"diamond"},"mode":"markers","name":"U2OS D-NTR, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"e8yqlT0WxD97zKqVPRbEP7WEEEis68o\u002ftYQQSKzryj+0k5bbXRTHP7STlttdFMc\u002fn\u002fIbXxXtxz\u002fULrqOI\u002fPNP1houjPdD8s\u002f+7s3+MG7yD\u002f4YJHLWmy\u002fP8f40CprC8A\u002fpbtCiAIovj87E6+iM\u002fPCP+emTDo8Bcs\u002fSD3Gj0EQxj9lw2B31FLIP\u002fS4xxklULw\u002fBVdDeJ7rxj8MHar+65XHPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"NhaJpfOPQ0A2Foml849DQNff5d3CXkVA19\u002fl3cJeRUAH\u002foCSDVhHQAf+gJINWEdA2tkLUCddRUC9Ye6zJs9FQKhilJJuDkNAV3k21qzfQkAlQbd6WqpAQFSkRm+IpTtA9ue0AferQEC2R3nqpeFCQG4nmqpBJERA4uaRw37ARUBlNKVStQhGQIhhWlzYsEFA4L3Z2yrLPkC82lLXucBAQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR, 2","marker":{"color":"#000002","symbol":"square"},"mode":"markers","name":"U2OS D-NTR, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"OZ0gFDuA0D8OHyaCXaHPPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"JLeKRzKsTEBNQZEMDZZDQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR, -1","marker":{"color":"#000002","symbol":"cross"},"mode":"markers","name":"U2OS D-NTR, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fqS0HrGxZwz92s1yXIvPAPwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fbaBD8QgBYkBBhdaGHpZiQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR-RY\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR-RY, 0","marker":{"color":"#000003","symbol":"diamond"},"mode":"markers","name":"U2OS D-NTR-RY, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"81NkDN2axz\u002fzU2QM3ZrHPx1hY0jsHcI\u002fHWFjSOwdwj8bSLvfA9u4PxtIu98D27g\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"o9UJtnGpO0Cj1Qm2cak7QBwu281lZkBAHC7bzWVmQEATuW7CR8M3QBO5bsJHwzdA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR-RY\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR-RY, 1","marker":{"color":"#000003","symbol":"x"},"mode":"markers","name":"U2OS D-NTR-RY, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"pzaeBjIVuj+nNp4GMhW6Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"CthlAasQYUAK2GUBqxBhQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS D-NTR-RY\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS D-NTR-RY, -1","marker":{"color":"#000003","symbol":"cross"},"mode":"markers","name":"U2OS D-NTR-RY, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS E558A\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS E558A, 3","marker":{"color":"#000004","symbol":"circle"},"mode":"markers","name":"U2OS E558A, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"\u002fJM1\u002f5u+sT86cStAqcO4P7SZ5hBIir8\u002fsue1EzgUuT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"MugHOozOTECF4qdXxL9KQE1VeXvhAE9Abem44R5JTkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS E558A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS E558A, 0","marker":{"color":"#000004","symbol":"diamond"},"mode":"markers","name":"U2OS E558A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"9E36THQZxD+rwVGxbZrIPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"5tJhlN2nRUBccL6xLkRJQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS E558A\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS E558A, 2","marker":{"color":"#000004","symbol":"square"},"mode":"markers","name":"U2OS E558A, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"QJyngeKKyj\u002fqRk+Zyp7NP4T7M4AdONA\u002fOvDImAGUzj9p19yh4nbJP8831jED8tQ\u002fwIFPOkjqyz+53geQv0zQP8w22Ytr79A\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"4OQPesSESkDi+cZGolxOQJuPEI1EE05AzEGAI4VYTEC6YC7mU2dJQDAnYnvd\u002fU5AMt90yQdJSUA\u002fTdZdvCxJQCbDCiuJLkxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, 3","marker":{"color":"#000005","symbol":"circle"},"mode":"markers","name":"U2OS H428A, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"cGNhnvBpuz8YVYgdNxrAPw+WLv+bvrE\u002fTAUUcJeftD\u002f\u002fUZwXIsa2Pw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"KgULAjaYSkBew9+KfEJIQNsxBqnqnkhAa84gLZejRkAJcILRqB1NQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, 0","marker":{"color":"#000005","symbol":"diamond"},"mode":"markers","name":"U2OS H428A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AjHjecY7yz+WI4mwMD3FP6nHerNR\u002fcs\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"0W2rIF9TR0CjRbSYa31JQCiJgbejaEZA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, 2","marker":{"color":"#000005","symbol":"square"},"mode":"markers","name":"U2OS H428A, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"RJO5UoZizz+l3iVXc7LPP\u002f\u002fzcT5sPs4\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"5C6IJm3ES0ALbBjaI5BGQEn3c+820U9A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, 1","marker":{"color":"#000005","symbol":"x"},"mode":"markers","name":"U2OS H428A, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"0x8Q0Pfowj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"klZi9OICYUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, -1","marker":{"color":"#000005","symbol":"cross"},"mode":"markers","name":"U2OS H428A, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"DzAiCmodwz\u002f+82CNn83CPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"4h3hhyjCYkD5mQzXhmdjQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS H428A\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS H428A, 4","marker":{"color":"#000005","symbol":"circle"},"mode":"markers","name":"U2OS H428A, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"CdbujzolyT8="},"xaxis":"x","y":{"dtype":"f8","bdata":"H2yJM6wqYUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS R153A+Y201F\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS R153A+Y201F, 3","marker":{"color":"#000006","symbol":"circle"},"mode":"markers","name":"U2OS R153A+Y201F, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"o2InUMnevT+jYidQyd69P2iRv3pZx8I\u002faJG\u002felnHwj\u002fg+YGCIprBP\u002f36vUeOrro\u002foHnNCCX5vT9PkP+JWM3BPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"3PP9Q\u002fUqTkDc8\u002f1D9SpOQLPzUSU3AkxAs\u002fNRJTcCTEC9JmSAzm5SQEplx9s511FAuZccak\u002fBT0AfwzeHRWJQQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS R153A+Y201F\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS R153A+Y201F, 0","marker":{"color":"#000006","symbol":"diamond"},"mode":"markers","name":"U2OS R153A+Y201F, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"ol04TG6exD+iXThMbp7EP6tHDdPjmc0\u002fuEFcAguiyD8="},"xaxis":"x","y":{"dtype":"f8","bdata":"LkJnHNJZSkAuQmcc0llKQFID9QpqEUZALuoUJ8cuSEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS R153A+Y201F\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS R153A+Y201F, 2","marker":{"color":"#000006","symbol":"square"},"mode":"markers","name":"U2OS R153A+Y201F, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"VEYxxxW\u002fzz9URjHHFb\u002fPP32d9L4bH9Q\u002ffZ30vhsf1D+GTJHbvsjLP4ZMkdu+yMs\u002f2Dtak0R70D\u002fYO1qTRHvQPyn3AkAa8MQ\u002fOR7vQb1TyD+VRucUn8nQP4mhU2a\u002fo9A\u002fe9eWqP040j9Uc+RiRojRPyOaJVVEj8o\u002fwIuVVuiCxj8F3DWxgaXPPw+AZT4eWM0\u002fv5UqTPIi0T+3wlMrtuPMP5n7xsRd7c8\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"7\u002fA6alFfTUDv8DpqUV9NQCC3fd4wkUpAILd93jCRSkBs7aVALVRJQGztpUAtVElA8KoW8DWaSUDwqhbwNZpJQPVaQQIzkkpA06a+tlGOSkAtxfBufUVTQMug+MT3mk1Ag4L9Thu9UEDHImVFfAFRQLYLvaEwk1BAdQfP55QCT0ALzgpELc5LQNkn3JCkvE1Am0BxyfPwSUBRca\u002fpR19MQJEjT0PmJ01A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS R153A+Y201F\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS R153A+Y201F, -1","marker":{"color":"#000006","symbol":"cross"},"mode":"markers","name":"U2OS R153A+Y201F, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"f6Ps2A+duj9\u002fo+zYD526PzwakQZ8UrI\u002fPBqRBnxSsj8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8s1qyr5gnFP3ikR8nf+sM\u002fx+XjVYztyT9pyuPajaS4Pz6FRYf5rs8\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"6YSXoR+7YkDphJehH7tiQOHkGBkKdWNA4eQYGQp1Y0AAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H9kIXQcLL5jQOodE8N6gWRA6nhnvF4tZEBqP3iKC7BiQOOw1D2MnmRAAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=U2OS R153A+Y201F\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"U2OS R153A+Y201F, 4","marker":{"color":"#000006","symbol":"circle"},"mode":"markers","name":"U2OS R153A+Y201F, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"xyJxl0K50T\u002fHInGXQrnRPx6QgY5dmMk\u002fpAaS7BS6xj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"pR7uZM9wYUClHu5kz3BhQMgyNvaeVV5A0sr0LhbTVEA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=ABT888\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"ABT888, 0","marker":{"color":"#000007","symbol":"diamond"},"mode":"markers","name":"ABT888, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"FviLLVOiwj+2KdVOj+bDP4l5FliDicY\u002fK8Uajcc7yT9mAOIoA33EP6w6Wze4MsM\u002f1B2fUDZRwz9z3hIvnWXDP0WzNt8yccg\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"eWWoj4J1RkDN6\u002f0BreZJQEsM5ktvokZADBwC9OQeRUDSP3Raz2JEQBAQ7CtEW0RANaH9P+7rQUBsrCYMVLBAQERSmmkNaklA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=ABT888\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"ABT888, 2","marker":{"color":"#000007","symbol":"square"},"mode":"markers","name":"ABT888, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"+zG5S+ME0T+wW8fn5DDRP76NOF9DDNE\u002fR9f+yBKV0T+M9rqxQFjUP1L6EuodX9Y\u002fkE5N7qAs0T93fG+wEiPLPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"rdwUkBcmQkBQFyj9DEBKQNgy1UuI+0RA7HSrL\u002frMSkAsPJBQvPRKQOiLIhYx3UlA4HjndAxyTEDjojHCAGNLQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=ABT888\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"ABT888, -1","marker":{"color":"#000007","symbol":"cross"},"mode":"markers","name":"ABT888, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H9vQ2jtKyfGPwAAAAAAAPh\u002fymAWnegYwT8AAAAAAAD4f8CULv+bvrE\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fJHJNMv0Tuj8AAAAAAAD4fy\u002fduxXSU9M\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H9u3G9gwzRiQAAAAAAAAPh\u002fwTrhB0E6YkAAAAAAAAD4f9POsLuRRVpAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fMia6U1y9YUAAAAAAAAD4fwvPb65Ph2FA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=PARP2 ctr\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"PARP2 ctr, 3","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"PARP2 ctr, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"EVC16rwBwD\u002fAlC7\u002fm76xP9t1VRW1\u002fL4\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"+qOatKB+S0DcReV34HBOQHSvaJ48yUZA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=PARP2 ctr\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"PARP2 ctr, 0","marker":{"color":"#000008","symbol":"diamond"},"mode":"markers","name":"PARP2 ctr, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"NaZXezgLwD\u002f6VdGFsGTEP3ffmk9xdMM\u002fI39TVGlowD857KlVRfTMP918InotPck\u002fflJHCA68yz9LkE\u002fEwd3EPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"TIps5oM7RUBXR9Dn6b9DQJHYIzU7dEVAl8JT4lEXRkAfpvg+xLtCQBnlb\u002fmz00VA42DHiDQwSEBpPSwkDSlHQA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=PARP2 ctr\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"PARP2 ctr, 2","marker":{"color":"#000008","symbol":"square"},"mode":"markers","name":"PARP2 ctr, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"QTMMeYfU0z\u002fphGlCyWjXP6n6ZuNlldE\u002f39tbc6+O1D+qrsTMIprVPxgNEP7cn9M\u002fH5eoH+Vmzj+1WysABH7QP+f7BJap0dE\u002fwH3SQX2W0T8="},"xaxis":"x","y":{"dtype":"f8","bdata":"YWojvStgRkCr9QIA3a1JQOjL8tdkhUdALNLSDkV8RkCh088mIfxMQDfwPZdK90hAj4uzJYGjR0CtMwUxT4lIQEJhhM\u002fTv0hAQl2RXs+hTUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=PARP2 ctr\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"PARP2 ctr, -1","marker":{"color":"#000008","symbol":"cross"},"mode":"markers","name":"PARP2 ctr, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H+aJTSrZYG8PwAAAAAAAPh\u002fAAAAAAAA+H+q3BVURlvVPwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H9GClV2FW9jQAAAAAAAAPh\u002fAAAAAAAA+H\u002fFe5albORhQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fw=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=PARP2 ctr\u003cbr\u003ecluster=4\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"PARP2 ctr, 4","marker":{"color":"#000008","symbol":"circle"},"mode":"markers","name":"PARP2 ctr, 4","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"iFJENiFA0j8="},"xaxis":"x","y":{"dtype":"f8","bdata":"oIsPsCp2YUA="},"yaxis":"y","type":"scatter"}],                        {"template":{"data":{"candlestick":[{"decreasing":{"line":{"color":"#000033"}},"increasing":{"line":{"color":"#000032"}},"type":"candlestick"}],"contourcarpet":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"contourcarpet"}],"contour":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"contour"}],"heatmap":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"heatmap"}],"histogram2d":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"histogram2d"}],"icicle":[{"textfont":{"color":"white"},"type":"icicle"}],"sankey":[{"textfont":{"color":"#000036"},"type":"sankey"}],"scatter":[{"marker":{"line":{"width":0}},"type":"scatter"}],"table":[{"cells":{"fill":{"color":"#000038"},"font":{"color":"#000037"},"line":{"color":"#000039"}},"header":{"fill":{"color":"#000040"},"font":{"color":"#000036"},"line":{"color":"#000039"}},"type":"table"}],"waterfall":[{"connector":{"line":{"color":"#000036","width":2}},"decreasing":{"marker":{"color":"#000033"}},"increasing":{"marker":{"color":"#000032"}},"totals":{"marker":{"color":"#000034"}},"type":"waterfall"}]},"layout":{"coloraxis":{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]]},"colorscale":{"diverging":[[0.0,"#000021"],[0.1,"#000022"],[0.2,"#000023"],[0.3,"#000024"],[0.4,"#000025"],[0.5,"#000026"],[0.6,"#000027"],[0.7,"#000028"],[0.8,"#000029"],[0.9,"#000030"],[1.0,"#000031"]],"sequential":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"sequentialminus":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]]},"colorway":["#000001","#000002","#000003","#000004","#000005","#000006","#000007","#000008","#000009","#000010"]}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"title":{"text":"Half Time (s)"},"type":"log"},"yaxis":{"anchor":"x","domain":[0.0,1.0],"title":{"text":"Mobile Fraction"}},"legend":{"title":{"text":"group, cluster"},"tracegroupgap":0},"title":{"text":"Population Distribution: Kinetics vs Mobility"}},                        {"responsive": true}                    )                };            </script>        </div>
+<p class='warning'><b>Note:</b> 6 distinct kinetic subpopulations were detected. Treatment effects may be specific to one subpopulation.</p>
+<h2>3. Reference Database Benchmarking</h2>
+<div class='info-box'><b>Database Context:</b> </div>
+<h3>Proteins with Similar Kinetics</h3>
+<table border="1" class="dataframe table table-striped">
+  <thead>
+    <tr style="text-align: right;">
+      <th>protein_probe</th>
+      <th>class_type</th>
+      <th>deff_um2_s</th>
+      <th>mobile_fraction_pct</th>
+      <th>key_finding</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>EGFR-eGFP</td>
+      <td>Membrane Protein</td>
+      <td>0.040</td>
+      <td>85.0</td>
+      <td>Ligand binding induces oligomerization, slowing diffusion</td>
+    </tr>
+    <tr>
+      <td>EGFR-eGFP</td>
+      <td>Membrane Protein</td>
+      <td>0.067</td>
+      <td>86.0</td>
+      <td>Baseline lateral diffusion of monomeric/dimeric receptor</td>
+    </tr>
+    <tr>
+      <td>WT GFP-Lamin A/C</td>
+      <td>Nuclear Lamin</td>
+      <td>3.000</td>
+      <td>95.0</td>
+      <td>Nucleoplasmic pool is highly mobile and diffusive</td>
+    </tr>
+    <tr>
+      <td>500 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>4.000</td>
+      <td>40.0</td>
+      <td>Very large molecules show reduced mobile fraction</td>
+    </tr>
+    <tr>
+      <td>500 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>4.000</td>
+      <td>40.0</td>
+      <td>Very large molecules show reduced mobile fraction</td>
+    </tr>
+    <tr>
+      <td>70 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>12.000</td>
+      <td>80.0</td>
+      <td>Slower than in water, highly mobile</td>
+    </tr>
+    <tr>
+      <td>70 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>12.500</td>
+      <td>80.0</td>
+      <td>Slower than in water, highly mobile</td>
+    </tr>
+    <tr>
+      <td>PARP1-GFP</td>
+      <td>DNA Repair</td>
+      <td>NaN</td>
+      <td>78.0</td>
+      <td>Transiently immobilized but dynamic at damage sites</td>
+    </tr>
+    <tr>
+      <td>Dysferlin</td>
+      <td>Signaling Protein</td>
+      <td>NaN</td>
+      <td>40.0</td>
+      <td>Shows a large immobile fraction and slow dynamics</td>
+    </tr>
+  </tbody>
+</table>
+<h2>5. Detailed Kinetic Statistics</h2>
+<table border="1" class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>group</th>
+      <th>n_cells</th>
+      <th>mobile_fraction_mean</th>
+      <th>mobile_fraction_sem</th>
+      <th>population_diffusion</th>
+      <th>population_binding</th>
+      <th>population_intermediate</th>
+      <th>weighted_k_fast</th>
+      <th>weighted_k_fast_sem</th>
+      <th>weighted_k_slow</th>
+      <th>weighted_k_slow_sem</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>5305-U2OS PARP2</td>
+      <td>18</td>
+      <td>70.437</td>
+      <td>8.697</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>U2OS PARP2</td>
+      <td>84</td>
+      <td>73.120</td>
+      <td>4.859</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>BMN673 GFP-PARP1</td>
+      <td>35</td>
+      <td>53.359</td>
+      <td>7.004</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>DBeQ BMN673 GFP-PARP1</td>
+      <td>37</td>
+      <td>63.112</td>
+      <td>7.134</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>DBeQ GFP-PARP1</td>
+      <td>40</td>
+      <td>57.972</td>
+      <td>8.009</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>5</th>
+      <td>GFP-PARP1</td>
+      <td>38</td>
+      <td>52.444</td>
+      <td>5.700</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>6</th>
+      <td>DBeQ GFP-PARP2</td>
+      <td>29</td>
+      <td>71.495</td>
+      <td>11.171</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>7</th>
+      <td>GFP-PARP2</td>
+      <td>28</td>
+      <td>62.107</td>
+      <td>8.484</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>8</th>
+      <td>U2OS ctr-PARP1</td>
+      <td>31</td>
+      <td>63.294</td>
+      <td>7.533</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>9</th>
+      <td>U2OS Nimbolide PARP1</td>
+      <td>43</td>
+      <td>67.074</td>
+      <td>6.013</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>10</th>
+      <td>U2OS ctr-PARP2</td>
+      <td>35</td>
+      <td>53.874</td>
+      <td>6.237</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>11</th>
+      <td>U2OS Nimbolide PARP2</td>
+      <td>36</td>
+      <td>65.050</td>
+      <td>7.669</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>12</th>
+      <td>U2OS PARP1</td>
+      <td>39</td>
+      <td>61.311</td>
+      <td>6.019</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>13</th>
+      <td>U2OS PDD-PARP1</td>
+      <td>40</td>
+      <td>49.792</td>
+      <td>4.917</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>14</th>
+      <td>U2OS PDD-PARP2</td>
+      <td>26</td>
+      <td>76.532</td>
+      <td>10.622</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>15</th>
+      <td>BMN673 U2OS D-NTR</td>
+      <td>27</td>
+      <td>45.787</td>
+      <td>6.809</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>16</th>
+      <td>BMN673 U2OS D-NTR-RY</td>
+      <td>6</td>
+      <td>29.877</td>
+      <td>4.516</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>17</th>
+      <td>BMN673 U2OS E558A</td>
+      <td>14</td>
+      <td>64.287</td>
+      <td>12.008</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>18</th>
+      <td>BMN673 U2OS H428A</td>
+      <td>14</td>
+      <td>93.706</td>
+      <td>14.152</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>19</th>
+      <td>BMN673 U2OS PARP2</td>
+      <td>29</td>
+      <td>69.303</td>
+      <td>6.332</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>20</th>
+      <td>BMN673 U2OS R153A+Y201F</td>
+      <td>25</td>
+      <td>77.034</td>
+      <td>9.626</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>21</th>
+      <td>U2OS D-NTR</td>
+      <td>42</td>
+      <td>48.557</td>
+      <td>5.779</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>22</th>
+      <td>U2OS D-NTR-RY</td>
+      <td>19</td>
+      <td>55.186</td>
+      <td>17.790</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>23</th>
+      <td>U2OS E558A</td>
+      <td>15</td>
+      <td>55.214</td>
+      <td>1.415</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>24</th>
+      <td>U2OS H428A</td>
+      <td>15</td>
+      <td>75.995</td>
+      <td>11.206</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>25</th>
+      <td>U2OS R153A+Y201F</td>
+      <td>53</td>
+      <td>82.884</td>
+      <td>6.178</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>26</th>
+      <td>ABT888</td>
+      <td>29</td>
+      <td>66.643</td>
+      <td>8.449</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>27</th>
+      <td>PARP2 ctr</td>
+      <td>30</td>
+      <td>60.240</td>
+      <td>6.886</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+  </tbody>
+</table>
+
+        <div style="margin-top: 50px; border-top: 1px solid #ccc; padding-top: 10px; text-align: center; color: #777;">
+            <p>Generated by FRAP Analysis Platform 2025</p>
+        </div>
+        </body>
+        </html>
+        
