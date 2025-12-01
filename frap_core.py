@@ -1474,6 +1474,8 @@ class FRAPAnalysisCore:
             features.update(FRAPAnalysisCore.interpret_kinetics(k, effective_radius_um, calibration))
             features['half_time_fast'] = features.get('half_time_binding')
             features['proportion_of_total_fast'] = features['mobile_fraction']
+            # Add t_half for clustering/reporting consistency
+            features['t_half'] = features.get('half_time_binding', np.nan)
 
         elif model == 'double' and len(params) >= 5:
             A1, k1, A2, k2, C = params
@@ -1511,6 +1513,8 @@ class FRAPAnalysisCore:
             features['proportion_of_total_slow'] = (A_slow / endpoint) * 100 if endpoint > 0 else 0
             features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
             features['half_time_fast'] = features.get('half_time_binding')
+            # Add t_half for clustering/reporting consistency
+            features['t_half'] = features.get('half_time_binding', np.nan)
 
         elif model == 'triple' and len(params) >= 7:
             A1, k1, A2, k2, A3, k3, C = params
@@ -1552,6 +1556,8 @@ class FRAPAnalysisCore:
             features['proportion_of_total_slow'] = (A_slow / endpoint) * 100 if endpoint > 0 else 0
             features.update(FRAPAnalysisCore.interpret_kinetics(k_fast, effective_radius_um, calibration))
             features['half_time_fast'] = features.get('half_time_binding')
+            # Add t_half for clustering/reporting consistency
+            features['t_half'] = features.get('half_time_binding', np.nan)
 
         elif model and 'anomalous' in model and len(params) >= 4:
             # Anomalous diffusion: I(t) = A*(1-exp(-(t/tau)^beta)) + C
@@ -1576,7 +1582,9 @@ class FRAPAnalysisCore:
                 'anomalous_beta': beta,
                 'anomalous_offset': C,
                 'rate_constant_fast': 1.0 / tau if tau > 0 else np.nan,  # Approximate as 1/tau
-                'half_time_fast': tau * 0.693 if tau > 0 else np.nan  # Approximate half-time
+                'half_time_fast': tau * 0.693 if tau > 0 else np.nan,  # Approximate half-time
+                # Add t_half for clustering/reporting consistency
+                't_half': tau * 0.693 if tau > 0 else np.nan
             })
 
         # Add diagnostic information for mobile fraction accuracy

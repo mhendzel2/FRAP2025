@@ -123,12 +123,20 @@ def fit_recovery(
     p0 = [A_init, B_init, k_init]
     
     # BIOLOGICAL CONSTRAINTS for normalized FRAP data (pre-bleach = 1.0):
-    # - A (plateau) must be ≤ 1.05 (allowing 5% noise tolerance)
+    # - A (plateau) must be ≤ 1.5 (allowing 50% noise tolerance/overshoot)
     # - B (amplitude) must be ≤ A (can't recover more than plateau)
     # - C = A - B (immobile fraction) must be ≥ 0
     # These constraints prevent over-recovery artifacts from normalization issues
+    max_plateau = 1.5
     bounds_lower = [y_min * 0.8, 0, bounds_k[0]]
-    bounds_upper = [min(1.05, y_max * 1.1), min(1.05, y_max * 1.1), bounds_k[1]]
+    bounds_upper = [max_plateau, max_plateau, bounds_k[1]]
+    
+    # Clamp initial guess to be strictly within bounds
+    p0 = [
+        min(A_init, bounds_upper[0] - 1e-6), 
+        min(B_init, bounds_upper[1] - 1e-6), 
+        k_init
+    ]
     
     try:
         if robust:

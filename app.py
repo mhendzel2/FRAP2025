@@ -1032,9 +1032,8 @@ elif page == "5. Compare Groups":
                     
                     if st.button("Run Statistical Test"):
                         result = FRAPStatisticalComparator.compare_groups(analyzer1.features, analyzer2.features, param)
-                    
-                    st.subheader("Results")
-                    st.json(result)
+                        st.subheader("Results")
+                        st.json(result)
                     
                     st.subheader("Distribution Plot")
                     # Combine for plotting

@@ -286,7 +286,10 @@ class FRAPGroupAnalyzer:
                                     A, k, C = params[0], params[1], params[2]
                                     row['mobile_fraction'] = A * 100  # Convert to percentage
                                     row['k_fast'] = k
-                                    row['half_time_fast'] = np.log(2) / k if k > 0 else np.nan
+                                    row['rate_constant_fast'] = k  # Alias for report generator
+                                    ht = np.log(2) / k if k > 0 else np.nan
+                                    row['half_time_fast'] = ht
+                                    row['t_half'] = ht  # Required for clustering/reporting
                             elif model_type == 'double':
                                 # Double: params = [A1, k1, A2, k2, C]
                                 if len(params) >= 5:
@@ -294,8 +297,13 @@ class FRAPGroupAnalyzer:
                                     row['mobile_fraction'] = (A1 + A2) * 100
                                     row['k_fast'] = k1
                                     row['k_slow'] = k2
-                                    row['half_time_fast'] = np.log(2) / k1 if k1 > 0 else np.nan
-                                    row['half_time_slow'] = np.log(2) / k2 if k2 > 0 else np.nan
+                                    row['rate_constant_fast'] = k1  # Alias for report generator
+                                    row['rate_constant_slow'] = k2
+                                    ht_fast = np.log(2) / k1 if k1 > 0 else np.nan
+                                    ht_slow = np.log(2) / k2 if k2 > 0 else np.nan
+                                    row['half_time_fast'] = ht_fast
+                                    row['half_time_slow'] = ht_slow
+                                    row['t_half'] = ht_fast  # Map primary t_half to fast component
                                     row['fraction_fast'] = A1 / (A1 + A2) if (A1 + A2) > 0 else np.nan
                             elif model_type == 'triple':
                                 # Triple: params = [A1, k1, A2, k2, A3, k3, C]
@@ -305,7 +313,10 @@ class FRAPGroupAnalyzer:
                                     row['k_fast'] = k1
                                     row['k_medium'] = k2
                                     row['k_slow'] = k3
-                                    row['half_time_fast'] = np.log(2) / k1 if k1 > 0 else np.nan
+                                    row['rate_constant_fast'] = k1  # Alias for report generator
+                                    ht = np.log(2) / k1 if k1 > 0 else np.nan
+                                    row['half_time_fast'] = ht
+                                    row['t_half'] = ht  # Required for clustering/reporting
                             
                             feature_rows.append(row)
                         else:
@@ -330,6 +341,19 @@ class FRAPGroupAnalyzer:
                     row['r2'] = res.metrics['r2']
                     row['aic'] = res.metrics['aic']
                     row['bic'] = res.metrics['bic']
+                    
+                    # Add t_half and rate_constant_fast aliases for report/clustering compatibility
+                    if 'tau_D' in row:
+                        row['t_half'] = row['tau_D']  # Approximation for Soumpasis
+                    elif 'k_off' in row:
+                        k = row['k_off']
+                        row['t_half'] = np.log(2) / k if k > 0 else np.nan
+                        row['rate_constant_fast'] = k
+                    elif 'k_fast' in row:
+                        k = row['k_fast']
+                        row['t_half'] = np.log(2) / k if k > 0 else np.nan
+                        row['rate_constant_fast'] = k
+                    
                     feature_rows.append(row)
                 else:
                     feature_rows.append({})
