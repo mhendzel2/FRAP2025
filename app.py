@@ -52,6 +52,9 @@ if 'bleach_radius' not in st.session_state:
     st.session_state.bleach_radius = 1.0  # microns
 if 'pixel_size' not in st.session_state:
     st.session_state.pixel_size = 0.065  # microns/pixel
+# Multi-model comparison results
+if 'model_comparison_results' not in st.session_state:
+    st.session_state.model_comparison_results = {}  # {group_name: {'double': df, 'triple': df}}
 
 # --- Sidebar Navigation ---
 st.sidebar.title("FRAP Analysis 2.0")
@@ -458,9 +461,13 @@ elif page == "2. Batch Process All Groups":
             st.markdown("#### 🔬 Model Fitting")
             fitting_mode = st.radio(
                 "Fitting Strategy:",
-                ["fit_all", "single_model"],
-                format_func=lambda x: "🚀 Fit All Models (Recommended)" if x == "fit_all" else "🎯 Single Model",
-                help="Fit All Models: Tests single, double, triple exponential and anomalous diffusion, selects best"
+                ["compare_2_vs_3", "fit_all", "single_model"],
+                format_func=lambda x: {
+                    "compare_2_vs_3": "📊 Compare 2-Component vs 3-Component (Recommended)",
+                    "fit_all": "🚀 Fit All Models & Auto-Select Best",
+                    "single_model": "🎯 Single Model Only"
+                }[x],
+                help="Compare 2 vs 3: Fits both double and triple exponential to all curves for direct comparison. Fit All: Tests all models and selects best by criterion."
             )
             
             if fitting_mode == "single_model":
@@ -469,8 +476,8 @@ elif page == "2. Batch Process All Groups":
                     ["single", "double", "triple", "anomalous_diffusion"],
                     format_func=lambda x: {
                         "single": "Single Exponential",
-                        "double": "Double Exponential",
-                        "triple": "Triple Exponential",
+                        "double": "Double Exponential (2-Component)",
+                        "triple": "Triple Exponential (3-Component)",
                         "anomalous_diffusion": "Anomalous Diffusion"
                     }[x]
                 )
@@ -561,23 +568,108 @@ elif page == "2. Batch Process All Groups":
                     # Step 1: Model Fitting
                     with st.spinner(f"🔬 Fitting models for {group_name}..."):
                         try:
-                            analyzer.analyze_group(model_name=model_select)
-                            
-                            if analyzer.features is not None:
-                                group_results['fit_success'] = len(analyzer.features.dropna(subset=['r2']))
-                                group_results['fit_failed'] = len(analyzer.features) - group_results['fit_success']
+                            if fitting_mode == "compare_2_vs_3":
+                                # Fit both 2-component (double) and 3-component (triple) separately
+                                from frap_core import FRAPAnalysisCore
                                 
-                                # Apply R² filter
-                                analyzer.features, removed_count = apply_r2_filter(
-                                    analyzer.features, 
-                                    st.session_state.r2_threshold
-                                )
-                                group_results['r2_filtered'] = removed_count
+                                double_results = []
+                                triple_results = []
                                 
-                                if removed_count > 0:
-                                    st.info(f"🔍 R² filter: Removed {removed_count} fits with R² < {st.session_state.r2_threshold}")
-                            
-                            st.success(f"✅ Model fitting complete: {group_results['fit_success']} successful fits, {len(analyzer.features)} after R² filter")
+                                for curve_idx, curve in enumerate(analyzer.curves):
+                                    if curve.normalized_intensity is None:
+                                        double_results.append({'curve_idx': curve_idx, 'success': False})
+                                        triple_results.append({'curve_idx': curve_idx, 'success': False})
+                                        continue
+                                    
+                                    time_data = curve.time
+                                    intensity_data = curve.normalized_intensity
+                                    
+                                    # Fit double exponential (2-component)
+                                    try:
+                                        double_fit = FRAPAnalysisCore.fit_double_exponential(time_data, intensity_data)
+                                        if double_fit and double_fit.get('success', False):
+                                            double_results.append({
+                                                'curve_idx': curve_idx,
+                                                'success': True,
+                                                'model': 'double',
+                                                'r2': double_fit.get('r2', np.nan),
+                                                'adj_r2': double_fit.get('adj_r2', np.nan),
+                                                'aic': double_fit.get('aic', np.nan),
+                                                'aicc': double_fit.get('aicc', np.nan),
+                                                'bic': double_fit.get('bic', np.nan),
+                                                'params': double_fit.get('params', []),
+                                                'mobile_fraction': sum(double_fit.get('params', [0,0,0,0,0])[:3:2]) * 100 if len(double_fit.get('params', [])) >= 5 else np.nan,
+                                                'k_fast': double_fit.get('params', [0,0])[1] if len(double_fit.get('params', [])) >= 2 else np.nan,
+                                                'k_slow': double_fit.get('params', [0,0,0,0])[3] if len(double_fit.get('params', [])) >= 4 else np.nan
+                                            })
+                                        else:
+                                            double_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'double'})
+                                    except Exception as e:
+                                        double_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'double', 'error': str(e)})
+                                    
+                                    # Fit triple exponential (3-component)
+                                    try:
+                                        triple_fit = FRAPAnalysisCore.fit_triple_exponential(time_data, intensity_data)
+                                        if triple_fit and triple_fit.get('success', False):
+                                            triple_results.append({
+                                                'curve_idx': curve_idx,
+                                                'success': True,
+                                                'model': 'triple',
+                                                'r2': triple_fit.get('r2', np.nan),
+                                                'adj_r2': triple_fit.get('adj_r2', np.nan),
+                                                'aic': triple_fit.get('aic', np.nan),
+                                                'aicc': triple_fit.get('aicc', np.nan),
+                                                'bic': triple_fit.get('bic', np.nan),
+                                                'params': triple_fit.get('params', []),
+                                                'mobile_fraction': sum(triple_fit.get('params', [0,0,0,0,0,0,0])[:5:2]) * 100 if len(triple_fit.get('params', [])) >= 7 else np.nan,
+                                                'k_fast': triple_fit.get('params', [0,0])[1] if len(triple_fit.get('params', [])) >= 2 else np.nan,
+                                                'k_medium': triple_fit.get('params', [0,0,0,0])[3] if len(triple_fit.get('params', [])) >= 4 else np.nan,
+                                                'k_slow': triple_fit.get('params', [0,0,0,0,0,0])[5] if len(triple_fit.get('params', [])) >= 6 else np.nan
+                                            })
+                                        else:
+                                            triple_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'triple'})
+                                    except Exception as e:
+                                        triple_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'triple', 'error': str(e)})
+                                
+                                # Create DataFrames for both models
+                                double_df = pd.DataFrame([r for r in double_results if r.get('success', False)])
+                                triple_df = pd.DataFrame([r for r in triple_results if r.get('success', False)])
+                                
+                                # Store comparison results
+                                st.session_state.model_comparison_results[group_name] = {
+                                    'double': double_df,
+                                    'triple': triple_df
+                                }
+                                
+                                # Use double as primary for analyzer.features (can be changed)
+                                if not double_df.empty:
+                                    analyzer.features = double_df.copy()
+                                    group_results['fit_success'] = len(double_df) + len(triple_df)
+                                elif not triple_df.empty:
+                                    analyzer.features = triple_df.copy()
+                                    group_results['fit_success'] = len(triple_df)
+                                
+                                st.success(f"✅ 2-Component: {len(double_df)} fits | 3-Component: {len(triple_df)} fits")
+                                
+                            else:
+                                # Original behavior
+                                analyzer.analyze_group(model_name=model_select)
+                                
+                                if analyzer.features is not None:
+                                    group_results['fit_success'] = len(analyzer.features.dropna(subset=['r2']))
+                                    group_results['fit_failed'] = len(analyzer.features) - group_results['fit_success']
+                                    
+                                    # Apply R² filter
+                                    analyzer.features, removed_count = apply_r2_filter(
+                                        analyzer.features, 
+                                        st.session_state.r2_threshold
+                                    )
+                                    group_results['r2_filtered'] = removed_count
+                                    
+                                    if removed_count > 0:
+                                        st.info(f"🔍 R² filter: Removed {removed_count} fits with R² < {st.session_state.r2_threshold}")
+                                
+                                st.success(f"✅ Model fitting complete: {group_results['fit_success']} successful fits")
                         except Exception as e:
                             st.error(f"❌ Error fitting models: {e}")
                             logger.error(f"Batch processing error for {group_name}: {e}")
@@ -642,6 +734,137 @@ elif page == "2. Batch Process All Groups":
                         st.metric("Total Outliers", summary_df['outliers'].sum())
                 
                 st.success("🎉 All groups processed successfully! You can now view individual results, compare groups, or generate reports.")
+                
+                # Display Model Comparison Results (if compare_2_vs_3 mode was used)
+                if fitting_mode == "compare_2_vs_3" and st.session_state.model_comparison_results:
+                    st.markdown("---")
+                    st.subheader("📊 2-Component vs 3-Component Model Comparison")
+                    
+                    comparison_tabs = st.tabs([f"📁 {group}" for group in st.session_state.model_comparison_results.keys()])
+                    
+                    for tab, group_name in zip(comparison_tabs, st.session_state.model_comparison_results.keys()):
+                        with tab:
+                            group_comparison = st.session_state.model_comparison_results[group_name]
+                            double_df = group_comparison.get('double')
+                            triple_df = group_comparison.get('triple')
+                            
+                            if double_df is not None and triple_df is not None and not double_df.empty and not triple_df.empty:
+                                col_model1, col_model2 = st.columns(2)
+                                
+                                with col_model1:
+                                    st.markdown("### 🔷 Double Exponential (2-Component)")
+                                    st.metric("Curves Fitted", len(double_df))
+                                    if 'r2' in double_df.columns:
+                                        st.metric("Mean R²", f"{double_df['r2'].mean():.4f}")
+                                        st.metric("R² Range", f"{double_df['r2'].min():.4f} - {double_df['r2'].max():.4f}")
+                                    if 'mobile_fraction_total' in double_df.columns:
+                                        st.metric("Mean Mobile Fraction", f"{double_df['mobile_fraction_total'].mean():.2%}")
+                                    if 'aicc' in double_df.columns:
+                                        st.metric("Mean AICc", f"{double_df['aicc'].mean():.2f}")
+                                
+                                with col_model2:
+                                    st.markdown("### 🔶 Triple Exponential (3-Component)")
+                                    st.metric("Curves Fitted", len(triple_df))
+                                    if 'r2' in triple_df.columns:
+                                        st.metric("Mean R²", f"{triple_df['r2'].mean():.4f}")
+                                        st.metric("R² Range", f"{triple_df['r2'].min():.4f} - {triple_df['r2'].max():.4f}")
+                                    if 'mobile_fraction_total' in triple_df.columns:
+                                        st.metric("Mean Mobile Fraction", f"{triple_df['mobile_fraction_total'].mean():.2%}")
+                                    if 'aicc' in triple_df.columns:
+                                        st.metric("Mean AICc", f"{triple_df['aicc'].mean():.2f}")
+                                
+                                # Statistical Comparison
+                                st.markdown("---")
+                                st.markdown("### 📈 Statistical Comparison")
+                                
+                                # Compare AICc values per curve to determine better fit
+                                if 'aicc' in double_df.columns and 'aicc' in triple_df.columns:
+                                    # Match by curve identifier if available
+                                    n_curves = min(len(double_df), len(triple_df))
+                                    double_aicc = double_df['aicc'].values[:n_curves]
+                                    triple_aicc = triple_df['aicc'].values[:n_curves]
+                                    
+                                    # Lower AICc is better
+                                    double_better = np.sum(double_aicc < triple_aicc)
+                                    triple_better = np.sum(triple_aicc < double_aicc)
+                                    ties = n_curves - double_better - triple_better
+                                    
+                                    comp_col1, comp_col2, comp_col3 = st.columns(3)
+                                    with comp_col1:
+                                        st.metric("Double Exponential Better", f"{double_better} ({100*double_better/n_curves:.1f}%)")
+                                    with comp_col2:
+                                        st.metric("Triple Exponential Better", f"{triple_better} ({100*triple_better/n_curves:.1f}%)")
+                                    with comp_col3:
+                                        st.metric("Mean ΔAICc", f"{np.mean(double_aicc - triple_aicc):.2f}")
+                                    
+                                    # Interpretation
+                                    if double_better > triple_better:
+                                        st.info(f"🔷 **Double exponential fits better** for {double_better}/{n_curves} curves ({100*double_better/n_curves:.1f}%). The 3rd component may not be justified by the data.")
+                                    elif triple_better > double_better:
+                                        st.info(f"🔶 **Triple exponential fits better** for {triple_better}/{n_curves} curves ({100*triple_better/n_curves:.1f}%). The data supports 3 distinct recovery populations.")
+                                    else:
+                                        st.info("⚖️ **Models perform similarly**. Consider using the simpler double exponential model (parsimony principle).")
+                                
+                                # Create comparison plot
+                                st.markdown("### 📊 Model Comparison Visualization")
+                                
+                                fig_compare = plt.figure(figsize=(14, 5))
+                                
+                                # R² comparison
+                                ax1 = fig_compare.add_subplot(1, 3, 1)
+                                if 'r2' in double_df.columns and 'r2' in triple_df.columns:
+                                    positions = [1, 2]
+                                    bp = ax1.boxplot([double_df['r2'].dropna(), triple_df['r2'].dropna()], 
+                                                     positions=positions, widths=0.6, patch_artist=True)
+                                    bp['boxes'][0].set_facecolor('steelblue')
+                                    bp['boxes'][1].set_facecolor('darkorange')
+                                    ax1.set_xticklabels(['Double\n(2-comp)', 'Triple\n(3-comp)'])
+                                    ax1.set_ylabel('R²')
+                                    ax1.set_title('Goodness of Fit (R²)')
+                                    ax1.axhline(y=st.session_state.r2_threshold, color='red', linestyle='--', alpha=0.5, label=f'R² threshold ({st.session_state.r2_threshold})')
+                                    ax1.legend(fontsize=8)
+                                
+                                # AICc comparison
+                                ax2 = fig_compare.add_subplot(1, 3, 2)
+                                if 'aicc' in double_df.columns and 'aicc' in triple_df.columns:
+                                    n_curves = min(len(double_df), len(triple_df))
+                                    delta_aicc = double_df['aicc'].values[:n_curves] - triple_df['aicc'].values[:n_curves]
+                                    ax2.hist(delta_aicc, bins=20, color='purple', alpha=0.7, edgecolor='black')
+                                    ax2.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Equal fit')
+                                    ax2.axvline(x=2, color='green', linestyle=':', alpha=0.7, label='Substantial diff (±2)')
+                                    ax2.axvline(x=-2, color='green', linestyle=':', alpha=0.7)
+                                    ax2.set_xlabel('ΔAICc (Double - Triple)')
+                                    ax2.set_ylabel('Count')
+                                    ax2.set_title('AICc Difference Distribution\n(Negative = Triple better)')
+                                    ax2.legend(fontsize=8)
+                                
+                                # Mobile fraction comparison
+                                ax3 = fig_compare.add_subplot(1, 3, 3)
+                                if 'mobile_fraction_total' in double_df.columns and 'mobile_fraction_total' in triple_df.columns:
+                                    n_curves = min(len(double_df), len(triple_df))
+                                    ax3.scatter(double_df['mobile_fraction_total'].values[:n_curves], 
+                                               triple_df['mobile_fraction_total'].values[:n_curves],
+                                               alpha=0.6, c='purple', edgecolors='black')
+                                    max_val = max(double_df['mobile_fraction_total'].max(), triple_df['mobile_fraction_total'].max())
+                                    ax3.plot([0, max_val], [0, max_val], 'r--', label='1:1 line')
+                                    ax3.set_xlabel('Double Exp Mobile Fraction')
+                                    ax3.set_ylabel('Triple Exp Mobile Fraction')
+                                    ax3.set_title('Mobile Fraction Comparison')
+                                    ax3.legend(fontsize=8)
+                                
+                                plt.tight_layout()
+                                st.pyplot(fig_compare)
+                                plt.close(fig_compare)
+                                
+                                # Detailed data tables
+                                with st.expander("📋 View Detailed Comparison Data"):
+                                    st.markdown("**Double Exponential Results:**")
+                                    st.dataframe(double_df, use_container_width=True)
+                                    
+                                    st.markdown("**Triple Exponential Results:**")
+                                    st.dataframe(triple_df, use_container_width=True)
+                            else:
+                                st.warning(f"Comparison data incomplete for {group_name}")
 
 # --- Page 3: Model Fitting ---
 elif page == "3. Model Fitting":
