@@ -16,6 +16,16 @@ from frap_analysis_enhanced import FRAPGroupAnalyzer, FRAPStatisticalComparator
 from frap_visualizer import FRAPVisualizer
 from frap_report_generator import EnhancedFRAPReportGenerator
 
+# Import global fitting module
+try:
+    from frap_global_fitting import (
+        UnifiedModelWorkflow, GlobalFitReporter, 
+        convert_analyzer_to_dataframe, run_global_frap_analysis,
+        LMFIT_AVAILABLE as GLOBAL_FITTING_AVAILABLE
+    )
+except ImportError:
+    GLOBAL_FITTING_AVAILABLE = False
+
 # Configure Page
 st.set_page_config(
     page_title="FRAP Analysis Enhanced",
@@ -50,8 +60,9 @@ page = st.sidebar.radio("Workflow", [
     "2. Batch Process All Groups", 
     "3. Model Fitting", 
     "4. Subpopulations", 
-    "5. Compare Groups", 
-    "6. Report"
+    "5. Compare Groups",
+    "6. Global Fitting",
+    "7. Report"
 ])
 
 # --- Sidebar Experimental Parameters ---
@@ -1046,8 +1057,250 @@ elif page == "5. Compare Groups":
                     fig = FRAPVisualizer.plot_parameter_distribution(combined, param, group_col='Group')
                     st.pyplot(fig)
 
-# --- Page 6: Report ---
-elif page == "6. Report":
+# --- Page 6: Global Fitting ---
+elif page == "6. Global Fitting":
+    st.header("🔬 Global Fitting & Unified Model Selection")
+    
+    if not GLOBAL_FITTING_AVAILABLE:
+        st.error("⚠️ Global fitting requires lmfit. Install with: `pip install lmfit`")
+        st.stop()
+    
+    st.markdown("""
+    **Global fitting** simultaneously fits all curves in a group while sharing kinetic parameters.
+    This provides more robust parameter estimates and enables rigorous statistical model comparisons.
+    
+    ### Workflow:
+    1. **Phase 1**: Fit all candidate models to each group
+    2. **Phase 2**: Statistically determine the unified model (most complex model required by any group)
+    3. **Phase 3**: Refit all groups with the unified model for "apples-to-apples" comparison
+    """)
+    
+    if len(st.session_state.data_groups) < 1:
+        st.warning("⚠️ Please import and process data first (Pages 1-2)")
+        st.stop()
+    
+    # Configuration
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔧 Global Fitting Options")
+    
+    mf_is_local = st.sidebar.checkbox(
+        "Local Mobile Fraction (Mf)",
+        value=True,
+        help="If checked, Mf is fitted independently for each curve. "
+             "If unchecked, Mf is shared across all curves in a group."
+    )
+    
+    alpha_level = st.sidebar.slider(
+        "Significance Level (α)",
+        min_value=0.01,
+        max_value=0.10,
+        value=0.05,
+        step=0.01,
+        help="P-value threshold for F-test model comparison"
+    )
+    
+    normalize_data = st.sidebar.checkbox(
+        "Apply Double Normalization",
+        value=True,
+        help="Normalize curves so pre-bleach=1, post-bleach start=0"
+    )
+    
+    # Group selection
+    st.subheader("📁 Select Groups for Global Analysis")
+    
+    available_groups = list(st.session_state.data_groups.keys())
+    selected_groups = st.multiselect(
+        "Groups to include:",
+        available_groups,
+        default=available_groups,
+        help="Select at least 2 groups for comparative analysis"
+    )
+    
+    if len(selected_groups) < 2:
+        st.warning("⚠️ Select at least 2 groups for unified model selection")
+    
+    # Convert data
+    if selected_groups:
+        st.subheader("📊 Data Summary")
+        
+        summary_data = []
+        for group_name in selected_groups:
+            analyzer = st.session_state.data_groups[group_name]
+            n_curves = len(analyzer.curves) if hasattr(analyzer, 'curves') else 0
+            summary_data.append({
+                'Group': group_name,
+                'Curves': n_curves,
+                'Status': '✅' if n_curves > 0 else '❌'
+            })
+        
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+    
+    # Run analysis button
+    st.markdown("---")
+    
+    if st.button("🚀 Run Global Fitting Analysis", type="primary", disabled=len(selected_groups) < 2):
+        
+        with st.spinner("Converting data..."):
+            # Convert analyzer data to DataFrame format
+            try:
+                df = convert_analyzer_to_dataframe(
+                    st.session_state.data_groups,
+                    group_names=selected_groups
+                )
+                
+                if df.empty:
+                    st.error("❌ Could not extract curve data. Ensure groups have been processed.")
+                    st.stop()
+                
+                st.success(f"✅ Converted {len(df)} data points from {df['GroupID'].nunique()} groups")
+                
+            except Exception as e:
+                st.error(f"❌ Data conversion failed: {e}")
+                st.stop()
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        def update_progress(current, total, message):
+            progress_bar.progress(current / total if total > 0 else 0)
+            status_text.text(message)
+        
+        # Run the workflow
+        try:
+            workflow = UnifiedModelWorkflow(mf_is_local=mf_is_local, alpha=alpha_level)
+            
+            result = workflow.run_full_analysis(
+                df,
+                time_col='Time',
+                intensity_col='Intensity', 
+                curve_col='CurveID',
+                group_col='GroupID',
+                normalize=normalize_data,
+                progress_callback=update_progress
+            )
+            
+            progress_bar.progress(1.0)
+            status_text.text("✅ Analysis complete!")
+            
+            # Store results in session state
+            st.session_state.global_fit_result = result
+            
+        except Exception as e:
+            st.error(f"❌ Global fitting failed: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            st.stop()
+        
+        # Display results
+        st.markdown("---")
+        st.header("📈 Results")
+        
+        # Phase 1 Results
+        st.subheader("Phase 1: Model Exploration")
+        
+        if result.model_selection_table is not None:
+            st.dataframe(
+                result.model_selection_table.style.format({
+                    'Chi-squared': '{:.4f}',
+                    'Reduced Chi-sq': '{:.4f}',
+                    'AIC': '{:.2f}',
+                    'BIC': '{:.2f}'
+                }),
+                use_container_width=True
+            )
+        
+        # Phase 2 Results
+        st.subheader("Phase 2: Unified Model Selection")
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.metric("Unified Model", result.unified_model.upper())
+            
+            st.markdown("**Per-group preferences:**")
+            for group, model in result.group_preferred_models.items():
+                emoji = "✅" if model == result.unified_model else "⬆️"
+                st.markdown(f"- {group}: {model} {emoji}")
+        
+        with col2:
+            with st.expander("📋 Selection Rationale", expanded=False):
+                st.text(result.unification_rationale)
+        
+        # Phase 3 Results
+        st.subheader("Phase 3: Final Comparative Results")
+        
+        if result.comparison_table is not None:
+            st.dataframe(
+                result.comparison_table.style.format(
+                    {col: '{:.4f}' for col in result.comparison_table.columns 
+                     if result.comparison_table[col].dtype in [np.float64, np.float32]}
+                ),
+                use_container_width=True
+            )
+        
+        # Visualizations
+        st.subheader("📊 Visualizations")
+        
+        tab1, tab2, tab3 = st.tabs(["Fitted Curves", "Residuals", "Parameter Comparison"])
+        
+        with tab1:
+            # Prepare grouped data for plotting
+            grouped_data = workflow.prepare_data(df, 'Time', 'Intensity', 'CurveID', 'GroupID')
+            if normalize_data:
+                grouped_data = {gid: workflow.normalize_curves(curves) 
+                              for gid, curves in grouped_data.items()}
+            
+            fig_fits = GlobalFitReporter.plot_group_fits(grouped_data, result.final_fits)
+            st.pyplot(fig_fits)
+        
+        with tab2:
+            fig_residuals = GlobalFitReporter.plot_residuals(grouped_data, result.final_fits)
+            st.pyplot(fig_residuals)
+        
+        with tab3:
+            # Get available global parameters
+            if result.final_fits:
+                first_fit = list(result.final_fits.values())[0]
+                global_params = [p for p, d in first_fit.parameters.items() 
+                                if d.get('is_global') and d.get('vary', True) and '_global' in p]
+                
+                if global_params:
+                    selected_param = st.selectbox("Select parameter to compare:", global_params)
+                    fig_param = GlobalFitReporter.plot_parameter_comparison(result, selected_param)
+                    st.pyplot(fig_param)
+                else:
+                    st.info("No global parameters available for comparison")
+        
+        # Download report
+        st.markdown("---")
+        st.subheader("📥 Download Results")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Text report
+            report_text = GlobalFitReporter.generate_model_selection_report(result)
+            st.download_button(
+                "📄 Download Text Report",
+                data=report_text,
+                file_name="global_fitting_report.txt",
+                mime="text/plain"
+            )
+        
+        with col2:
+            # CSV comparison table
+            if result.comparison_table is not None:
+                csv_data = result.comparison_table.to_csv(index=False)
+                st.download_button(
+                    "📊 Download Comparison Table (CSV)",
+                    data=csv_data,
+                    file_name="global_fitting_comparison.csv",
+                    mime="text/csv"
+                )
+
+# --- Page 7: Report ---
+elif page == "7. Report":
     st.header("📄 Report Generation")
     
     if not st.session_state.data_groups:

@@ -1,0 +1,159 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>FRAP Interpretive Report</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; color: #333; background-color: #f9f9f9; }
+                h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+                h2 { color: #2980b9; margin-top: 30px; }
+                table { border-collapse: collapse; width: 100%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+                th { background-color: #34495e; color: white; padding: 12px; text-align: left; }
+                td { border: 1px solid #ddd; padding: 10px; }
+                tr:nth-child(even) { background-color: #f2f2f2; }
+                .interpretation-box { background-color: #e8f6f3; border-left: 5px solid #1abc9c; padding: 15px; margin: 20px 0; }
+                .info-box { background-color: #eaf2f8; border-left: 5px solid #3498db; padding: 15px; margin: 20px 0; }
+                .warning { background-color: #fdf2e9; border-left: 5px solid #e67e22; padding: 15px; color: #d35400; }
+                .timestamp { color: #7f8c8d; font-size: 0.9em; }
+            </style>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        </head>
+        <body>
+        
+<h1>FRAP Comparative Analysis Report</h1>
+<p class='timestamp'>Generated: 2025-11-30 23:45</p>
+<p><b>Comparing Groups:</b> 265 PARGi E558A, 265 PARPi D-NTR-R153A+Y201F, 265 PARPi H428A 3X, 5305 265 E558A</p>
+<h2>1. Biological Interpretation</h2>
+<div class='info-box'><b>Reference Control Group:</b> 265 PARGi E558A</div>
+<h3>Comparison: 265 PARPi D-NTR-R153A+Y201F vs 265 PARGi E558A</h3>
+<div class='interpretation-box'><br>📊 <b>Mobile Fraction Comparison:<b><br>   265 PARGi E558A: 64.0% ± 10.2%<br>   265 PARPi D-NTR-R153A+Y201F: 26.2% ± 4.8%<br>   ✗ No significant difference in overall mobility (p=0.0514)<br><br>🔬 <b>Population Distribution Analysis:<b><br>   265 PARGi E558A:<br>      Diffusion: 100.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br>   265 PARPi D-NTR-R153A+Y201F:<br>      Diffusion: 100.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br><br>⚡ <b>Kinetic Rate Comparison:<b><br>   Fast component (weighted by abundance):<br>      265 PARGi E558A: k = 4.339 s⁻¹<br>      265 PARPi D-NTR-R153A+Y201F: k = 2.966 s⁻¹<br>      Fold change: 0.68x<br><br>🧬 <b>Biological Interpretation:<b></div>
+<h3>Comparison: 265 PARPi H428A 3X vs 265 PARGi E558A</h3>
+<div class='interpretation-box'><br>📊 <b>Mobile Fraction Comparison:<b><br>   265 PARGi E558A: 64.0% ± 10.2%<br>   265 PARPi H428A 3X: 45.1% ± 8.5%<br>   ✗ No significant difference in overall mobility (p=0.1719)<br><br>🔬 <b>Population Distribution Analysis:<b><br>   265 PARGi E558A:<br>      Diffusion: 100.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br>   265 PARPi H428A 3X:<br>      Diffusion: 0.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br><br>   💡 <b>Key Finding:<b> 265 PARPi H428A 3X shows decreased diffusing population (100.0% shift)<br><br>🧬 <b>Biological Interpretation:<b></div>
+<h3>Comparison: 5305 265 E558A vs 265 PARGi E558A</h3>
+<div class='interpretation-box'><br>📊 <b>Mobile Fraction Comparison:<b><br>   265 PARGi E558A: 64.0% ± 10.2%<br>   5305 265 E558A: 46.1% ± 5.0%<br>   ✗ No significant difference in overall mobility (p=0.0818)<br><br>🔬 <b>Population Distribution Analysis:<b><br>   265 PARGi E558A:<br>      Diffusion: 100.0%<br>      Binding: 0.0%<br>      Intermediate: 0.0%<br>   5305 265 E558A:<br>      Diffusion: 0.0%<br>      Binding: 0.0%<br>      Intermediate: 100.0%<br><br>   💡 <b>Key Finding:<b> 5305 265 E558A shows decreased diffusing population (100.0% shift)<br><br>⚡ <b>Kinetic Rate Comparison:<b><br>   Fast component (weighted by abundance):<br>      265 PARGi E558A: k = 4.339 s⁻¹<br>      5305 265 E558A: k = 0.317 s⁻¹<br>      Fold change: 0.07x<br><br>🧬 <b>Biological Interpretation:<b><br>   → 5305 265 E558A shows SLOWER kinetics within same population<br>      Binding/unbinding rates are decelerated</div>
+<h2>2. Population Heterogeneity Analysis</h2>
+<p>Are the cells in each group behaving uniformly, or are there subpopulations?</p>
+<div>                        <script type="text/javascript">window.PlotlyConfig = {MathJaxConfig: 'local'};</script>
+        <script charset="utf-8" src="https://cdn.plot.ly/plotly-3.1.1.min.js" integrity="sha256-HUEFyfiTnZJxCxur99FjbKYTvKSzwDaD3/x5TqHpFu4=" crossorigin="anonymous"></script>                <div id="854b0ccf-2d0a-482d-829b-a137aacbe97a" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script type="text/javascript">                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("854b0ccf-2d0a-482d-829b-a137aacbe97a")) {                    Plotly.newPlot(                        "854b0ccf-2d0a-482d-829b-a137aacbe97a",                        [{"hovertemplate":"group=265 PARGi E558A\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARGi E558A, -1","marker":{"color":"#000001","symbol":"circle"},"mode":"markers","name":"265 PARGi E558A, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4f7CqtDfal9I\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fqNQ2U8LYtT8AAAAAAAD4f8CULv+bvrE\u002fwJQu\u002f5u+sT8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f8CULv+bvrE\u002fAAAAAAAA+H8AAAAAAAD4f8CULv+bvrE\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4f4CuCknJd11AAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fOfFxRgwwX0AAAAAAAAD4f\u002fSUUZe+PmFA9JRRl74+YUAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4f2Qe\u002fyD9nmFAAAAAAAAA+H8AAAAAAAD4f3dbq3F9sWFAAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARGi E558A\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARGi E558A, 2","marker":{"color":"#000001","symbol":"diamond"},"mode":"markers","name":"265 PARGi E558A, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"0z0v\u002fcx3xj9Kd\u002fBFexnAP2t1lsEYc8Q\u002fWnGvX0EpwD\u002fEiW4qmS28P9XOxIPmccE\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"RGEkhxt9NkDY0DHgmdZDQOsVLGqFjThAMJ+E+ghSPUD85ri4qNVCQHcYJlsw7j9A"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARGi E558A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARGi E558A, 0","marker":{"color":"#000001","symbol":"square"},"mode":"markers","name":"265 PARGi E558A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"VpDvD7otsz9YsUT\u002fm76xP1tgWb8inbM\u002fzvBCS\u002fLctD\u002fAlC7\u002fm76xP8qULv+bvrE\u002fClaNFwf\u002fsj9daAc0dG+0P8CULv+bvrE\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"2mhOJ05DOECKgp2zhOs1QLfZThKjtThAVGtqLuRLNkBPFGiunotGQJc3a64n9EtAMPAs0sUaQECQKVfuzdpDQCeZDXnyY0NA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARGi E558A\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARGi E558A, 1","marker":{"color":"#000001","symbol":"x"},"mode":"markers","name":"265 PARGi E558A, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"RCYAmavJxz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"2z+jhvVLXUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi D-NTR-R153A+Y201F\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi D-NTR-R153A+Y201F, -1","marker":{"color":"#000002","symbol":"circle"},"mode":"markers","name":"265 PARPi D-NTR-R153A+Y201F, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi D-NTR-R153A+Y201F\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi D-NTR-R153A+Y201F, 2","marker":{"color":"#000002","symbol":"diamond"},"mode":"markers","name":"265 PARPi D-NTR-R153A+Y201F, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"UcC5x7m5wT+\u002fGXdudb3RP97chLVtGdE\u002f8XutjJNVxz8="},"xaxis":"x","y":{"dtype":"f8","bdata":"c1aRzIGyM0AS21OGpJspQKNbK0m7BylAt23UZVvuNkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi D-NTR-R153A+Y201F\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi D-NTR-R153A+Y201F, 0","marker":{"color":"#000002","symbol":"square"},"mode":"markers","name":"265 PARPi D-NTR-R153A+Y201F, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"wJQu\u002f5u+sT\u002f8ryv0gYiyP3sZqtlxbbQ\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"mJlTILLWP0ApFS0nGAxHQKVDX6L\u002fxUJA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi H428A 3X\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi H428A 3X, -1","marker":{"color":"#000003","symbol":"circle"},"mode":"markers","name":"265 PARPi H428A 3X, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fwJQu\u002f5u+sT8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fwChpyVu0YEAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi H428A 3X\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi H428A 3X, 2","marker":{"color":"#000003","symbol":"diamond"},"mode":"markers","name":"265 PARPi H428A 3X, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"MpEwDjHIuD8P0fVAS6K+PxOATfkk3rs\u002fEyZmEXKWvz8utpyKfrzBP0o85QgsAsE\u002fPA1JlckwvD8="},"xaxis":"x","y":{"dtype":"f8","bdata":"Tu2gEw2dOED198EC608xQHyZzLlHZTlAYbtz3kdoNEDaraAPykAyQA5ylagq9D5AJVelyBmQPkA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi H428A 3X\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi H428A 3X, 0","marker":{"color":"#000003","symbol":"square"},"mode":"markers","name":"265 PARPi H428A 3X, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"xEI7BfN9tD\u002fG2MVVE5iyP8KULv+bvrE\u002fLEyMz5sZtT9K2fO229uzP6j\u002fGOAR+7E\u002fR5Uu\u002f5u+sT9TDALb6layPw=="},"xaxis":"x","y":{"dtype":"f8","bdata":"YodCl1BiMkAwNCYv4eA+QKzNbTUMiUNAMaMQsWGjQkCCfmCPQXJDQKdjCagNEztA59dqFMYNMUCQHH\u002fL59I8QA=="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=265 PARPi H428A 3X\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"265 PARPi H428A 3X, 1","marker":{"color":"#000003","symbol":"x"},"mode":"markers","name":"265 PARPi H428A 3X, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"zRnHhLRpxD\u002fAlC7\u002fm76xP8CULv+bvrE\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"7zvjWyT1V0BVABZu1bpbQF8oqdM5BlxA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305 265 E558A\u003cbr\u003ecluster=-1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305 265 E558A, -1","marker":{"color":"#000004","symbol":"circle"},"mode":"markers","name":"5305 265 E558A, -1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"fEfYc4SBAUBNzp8mK9vePwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8sFS8X1YTYPwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fVKn+EYce0j8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"T2E\u002fFrngLUB7e+fL2f1VQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8VqTnNvK9BQAAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002fRK76yO4AVEAAAAAAAAD4fwAAAAAAAPh\u002fAAAAAAAA+H8AAAAAAAD4fwAAAAAAAPh\u002f"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305 265 E558A\u003cbr\u003ecluster=2\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305 265 E558A, 2","marker":{"color":"#000004","symbol":"diamond"},"mode":"markers","name":"5305 265 E558A, 2","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"uqHk\u002fkC6wD+fegkjOErGP1KRDeW8W7w\u002fl+OJezE5wj86LzbOpWbOP8Je7ohX68Y\u002fxOskWtm9wT\u002fUFYZRAl3GP9cQcpss6cY\u002fhWSc0iwRxz\u002f4tLf6VFvKP8euRYacK8M\u002fcbjkab8byD+mu\u002fzDJou6P4AvDBr1LsA\u002fOYjqA\u002fMs0D94\u002fl5B7ErKPy7IKSFnbMk\u002fOj7f48xtyD8="},"xaxis":"x","y":{"dtype":"f8","bdata":"Uz89XPafPkCeCbpJ6kw2QHgyRPGyXDtAj5QyhMNGP0Akxw5LWFw9QLE1H8BgXT9A0n5zwCzsRkDxnnbo7lw6QC7kyo8gfDdAqlIxU6h2QUDRQh5rwnY+QPamg3eE\u002fEFAhtEYc0nzN0AdNpD8SusxQHPUiFyA6TxAS9qnFlSuPECl+tn\u002fKDlAQA+iJmvs7zdARgilI2+tOUA="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305 265 E558A\u003cbr\u003ecluster=0\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305 265 E558A, 0","marker":{"color":"#000004","symbol":"square"},"mode":"markers","name":"5305 265 E558A, 0","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"QiNbkmAdtj+r8y\u002f\u002fm76xP3RKpjIbrbI\u002fjjVXi+aosj8="},"xaxis":"x","y":{"dtype":"f8","bdata":"ZtgaOZv3MUD0JCsJZ9BCQLXFjLI+hDxASBqNLPk9Q0A="},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305 265 E558A\u003cbr\u003ecluster=1\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305 265 E558A, 1","marker":{"color":"#000004","symbol":"x"},"mode":"markers","name":"5305 265 E558A, 1","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"cP+dBJ37xz95Q4HZg0rEP8CULv+bvrE\u002f9Bl\u002f8mdPvT8jzGItvOPCP\u002fwHxgwF178\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"68PGeyw\u002fWkBkpio+HYZcQALU3Rmg91hAP3nGHhGiW0AsAdVgXgJfQAD1dIWP81lA"},"yaxis":"y","type":"scatter"},{"hovertemplate":"group=5305 265 E558A\u003cbr\u003ecluster=3\u003cbr\u003eHalf Time (s)=%{x}\u003cbr\u003eMobile Fraction=%{y}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"5305 265 E558A, 3","marker":{"color":"#000004","symbol":"cross"},"mode":"markers","name":"5305 265 E558A, 3","orientation":"v","showlegend":true,"x":{"dtype":"f8","bdata":"+7ZkoGJO1D8SJlEBc3bTP9WAsseDjtI\u002fjVRq24Ry0z+Pfks7\u002fbPSPxSRBH7jDNQ\u002f"},"xaxis":"x","y":{"dtype":"f8","bdata":"PHIDXSryMkAyMpsAuIVFQLKaEuujoEhAF8d1heCAPkBHOJAsWjRNQMAiKaZniUdA"},"yaxis":"y","type":"scatter"}],                        {"template":{"data":{"candlestick":[{"decreasing":{"line":{"color":"#000033"}},"increasing":{"line":{"color":"#000032"}},"type":"candlestick"}],"contourcarpet":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"contourcarpet"}],"contour":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"contour"}],"heatmap":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"heatmap"}],"histogram2d":[{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"type":"histogram2d"}],"icicle":[{"textfont":{"color":"white"},"type":"icicle"}],"sankey":[{"textfont":{"color":"#000036"},"type":"sankey"}],"scatter":[{"marker":{"line":{"width":0}},"type":"scatter"}],"table":[{"cells":{"fill":{"color":"#000038"},"font":{"color":"#000037"},"line":{"color":"#000039"}},"header":{"fill":{"color":"#000040"},"font":{"color":"#000036"},"line":{"color":"#000039"}},"type":"table"}],"waterfall":[{"connector":{"line":{"color":"#000036","width":2}},"decreasing":{"marker":{"color":"#000033"}},"increasing":{"marker":{"color":"#000032"}},"totals":{"marker":{"color":"#000034"}},"type":"waterfall"}]},"layout":{"coloraxis":{"colorscale":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]]},"colorscale":{"diverging":[[0.0,"#000021"],[0.1,"#000022"],[0.2,"#000023"],[0.3,"#000024"],[0.4,"#000025"],[0.5,"#000026"],[0.6,"#000027"],[0.7,"#000028"],[0.8,"#000029"],[0.9,"#000030"],[1.0,"#000031"]],"sequential":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]],"sequentialminus":[[0.0,"#000011"],[0.1111111111111111,"#000012"],[0.2222222222222222,"#000013"],[0.3333333333333333,"#000014"],[0.4444444444444444,"#000015"],[0.5555555555555556,"#000016"],[0.6666666666666666,"#000017"],[0.7777777777777778,"#000018"],[0.8888888888888888,"#000019"],[1.0,"#000020"]]},"colorway":["#000001","#000002","#000003","#000004","#000005","#000006","#000007","#000008","#000009","#000010"]}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"title":{"text":"Half Time (s)"},"type":"log"},"yaxis":{"anchor":"x","domain":[0.0,1.0],"title":{"text":"Mobile Fraction"}},"legend":{"title":{"text":"group, cluster"},"tracegroupgap":0},"title":{"text":"Population Distribution: Kinetics vs Mobility"}},                        {"responsive": true}                    )                };            </script>        </div>
+<p class='warning'><b>Note:</b> 5 distinct kinetic subpopulations were detected. Treatment effects may be specific to one subpopulation.</p>
+<h2>3. Reference Database Benchmarking</h2>
+<div class='info-box'><b>Database Context:</b> </div>
+<h3>Proteins with Similar Kinetics</h3>
+<table border="1" class="dataframe table table-striped">
+  <thead>
+    <tr style="text-align: right;">
+      <th>protein_probe</th>
+      <th>class_type</th>
+      <th>deff_um2_s</th>
+      <th>mobile_fraction_pct</th>
+      <th>key_finding</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>500 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>4.0</td>
+      <td>40.0</td>
+      <td>Very large molecules show reduced mobile fraction</td>
+    </tr>
+    <tr>
+      <td>500 kDa Dextran</td>
+      <td>Inert Probe</td>
+      <td>4.0</td>
+      <td>40.0</td>
+      <td>Very large molecules show reduced mobile fraction</td>
+    </tr>
+    <tr>
+      <td>Dysferlin</td>
+      <td>Signaling Protein</td>
+      <td>NaN</td>
+      <td>40.0</td>
+      <td>Shows a large immobile fraction and slow dynamics</td>
+    </tr>
+  </tbody>
+</table>
+<h2>5. Detailed Kinetic Statistics</h2>
+<table border="1" class="dataframe table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>group</th>
+      <th>n_cells</th>
+      <th>mobile_fraction_mean</th>
+      <th>mobile_fraction_sem</th>
+      <th>population_diffusion</th>
+      <th>population_binding</th>
+      <th>population_intermediate</th>
+      <th>weighted_k_fast</th>
+      <th>weighted_k_fast_sem</th>
+      <th>weighted_k_slow</th>
+      <th>weighted_k_slow_sem</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>265 PARGi E558A</td>
+      <td>44</td>
+      <td>64.035</td>
+      <td>10.234</td>
+      <td>100.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>4.339</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>265 PARPi D-NTR-R153A+Y201F</td>
+      <td>25</td>
+      <td>26.204</td>
+      <td>4.821</td>
+      <td>100.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>2.966</td>
+      <td>0.342</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>265 PARPi H428A 3X</td>
+      <td>43</td>
+      <td>45.128</td>
+      <td>8.547</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>5305 265 E558A</td>
+      <td>53</td>
+      <td>46.059</td>
+      <td>5.006</td>
+      <td>0.000</td>
+      <td>0.000</td>
+      <td>100.000</td>
+      <td>0.317</td>
+      <td>0.000</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+  </tbody>
+</table>
+
+        <div style="margin-top: 50px; border-top: 1px solid #ccc; padding-top: 10px; text-align: center; color: #777;">
+            <p>Generated by FRAP Analysis Platform 2025</p>
+        </div>
+        </body>
+        </html>
+        
