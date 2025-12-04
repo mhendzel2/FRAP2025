@@ -50,6 +50,23 @@ def double_exponential(t, F_inf, F_0, k_fast, f_fast, k_slow):
     """
     return F_inf - (F_inf - F_0) * (f_fast * np.exp(-k_fast * t) + (1 - f_fast) * np.exp(-k_slow * t))
 
+def triple_exponential(t, F_inf, F_0, k1, f1, k2, f2, k3):
+    """
+    Triple exponential recovery for three populations.
+    F(t) = F_inf - (F_inf - F_0) * (f1 * exp(-k1 * t) + f2 * exp(-k2 * t) + (1 - f1 - f2) * exp(-k3 * t))
+    """
+    f3 = 1.0 - f1 - f2
+    return F_inf - (F_inf - F_0) * (f1 * np.exp(-k1 * t) + f2 * np.exp(-k2 * t) + f3 * np.exp(-k3 * t))
+
+def anomalous_diffusion(t, F_inf, F_0, tau_D, alpha):
+    """
+    Anomalous (subdiffusive) recovery model.
+    F(t) = F_inf - (F_inf - F_0) * exp(-(t/tau_D)^alpha)
+    alpha < 1: subdiffusion, alpha = 1: normal diffusion, alpha > 1: superdiffusion
+    """
+    t_safe = np.maximum(t, 1e-9)
+    return F_inf - (F_inf - F_0) * np.exp(-np.power(t_safe / tau_D, alpha))
+
 # --- Analysis Classes ---
 
 @dataclass
@@ -72,9 +89,13 @@ class FRAPFitter:
             'soumpasis': soumpasis_diffusion,
             'single_exp': single_exponential,
             'double_exp': double_exponential,
+            'triple_exp': triple_exponential,
+            'anomalous': anomalous_diffusion,
             # Add aliases for UI compatibility
             'single': single_exponential,
-            'double': double_exponential
+            'double': double_exponential,
+            'triple': triple_exponential,
+            'anomalous_diffusion': anomalous_diffusion
         }
 
     def fit_model(self, data: FRAPCurveData, model_name: str, p0: dict = None) -> FitResult:
@@ -98,12 +119,22 @@ class FRAPFitter:
         
         if model_name == 'soumpasis':
             params.add('tau_D', value=1.0, min=1e-6)
-        elif model_name == 'single_exp':
+        elif model_name in ('single_exp', 'single'):
             params.add('k_off', value=0.1, min=1e-6)
-        elif model_name == 'double_exp':
+        elif model_name in ('double_exp', 'double'):
             params.add('k_fast', value=1.0, min=1e-6)
             params.add('k_slow', value=0.1, min=1e-6)
             params.add('f_fast', value=0.5, min=0, max=1)
+        elif model_name in ('triple_exp', 'triple'):
+            params.add('k1', value=2.0, min=1e-6)  # Fastest component
+            params.add('k2', value=0.5, min=1e-6)  # Medium component
+            params.add('k3', value=0.1, min=1e-6)  # Slowest component
+            params.add('f1', value=0.33, min=0, max=1)  # Fraction of fastest
+            params.add('f2', value=0.33, min=0, max=1)  # Fraction of medium
+            # f3 = 1 - f1 - f2 is calculated in the model
+        elif model_name in ('anomalous', 'anomalous_diffusion'):
+            params.add('tau_D', value=1.0, min=1e-6)
+            params.add('alpha', value=0.8, min=0.1, max=2.0)  # Anomalous exponent
             
         # Override with user provided p0
         if p0:
