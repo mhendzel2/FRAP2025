@@ -804,6 +804,58 @@ class FRAPAnalysisCore:
         return A * (1 - np.exp(-(t_safe / tau)**beta)) + C
 
     @staticmethod
+    def reaction_diffusion(t, A_diff, k_diff, A_bind, k_off, C):
+        """
+        Reaction-diffusion model for proteins that both diffuse and bind.
+        
+        This model captures the interplay between free diffusion and reversible
+        binding to immobile structures (e.g., chromatin, nuclear matrix).
+        
+        I(t) = A_diff * (1 - exp(-k_diff * t)) + A_bind * (1 - exp(-k_off * t)) + C
+        
+        The recovery has two components:
+        - Fast diffusion component (A_diff, k_diff): Free protein diffusion
+        - Slow binding component (A_bind, k_off): Protein exchange at binding sites
+        
+        Parameters:
+        -----------
+        t : numpy.ndarray
+            Time points
+        A_diff : float
+            Amplitude of diffusion component (fraction of mobile pool that diffuses freely)
+        k_diff : float
+            Effective diffusion rate constant (related to D and bleach spot size)
+            k_diff ≈ 4*D/w² where D is diffusion coefficient and w is bleach radius
+        A_bind : float
+            Amplitude of binding component (fraction that exchanges via binding kinetics)
+        k_off : float
+            Dissociation rate constant (binding off-rate)
+        C : float
+            Offset (immobile fraction baseline)
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Model values at each time point
+            
+        Notes:
+        ------
+        - Total mobile fraction = A_diff + A_bind
+        - If k_diff >> k_off: diffusion-dominated regime
+        - If k_off >> k_diff: reaction-dominated regime
+        - Typically k_diff > k_off for nuclear proteins
+        
+        Biological interpretation:
+        - A_diff: Freely diffusing pool (cytoplasmic or unbound nuclear)
+        - A_bind: Transiently bound pool (exchanging at binding sites)
+        - C: Stably bound/immobile pool
+        - k_off: Residence time at binding sites (τ_res = 1/k_off)
+        """
+        diffusion_recovery = A_diff * (1 - np.exp(-k_diff * t))
+        binding_recovery = A_bind * (1 - np.exp(-k_off * t))
+        return diffusion_recovery + binding_recovery + C
+
+    @staticmethod
     def compute_r_squared(y, y_fit):
         """
         Calculate R-squared value
@@ -1216,12 +1268,496 @@ class FRAPAnalysisCore:
                              'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
             except Exception as e:
                 logging.error(f"Anomalous diffusion fit failed: {e}")
+            
+            # Reaction-Diffusion Fit
+            try:
+                # Initial guesses: [A_diff, k_diff, A_bind, k_off, C]
+                # Diffusion component is typically faster and smaller amplitude
+                # Binding component is slower with larger amplitude for nuclear proteins
+                A_diff_0 = A0 * 0.3  # 30% diffusion
+                k_diff_0 = k0 * 5    # Fast diffusion rate
+                A_bind_0 = A0 * 0.7  # 70% binding
+                k_off_0 = k0 * 0.5   # Slower binding off-rate
+                p0_rxn_diff = [A_diff_0, k_diff_0, A_bind_0, k_off_0, C0]
+                
+                # Bounds: diffusion should be faster than binding
+                bounds_rxn_diff = (
+                    [0, 1e-6, 0, 1e-6, -0.1],
+                    [max_amplitude, 50.0, max_amplitude, 10.0, max_amplitude]
+                )
+                
+                popt, pcov = curve_fit(FRAPAnalysisCore.reaction_diffusion, t_fit, intensity_fit, 
+                                       p0=p0_rxn_diff, bounds=bounds_rxn_diff, maxfev=2000)
+                fitted = FRAPAnalysisCore.reaction_diffusion(t_fit, *popt)
+                rss = np.sum((intensity_fit - fitted)**2)
+                r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+                adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_rxn_diff))
+                aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_rxn_diff))
+                aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_rxn_diff))
+                bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_rxn_diff))
+                red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_rxn_diff))
+                ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_rxn_diff))
+                
+                fits.append({'model': 'reaction_diffusion', 'func': FRAPAnalysisCore.reaction_diffusion, 'params': popt, 'pcov': pcov,
+                             'rss': rss, 'r2': r2, 'adj_r2': adj_r2, 'aic': aic, 'aicc': aicc, 'bic': bic,
+                             'red_chi2': red_chi2, 'fitted_values': fitted, 'ci': ci})
+            except Exception as e:
+                logging.error(f"Reaction-diffusion fit failed: {e}")
                 
             return fits
             
         except Exception as e:
             logging.error(f"Error in fit_all_models: {e}")
             return []
+
+    @staticmethod
+    def fit_double_exponential(time, intensity):
+        """
+        Fit only the double (2-component) exponential model to FRAP data.
+        
+        Parameters:
+        -----------
+        time : numpy.ndarray
+            Time points
+        intensity : numpy.ndarray
+            Intensity values (normalized)
+            
+        Returns:
+        --------
+        dict or None
+            Dictionary containing fitting results, or None if fitting fails
+        """
+        try:
+            # Input validation
+            if len(time) != len(intensity):
+                raise ValueError("Time and intensity arrays must have the same length")
+            
+            if len(time) < 5:
+                raise ValueError("Insufficient data points for curve fitting")
+            
+            if np.any(np.isnan(time)) or np.any(np.isnan(intensity)):
+                raise ValueError("Input data contains NaN values")
+            
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            n = len(t_fit)
+            
+            if n < 5:
+                raise ValueError("Insufficient post-bleach data points")
+            
+            # Initial guesses
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:])
+            
+            A0 = min(y_end, 1.0)
+            C0 = max(0, y_min)
+            
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+            
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)
+            C0 = min(C0, max_plateau * 0.5)
+            
+            time_span = t_fit[-1] - t_fit[0]
+            k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
+            k0 = max(1e-6, min(k0, 10.0))
+            
+            # Double exponential fit: [A1, k1, A2, k2, C]
+            A1_0 = A0 / 2
+            k1_0 = k0 * 2
+            A2_0 = A0 / 2
+            k2_0 = k0 / 2
+            p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
+            
+            max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+            bounds_double = ([0, 1e-6, 0, 1e-6, -0.1], [max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude])
+            
+            try:
+                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit, 
+                                       p0=p0_double, bounds=bounds_double, maxfev=2000)
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Strict bounds failed for double-exp, trying relaxed: {e}")
+                max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                bounds_relaxed = ([0, 1e-6, 0, 1e-6, -0.2], 
+                                  [max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                popt, pcov = curve_fit(FRAPAnalysisCore.two_component, t_fit, intensity_fit,
+                                       p0=p0_double, bounds=bounds_relaxed, maxfev=2000)
+            
+            fitted = FRAPAnalysisCore.two_component(t_fit, *popt)
+            rss = np.sum((intensity_fit - fitted)**2)
+            r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+            adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_double))
+            aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_double))
+            aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_double))
+            bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_double))
+            red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_double))
+            ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_double))
+            
+            return {
+                'model': 'double',
+                'func': FRAPAnalysisCore.two_component,
+                'params': popt,
+                'pcov': pcov,
+                'rss': rss,
+                'r2': r2,
+                'adj_r2': adj_r2,
+                'aic': aic,
+                'aicc': aicc,
+                'bic': bic,
+                'red_chi2': red_chi2,
+                'fitted_values': fitted,
+                'ci': ci,
+                'success': True
+            }
+            
+        except Exception as e:
+            logging.error(f"Double exponential fit failed: {e}")
+            return {'success': False, 'error': str(e), 'model': 'double'}
+
+    @staticmethod
+    def fit_triple_exponential(time, intensity):
+        """
+        Fit only the triple (3-component) exponential model to FRAP data.
+        
+        Parameters:
+        -----------
+        time : numpy.ndarray
+            Time points
+        intensity : numpy.ndarray
+            Intensity values (normalized)
+            
+        Returns:
+        --------
+        dict or None
+            Dictionary containing fitting results, or None if fitting fails
+        """
+        try:
+            # Input validation
+            if len(time) != len(intensity):
+                raise ValueError("Time and intensity arrays must have the same length")
+            
+            if len(time) < 7:
+                raise ValueError("Insufficient data points for triple exponential (need at least 7)")
+            
+            if np.any(np.isnan(time)) or np.any(np.isnan(intensity)):
+                raise ValueError("Input data contains NaN values")
+            
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            n = len(t_fit)
+            
+            if n < 7:
+                raise ValueError("Insufficient post-bleach data points for triple exponential")
+            
+            # Initial guesses
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:])
+            
+            A0 = min(y_end, 1.0)
+            C0 = max(0, y_min)
+            
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+            
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)
+            C0 = min(C0, max_plateau * 0.5)
+            
+            time_span = t_fit[-1] - t_fit[0]
+            k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
+            k0 = max(1e-6, min(k0, 10.0))
+            
+            # Triple exponential fit: [A1, k1, A2, k2, A3, k3, C]
+            A1_0 = A0 / 3
+            k1_0 = k0 * 3
+            A2_0 = A0 / 3
+            k2_0 = k0
+            A3_0 = A0 / 3
+            k3_0 = k0 / 3
+            p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
+            
+            max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+            bounds_triple = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -0.1], 
+                            [max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude])
+            
+            try:
+                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit,
+                                       p0=p0_triple, bounds=bounds_triple, maxfev=2000)
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Strict bounds failed for triple-exp, trying relaxed: {e}")
+                max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                bounds_relaxed = ([0, 1e-6, 0, 1e-6, 0, 1e-6, -0.2], 
+                                  [max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, 
+                                   max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                popt, pcov = curve_fit(FRAPAnalysisCore.three_component, t_fit, intensity_fit,
+                                       p0=p0_triple, bounds=bounds_relaxed, maxfev=2000)
+            
+            fitted = FRAPAnalysisCore.three_component(t_fit, *popt)
+            rss = np.sum((intensity_fit - fitted)**2)
+            r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+            adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0_triple))
+            aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0_triple))
+            aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0_triple))
+            bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0_triple))
+            red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0_triple))
+            ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0_triple))
+            
+            return {
+                'model': 'triple',
+                'func': FRAPAnalysisCore.three_component,
+                'params': popt,
+                'pcov': pcov,
+                'rss': rss,
+                'r2': r2,
+                'adj_r2': adj_r2,
+                'aic': aic,
+                'aicc': aicc,
+                'bic': bic,
+                'red_chi2': red_chi2,
+                'fitted_values': fitted,
+                'ci': ci,
+                'success': True
+            }
+            
+        except Exception as e:
+            logging.error(f"Triple exponential fit failed: {e}")
+            return {'success': False, 'error': str(e), 'model': 'triple'}
+
+    @staticmethod
+    def fit_single_exponential(time, intensity):
+        """
+        Fit only the single (1-component) exponential model to FRAP data.
+        
+        Parameters:
+        -----------
+        time : numpy.ndarray
+            Time points
+        intensity : numpy.ndarray
+            Intensity values (normalized)
+            
+        Returns:
+        --------
+        dict or None
+            Dictionary containing fitting results, or None if fitting fails
+        """
+        try:
+            # Input validation
+            if len(time) != len(intensity):
+                raise ValueError("Time and intensity arrays must have the same length")
+            
+            if len(time) < 3:
+                raise ValueError("Insufficient data points for single exponential")
+            
+            if np.any(np.isnan(time)) or np.any(np.isnan(intensity)):
+                raise ValueError("Input data contains NaN values")
+            
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            n = len(t_fit)
+            
+            if n < 3:
+                raise ValueError("Insufficient post-bleach data points")
+            
+            # Initial guesses
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:]) if len(intensity_fit) >= 3 else intensity_fit[-1]
+            
+            A0 = min(y_end, 1.0)
+            C0 = max(0, y_min)
+            
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+            
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)
+            C0 = min(C0, max_plateau * 0.5)
+            
+            time_span = t_fit[-1] - t_fit[0]
+            k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
+            k0 = max(1e-6, min(k0, 10.0))
+            
+            # Single exponential fit: [A, k, C]
+            p0 = [A0, k0, C0]
+            max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+            bounds = ([0, 1e-6, -0.1], [max_amplitude, 10.0, max_amplitude])
+            
+            try:
+                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit,
+                                       p0=p0, bounds=bounds, maxfev=2000)
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Strict bounds failed for single-exp, trying relaxed: {e}")
+                max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                bounds_relaxed = ([0, 1e-6, -0.2], [max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                popt, pcov = curve_fit(FRAPAnalysisCore.single_component, t_fit, intensity_fit,
+                                       p0=p0, bounds=bounds_relaxed, maxfev=2000)
+            
+            fitted = FRAPAnalysisCore.single_component(t_fit, *popt)
+            rss = np.sum((intensity_fit - fitted)**2)
+            r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+            adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
+            aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
+            aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0))
+            bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
+            red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
+            ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0))
+            
+            return {
+                'model': 'single',
+                'func': FRAPAnalysisCore.single_component,
+                'params': popt,
+                'pcov': pcov,
+                'rss': rss,
+                'r2': r2,
+                'adj_r2': adj_r2,
+                'aic': aic,
+                'aicc': aicc,
+                'bic': bic,
+                'red_chi2': red_chi2,
+                'fitted_values': fitted,
+                'ci': ci,
+                'success': True
+            }
+            
+        except Exception as e:
+            logging.error(f"Single exponential fit failed: {e}")
+            return {'success': False, 'error': str(e), 'model': 'single'}
+
+    @staticmethod
+    def fit_reaction_diffusion(time, intensity):
+        """
+        Fit the reaction-diffusion model to FRAP data.
+        
+        This model captures both free diffusion and reversible binding kinetics,
+        making it appropriate for nuclear proteins that interact with chromatin
+        or other immobile structures.
+        
+        Parameters:
+        -----------
+        time : numpy.ndarray
+            Time points
+        intensity : numpy.ndarray
+            Intensity values (normalized)
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing fitting results with keys:
+            - model: 'reaction_diffusion'
+            - params: [A_diff, k_diff, A_bind, k_off, C]
+            - success: bool
+            - r2, adj_r2, aic, aicc, bic, etc.
+            
+        Notes:
+        ------
+        Parameter interpretation:
+        - A_diff: Freely diffusing fraction
+        - k_diff: Diffusion rate (≈ 4*D/w² where D is diffusion coeff, w is bleach radius)
+        - A_bind: Transiently bound fraction (exchanges at binding sites)
+        - k_off: Unbinding rate constant (residence time τ = 1/k_off)
+        - C: Stably bound/immobile fraction
+        """
+        try:
+            # Input validation
+            if len(time) != len(intensity):
+                raise ValueError("Time and intensity arrays must have the same length")
+            
+            if len(time) < 5:
+                raise ValueError("Insufficient data points for reaction-diffusion fit")
+            
+            if np.any(np.isnan(time)) or np.any(np.isnan(intensity)):
+                raise ValueError("Input data contains NaN values")
+            
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            n = len(t_fit)
+            
+            if n < 5:
+                raise ValueError("Insufficient post-bleach data points")
+            
+            # Initial guesses
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:])
+            
+            A0 = min(y_end, 1.0)
+            C0 = max(0, y_min)
+            
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+            
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)
+            C0 = min(C0, max_plateau * 0.5)
+            
+            time_span = t_fit[-1] - t_fit[0]
+            k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
+            k0 = max(1e-6, min(k0, 10.0))
+            
+            # Reaction-diffusion fit: [A_diff, k_diff, A_bind, k_off, C]
+            # Diffusion is typically faster, binding is slower
+            A_diff_0 = A0 * 0.3
+            k_diff_0 = k0 * 5
+            A_bind_0 = A0 * 0.7
+            k_off_0 = k0 * 0.5
+            p0 = [A_diff_0, k_diff_0, A_bind_0, k_off_0, C0]
+            
+            max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+            bounds = ([0, 1e-6, 0, 1e-6, -0.1], [max_amplitude, 50.0, max_amplitude, 10.0, max_amplitude])
+            
+            try:
+                popt, pcov = curve_fit(FRAPAnalysisCore.reaction_diffusion, t_fit, intensity_fit,
+                                       p0=p0, bounds=bounds, maxfev=2000)
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Strict bounds failed for reaction-diffusion, trying relaxed: {e}")
+                max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                bounds_relaxed = ([0, 1e-6, 0, 1e-6, -0.2], 
+                                  [max_amplitude_relaxed, 50.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed])
+                popt, pcov = curve_fit(FRAPAnalysisCore.reaction_diffusion, t_fit, intensity_fit,
+                                       p0=p0, bounds=bounds_relaxed, maxfev=2000)
+            
+            fitted = FRAPAnalysisCore.reaction_diffusion(t_fit, *popt)
+            rss = np.sum((intensity_fit - fitted)**2)
+            r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+            adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
+            aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
+            aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0))
+            bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
+            red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
+            ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0))
+            
+            return {
+                'model': 'reaction_diffusion',
+                'func': FRAPAnalysisCore.reaction_diffusion,
+                'params': popt,
+                'pcov': pcov,
+                'rss': rss,
+                'r2': r2,
+                'adj_r2': adj_r2,
+                'aic': aic,
+                'aicc': aicc,
+                'bic': bic,
+                'red_chi2': red_chi2,
+                'fitted_values': fitted,
+                'ci': ci,
+                'success': True,
+                # Additional interpretive parameters
+                'A_diff': popt[0],
+                'k_diff': popt[1],
+                'A_bind': popt[2],
+                'k_off': popt[3],
+                'C_immobile': popt[4],
+                'residence_time': 1.0 / popt[3] if popt[3] > 0 else np.inf,
+                'diffusion_fraction': popt[0] / (popt[0] + popt[2]) if (popt[0] + popt[2]) > 0 else np.nan,
+                'binding_fraction': popt[2] / (popt[0] + popt[2]) if (popt[0] + popt[2]) > 0 else np.nan
+            }
+            
+        except Exception as e:
+            logging.error(f"Reaction-diffusion fit failed: {e}")
+            return {'success': False, 'error': str(e), 'model': 'reaction_diffusion'}
 
     @staticmethod
     def select_best_fit(fits, criterion='aicc'):

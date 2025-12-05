@@ -67,6 +67,48 @@ def anomalous_diffusion(t, F_inf, F_0, tau_D, alpha):
     t_safe = np.maximum(t, 1e-9)
     return F_inf - (F_inf - F_0) * np.exp(-np.power(t_safe / tau_D, alpha))
 
+def reaction_diffusion(t, F_inf, F_0, f_diff, k_diff, k_off):
+    """
+    Reaction-diffusion model for proteins that both diffuse and bind.
+    
+    F(t) = F_inf - (F_inf - F_0) * [f_diff * exp(-k_diff * t) + (1 - f_diff) * exp(-k_off * t)]
+    
+    This model captures:
+    - Fast diffusion component (f_diff, k_diff): Free protein diffusion
+    - Slow binding component (1-f_diff, k_off): Protein exchange at binding sites
+    
+    Parameters:
+    -----------
+    t : array
+        Time points
+    F_inf : float
+        Plateau (mobile fraction + immobile fraction baseline)
+    F_0 : float
+        Initial post-bleach intensity
+    f_diff : float
+        Fraction of mobile pool that recovers via diffusion (0-1)
+    k_diff : float
+        Diffusion rate constant (typically faster, k_diff ≈ 4*D/w²)
+    k_off : float
+        Unbinding/dissociation rate constant (typically slower)
+        Residence time at binding sites: τ = 1/k_off
+    
+    Returns:
+    --------
+    array
+        Predicted intensity values
+        
+    Notes:
+    ------
+    - If k_diff >> k_off: diffusion-dominated (freely diffusing proteins)
+    - If k_off >> k_diff: reaction-dominated (tightly bound proteins)
+    - f_diff near 1: mostly free diffusion
+    - f_diff near 0: mostly binding kinetics
+    """
+    diff_component = f_diff * np.exp(-k_diff * t)
+    bind_component = (1 - f_diff) * np.exp(-k_off * t)
+    return F_inf - (F_inf - F_0) * (diff_component + bind_component)
+
 # --- Analysis Classes ---
 
 @dataclass
@@ -91,11 +133,13 @@ class FRAPFitter:
             'double_exp': double_exponential,
             'triple_exp': triple_exponential,
             'anomalous': anomalous_diffusion,
+            'reaction_diffusion': reaction_diffusion,
             # Add aliases for UI compatibility
             'single': single_exponential,
             'double': double_exponential,
             'triple': triple_exponential,
-            'anomalous_diffusion': anomalous_diffusion
+            'anomalous_diffusion': anomalous_diffusion,
+            'rxn_diff': reaction_diffusion
         }
 
     def fit_model(self, data: FRAPCurveData, model_name: str, p0: dict = None) -> FitResult:
@@ -135,6 +179,10 @@ class FRAPFitter:
         elif model_name in ('anomalous', 'anomalous_diffusion'):
             params.add('tau_D', value=1.0, min=1e-6)
             params.add('alpha', value=0.8, min=0.1, max=2.0)  # Anomalous exponent
+        elif model_name == 'reaction_diffusion':
+            params.add('k_diff', value=1.0, min=1e-6)  # Diffusion rate constant
+            params.add('f_diff', value=0.5, min=0, max=1)  # Diffusion fraction
+            params.add('k_bind', value=0.1, min=1e-6)  # Binding rate constant
             
         # Override with user provided p0
         if p0:

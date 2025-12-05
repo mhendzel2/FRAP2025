@@ -473,12 +473,13 @@ elif page == "2. Batch Process All Groups":
             if fitting_mode == "single_model":
                 model_select = st.selectbox(
                     "Select Model",
-                    ["single", "double", "triple", "anomalous_diffusion"],
+                    ["single", "double", "triple", "anomalous_diffusion", "reaction_diffusion"],
                     format_func=lambda x: {
                         "single": "Single Exponential",
                         "double": "Double Exponential (2-Component)",
                         "triple": "Triple Exponential (3-Component)",
-                        "anomalous_diffusion": "Anomalous Diffusion"
+                        "anomalous_diffusion": "Anomalous Diffusion",
+                        "reaction_diffusion": "Reaction-Diffusion"
                     }[x]
                 )
             else:
@@ -890,12 +891,13 @@ elif page == "3. Model Fitting":
         if fitting_mode == "🎯 Single Model":
             model_select = st.selectbox(
                 "Select Model",
-                ["single", "double", "triple", "anomalous_diffusion"],
+                ["single", "double", "triple", "anomalous_diffusion", "reaction_diffusion"],
                 format_func=lambda x: {
                     "single": "Single Exponential (Simple Diffusion)",
                     "double": "Double Exponential (Two Populations)",
                     "triple": "Triple Exponential (Three Populations)",
-                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)"
+                    "anomalous_diffusion": "Anomalous Diffusion (Subdiffusive)",
+                    "reaction_diffusion": "Reaction-Diffusion (Binding/Unbinding)"
                 }[x]
             )
         
@@ -1121,6 +1123,7 @@ elif page == "3. Model Fitting":
                 - **Double Exponential**: Two populations with different mobilities (e.g., free + bound)
                 - **Triple Exponential**: Three distinct populations (e.g., free + weakly bound + strongly bound)
                 - **Anomalous Diffusion**: Subdiffusive behavior in crowded/constrained environments
+                - **Reaction-Diffusion**: Combined diffusion and binding kinetics (e.g., nuclear proteins with transient DNA binding)
                 
                 #### Key Parameters:
                 - **Mobile Fraction**: % of protein that recovers
