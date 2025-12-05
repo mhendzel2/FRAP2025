@@ -396,6 +396,24 @@ class FRAPGroupAnalyzer:
                                     ht = np.log(2) / k1 if k1 > 0 else np.nan
                                     row['half_time_fast'] = ht
                                     row['t_half'] = ht  # Required for clustering/reporting
+                            elif model_type == 'reaction_diffusion':
+                                # Reaction-Diffusion: params = [A_diff, k_diff, A_bind, k_bind, C]
+                                if len(params) >= 5:
+                                    A_diff, k_diff, A_bind, k_bind, C = params[0], params[1], params[2], params[3], params[4]
+                                    row['mobile_fraction'] = (A_diff + A_bind) * 100
+                                    row['A_diff'] = A_diff
+                                    row['k_diff'] = k_diff  # Diffusion rate constant
+                                    row['A_bind'] = A_bind
+                                    row['k_bind'] = k_bind  # Binding/exchange rate constant
+                                    row['C'] = C
+                                    row['diffusion_fraction'] = A_diff / (A_diff + A_bind) * 100 if (A_diff + A_bind) > 0 else np.nan
+                                    row['binding_fraction'] = A_bind / (A_diff + A_bind) * 100 if (A_diff + A_bind) > 0 else np.nan
+                                    row['t_half_diff'] = np.log(2) / k_diff if k_diff > 0 else np.nan
+                                    row['t_half_bind'] = np.log(2) / k_bind if k_bind > 0 else np.nan
+                                    row['t_half'] = np.log(2) / k_diff if k_diff > 0 else np.nan  # Primary t_half
+                                    row['k_fast'] = k_diff  # Alias for compatibility
+                                    row['rate_constant_fast'] = k_diff
+                                    row['half_time_fast'] = row['t_half_diff']
                             
                             feature_rows.append(row)
                         else:

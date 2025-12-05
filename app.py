@@ -461,13 +461,14 @@ elif page == "2. Batch Process All Groups":
             st.markdown("#### 🔬 Model Fitting")
             fitting_mode = st.radio(
                 "Fitting Strategy:",
-                ["compare_2_vs_3", "fit_all", "single_model"],
+                ["reaction_diffusion", "compare_2_vs_3", "fit_all", "single_model"],
                 format_func=lambda x: {
-                    "compare_2_vs_3": "📊 Compare 2-Component vs 3-Component (Recommended)",
+                    "reaction_diffusion": "🧬 Reaction-Diffusion (Recommended)",
+                    "compare_2_vs_3": "📊 Compare 2-Component vs 3-Component",
                     "fit_all": "🚀 Fit All Models & Auto-Select Best",
                     "single_model": "🎯 Single Model Only"
                 }[x],
-                help="Compare 2 vs 3: Fits both double and triple exponential to all curves for direct comparison. Fit All: Tests all models and selects best by criterion."
+                help="Reaction-Diffusion: Best for nuclear proteins with binding/unbinding dynamics. Fit All: Tests all models and selects best by criterion."
             )
             
             if fitting_mode == "single_model":
@@ -569,7 +570,81 @@ elif page == "2. Batch Process All Groups":
                     # Step 1: Model Fitting
                     with st.spinner(f"🔬 Fitting models for {group_name}..."):
                         try:
-                            if fitting_mode == "compare_2_vs_3":
+                            if fitting_mode == "reaction_diffusion":
+                                # Fit reaction-diffusion model (recommended for nuclear proteins)
+                                from frap_core import FRAPAnalysisCore
+                                
+                                rxn_diff_results = []
+                                
+                                for curve_idx, curve in enumerate(analyzer.curves):
+                                    if curve.normalized_intensity is None:
+                                        rxn_diff_results.append({'curve_idx': curve_idx, 'success': False})
+                                        continue
+                                    
+                                    time_data = curve.time
+                                    intensity_data = curve.normalized_intensity
+                                    
+                                    # Fit reaction-diffusion model
+                                    try:
+                                        rxn_fit = FRAPAnalysisCore.fit_reaction_diffusion(time_data, intensity_data)
+                                        if rxn_fit and rxn_fit.get('success', False):
+                                            params = rxn_fit.get('params', [])
+                                            # params = [A_diff, k_diff, A_bind, k_bind, C]
+                                            if len(params) >= 5:
+                                                A_diff, k_diff, A_bind, k_bind, C = params[:5]
+                                                mobile_fraction = (A_diff + A_bind) * 100
+                                                diffusion_fraction = A_diff / (A_diff + A_bind) if (A_diff + A_bind) > 0 else np.nan
+                                            else:
+                                                A_diff, k_diff, A_bind, k_bind, C = np.nan, np.nan, np.nan, np.nan, np.nan
+                                                mobile_fraction = np.nan
+                                                diffusion_fraction = np.nan
+                                            
+                                            rxn_diff_results.append({
+                                                'curve_idx': curve_idx,
+                                                'success': True,
+                                                'model': 'reaction_diffusion',
+                                                'r2': rxn_fit.get('r2', np.nan),
+                                                'adj_r2': rxn_fit.get('adj_r2', np.nan),
+                                                'aic': rxn_fit.get('aic', np.nan),
+                                                'aicc': rxn_fit.get('aicc', np.nan),
+                                                'bic': rxn_fit.get('bic', np.nan),
+                                                'params': params,
+                                                'mobile_fraction': mobile_fraction,
+                                                'diffusion_fraction': diffusion_fraction * 100 if not np.isnan(diffusion_fraction) else np.nan,
+                                                'A_diff': A_diff,
+                                                'k_diff': k_diff,
+                                                'A_bind': A_bind,
+                                                'k_bind': k_bind,
+                                                'C': C,
+                                                't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                                't_half_bind': np.log(2) / k_bind if k_bind > 0 else np.nan
+                                            })
+                                        else:
+                                            rxn_diff_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'reaction_diffusion'})
+                                    except Exception as e:
+                                        rxn_diff_results.append({'curve_idx': curve_idx, 'success': False, 'model': 'reaction_diffusion', 'error': str(e)})
+                                
+                                # Create DataFrame
+                                rxn_diff_df = pd.DataFrame([r for r in rxn_diff_results if r.get('success', False)])
+                                
+                                if not rxn_diff_df.empty:
+                                    analyzer.features = rxn_diff_df.copy()
+                                    group_results['fit_success'] = len(rxn_diff_df)
+                                    group_results['fit_failed'] = len(analyzer.curves) - len(rxn_diff_df)
+                                    
+                                    # Apply R² filter
+                                    analyzer.features, removed_count = apply_r2_filter(
+                                        analyzer.features, 
+                                        st.session_state.r2_threshold
+                                    )
+                                    group_results['r2_filtered'] = removed_count
+                                    
+                                    if removed_count > 0:
+                                        st.info(f"🔍 R² filter: Removed {removed_count} fits with R² < {st.session_state.r2_threshold}")
+                                
+                                st.success(f"✅ Reaction-Diffusion: {group_results['fit_success']} successful fits")
+                                
+                            elif fitting_mode == "compare_2_vs_3":
                                 # Fit both 2-component (double) and 3-component (triple) separately
                                 from frap_core import FRAPAnalysisCore
                                 
@@ -736,6 +811,184 @@ elif page == "2. Batch Process All Groups":
                 
                 st.success("🎉 All groups processed successfully! You can now view individual results, compare groups, or generate reports.")
                 
+                # ============================================================
+                # AUTOMATIC PARAMETER GRAPHS AND STATISTICS
+                # ============================================================
+                if fitting_mode == "reaction_diffusion" and len(selected_groups) >= 1:
+                    st.markdown("---")
+                    st.subheader("📊 Reaction-Diffusion Parameter Analysis")
+                    
+                    # Collect all group data
+                    all_group_data = []
+                    for group_name in selected_groups:
+                        analyzer = st.session_state.data_groups[group_name]
+                        if analyzer.features is not None and not analyzer.features.empty:
+                            df = analyzer.features.copy()
+                            df['Group'] = group_name
+                            all_group_data.append(df)
+                    
+                    if all_group_data:
+                        combined_df = pd.concat(all_group_data, ignore_index=True)
+                        
+                        # Define key parameters for reaction-diffusion
+                        key_params = [
+                            ('mobile_fraction', 'Mobile Fraction (%)', 'percentage'),
+                            ('k_diff', 'Diffusion Rate (k_diff, s⁻¹)', 'rate'),
+                            ('k_bind', 'Exchange Rate (k_bind, s⁻¹)', 'rate'),
+                            ('t_half_diff', 'Diffusion Half-time (s)', 'time'),
+                            ('t_half_bind', 'Binding Half-time (s)', 'time'),
+                            ('diffusion_fraction', 'Diffusion Fraction (%)', 'percentage'),
+                        ]
+                        
+                        # Find available parameters
+                        available_params = [(col, label, ptype) for col, label, ptype in key_params if col in combined_df.columns]
+                        
+                        if available_params:
+                            st.markdown("### 🧬 Key Kinetic Parameters by Group")
+                            
+                            # Summary statistics table
+                            summary_stats = []
+                            for group_name in selected_groups:
+                                group_df = combined_df[combined_df['Group'] == group_name]
+                                stats_row = {'Group': group_name, 'n': len(group_df)}
+                                for col, label, ptype in available_params:
+                                    if col in group_df.columns:
+                                        values = group_df[col].dropna()
+                                        if len(values) > 0:
+                                            stats_row[f'{label} (mean±SEM)'] = f"{values.mean():.3f} ± {values.sem():.3f}"
+                                summary_stats.append(stats_row)
+                            
+                            stats_df = pd.DataFrame(summary_stats)
+                            st.dataframe(stats_df, use_container_width=True)
+                            
+                            # Parameter distribution plots
+                            st.markdown("### 📈 Parameter Distributions")
+                            
+                            # Create subplot grid
+                            n_params = len(available_params)
+                            n_cols = min(3, n_params)
+                            n_rows = (n_params + n_cols - 1) // n_cols
+                            
+                            fig_params, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
+                            if n_rows == 1 and n_cols == 1:
+                                axes = np.array([[axes]])
+                            elif n_rows == 1:
+                                axes = axes.reshape(1, -1)
+                            elif n_cols == 1:
+                                axes = axes.reshape(-1, 1)
+                            
+                            colors = plt.cm.Set2(np.linspace(0, 1, len(selected_groups)))
+                            
+                            for idx, (col, label, ptype) in enumerate(available_params):
+                                row_idx = idx // n_cols
+                                col_idx = idx % n_cols
+                                ax = axes[row_idx, col_idx]
+                                
+                                # Box plot with individual points
+                                group_data = [combined_df[combined_df['Group'] == g][col].dropna().values for g in selected_groups]
+                                positions = range(1, len(selected_groups) + 1)
+                                
+                                bp = ax.boxplot(group_data, positions=positions, widths=0.6, patch_artist=True)
+                                for patch, color in zip(bp['boxes'], colors):
+                                    patch.set_facecolor(color)
+                                    patch.set_alpha(0.7)
+                                
+                                # Overlay individual points
+                                for pos, data, color in zip(positions, group_data, colors):
+                                    jitter = np.random.normal(0, 0.08, len(data))
+                                    ax.scatter(np.full_like(data, pos) + jitter, data, alpha=0.5, s=20, c=[color], edgecolors='black', linewidths=0.5)
+                                
+                                ax.set_xticklabels([g[:15] + '...' if len(g) > 15 else g for g in selected_groups], rotation=45, ha='right')
+                                ax.set_ylabel(label)
+                                ax.set_title(label)
+                            
+                            # Hide unused axes
+                            for idx in range(n_params, n_rows * n_cols):
+                                row_idx = idx // n_cols
+                                col_idx = idx % n_cols
+                                axes[row_idx, col_idx].set_visible(False)
+                            
+                            plt.tight_layout()
+                            st.pyplot(fig_params)
+                            plt.close(fig_params)
+                            
+                            # Statistical comparisons between groups
+                            if len(selected_groups) >= 2:
+                                st.markdown("### 📊 Statistical Comparisons Between Groups")
+                                
+                                from scipy import stats as scipy_stats
+                                
+                                stat_results = []
+                                for col, label, ptype in available_params:
+                                    if col not in combined_df.columns:
+                                        continue
+                                    
+                                    group_data = [combined_df[combined_df['Group'] == g][col].dropna().values for g in selected_groups]
+                                    
+                                    # Check if we have enough data
+                                    if all(len(d) >= 2 for d in group_data):
+                                        # Kruskal-Wallis test (non-parametric ANOVA)
+                                        if len(selected_groups) > 2:
+                                            h_stat, kw_pval = scipy_stats.kruskal(*group_data)
+                                            test_name = "Kruskal-Wallis"
+                                        else:
+                                            # Mann-Whitney U for 2 groups
+                                            u_stat, kw_pval = scipy_stats.mannwhitneyu(group_data[0], group_data[1], alternative='two-sided')
+                                            h_stat = u_stat
+                                            test_name = "Mann-Whitney U"
+                                        
+                                        significance = "***" if kw_pval < 0.001 else "**" if kw_pval < 0.01 else "*" if kw_pval < 0.05 else "ns"
+                                        
+                                        stat_results.append({
+                                            'Parameter': label,
+                                            'Test': test_name,
+                                            'Statistic': f"{h_stat:.3f}",
+                                            'p-value': f"{kw_pval:.4e}" if kw_pval < 0.0001 else f"{kw_pval:.4f}",
+                                            'Significance': significance
+                                        })
+                                
+                                if stat_results:
+                                    stat_df = pd.DataFrame(stat_results)
+                                    st.dataframe(stat_df, use_container_width=True)
+                                    
+                                    st.caption("Significance: *** p<0.001, ** p<0.01, * p<0.05, ns = not significant")
+                                    
+                                    # Highlight significant differences
+                                    sig_params = [r['Parameter'] for r in stat_results if r['Significance'] != 'ns']
+                                    if sig_params:
+                                        st.info(f"🔬 **Significant differences** detected in: {', '.join(sig_params)}")
+                                    else:
+                                        st.info("📊 No statistically significant differences detected between groups for any kinetic parameter.")
+                                        
+                                    # Pairwise comparisons if more than 2 groups
+                                    if len(selected_groups) > 2:
+                                        with st.expander("📋 Pairwise Comparisons (Dunn's post-hoc test)"):
+                                            for col, label, ptype in available_params[:3]:  # Limit to first 3 for brevity
+                                                if col not in combined_df.columns:
+                                                    continue
+                                                st.markdown(f"**{label}:**")
+                                                
+                                                pairwise_results = []
+                                                for i, g1 in enumerate(selected_groups):
+                                                    for j, g2 in enumerate(selected_groups):
+                                                        if i >= j:
+                                                            continue
+                                                        d1 = combined_df[combined_df['Group'] == g1][col].dropna()
+                                                        d2 = combined_df[combined_df['Group'] == g2][col].dropna()
+                                                        if len(d1) >= 2 and len(d2) >= 2:
+                                                            _, pval = scipy_stats.mannwhitneyu(d1, d2, alternative='two-sided')
+                                                            # Bonferroni correction
+                                                            n_comparisons = len(selected_groups) * (len(selected_groups) - 1) // 2
+                                                            pval_corrected = min(pval * n_comparisons, 1.0)
+                                                            sig = "**" if pval_corrected < 0.01 else "*" if pval_corrected < 0.05 else "ns"
+                                                            pairwise_results.append({
+                                                                'Comparison': f"{g1} vs {g2}",
+                                                                'p-value (corrected)': f"{pval_corrected:.4f}",
+                                                                'Sig': sig
+                                                            })
+                                                if pairwise_results:
+                                                    st.dataframe(pd.DataFrame(pairwise_results), use_container_width=True)
+                
                 # Display Model Comparison Results (if compare_2_vs_3 mode was used)
                 if fitting_mode == "compare_2_vs_3" and st.session_state.model_comparison_results:
                     st.markdown("---")
@@ -884,8 +1137,8 @@ elif page == "3. Model Fitting":
         # Fitting mode selection
         fitting_mode = st.radio(
             "Fitting Strategy:",
-            ["🚀 Fit All Models (Recommended)", "🎯 Single Model"],
-            help="Fit All Models: Fits single, double, triple exponential and anomalous diffusion models, then selects best based on AICc. Single Model: Fit only one specific model."
+            ["🧬 Reaction-Diffusion (Recommended)", "🚀 Fit All Models", "🎯 Single Model"],
+            help="Reaction-Diffusion: Best for nuclear proteins with binding/unbinding dynamics. Reports mobile fraction, diffusion rate, and exchange rate. Fit All: Tests all models and selects best based on AICc."
         )
         
         if fitting_mode == "🎯 Single Model":
@@ -924,7 +1177,75 @@ elif page == "3. Model Fitting":
         
         if fit_button:
             with st.spinner("🔬 Fitting models to recovery curves..."):
-                if fitting_mode == "🚀 Fit All Models (Recommended)":
+                if fitting_mode == "🧬 Reaction-Diffusion (Recommended)":
+                    # Fit reaction-diffusion model (default for nuclear proteins)
+                    from frap_core import FRAPAnalysisCore
+                    
+                    rxn_diff_results = []
+                    for curve_idx, curve in enumerate(analyzer.curves):
+                        if curve.normalized_intensity is None:
+                            rxn_diff_results.append({})
+                            continue
+                        
+                        time_data = curve.time
+                        intensity_data = curve.normalized_intensity
+                        
+                        try:
+                            rxn_fit = FRAPAnalysisCore.fit_reaction_diffusion(time_data, intensity_data)
+                            if rxn_fit and rxn_fit.get('success', False):
+                                params = rxn_fit.get('params', [])
+                                if len(params) >= 5:
+                                    A_diff, k_diff, A_bind, k_bind, C = params[:5]
+                                    mobile_fraction = (A_diff + A_bind) * 100
+                                    diffusion_fraction = A_diff / (A_diff + A_bind) if (A_diff + A_bind) > 0 else np.nan
+                                else:
+                                    A_diff, k_diff, A_bind, k_bind, C = np.nan, np.nan, np.nan, np.nan, np.nan
+                                    mobile_fraction = np.nan
+                                    diffusion_fraction = np.nan
+                                
+                                rxn_diff_results.append({
+                                    'model': 'reaction_diffusion',
+                                    'r2': rxn_fit.get('r2', np.nan),
+                                    'adj_r2': rxn_fit.get('adj_r2', np.nan),
+                                    'aic': rxn_fit.get('aic', np.nan),
+                                    'aicc': rxn_fit.get('aicc', np.nan),
+                                    'bic': rxn_fit.get('bic', np.nan),
+                                    'mobile_fraction': mobile_fraction,
+                                    'diffusion_fraction': diffusion_fraction * 100 if not np.isnan(diffusion_fraction) else np.nan,
+                                    'A_diff': A_diff,
+                                    'k_diff': k_diff,
+                                    'A_bind': A_bind,
+                                    'k_bind': k_bind,
+                                    'C': C,
+                                    't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                    't_half_bind': np.log(2) / k_bind if k_bind > 0 else np.nan,
+                                    't_half': np.log(2) / k_diff if k_diff > 0 else np.nan,  # Primary half-time
+                                    'k_fast': k_diff,  # Alias for compatibility
+                                    'rate_constant_fast': k_diff
+                                })
+                            else:
+                                rxn_diff_results.append({})
+                        except Exception as e:
+                            logger.error(f"Reaction-diffusion fit failed for curve {curve_idx}: {e}")
+                            rxn_diff_results.append({})
+                    
+                    analyzer.features = pd.DataFrame([r for r in rxn_diff_results if r])
+                    
+                    # Apply R² filter
+                    if analyzer.features is not None and not analyzer.features.empty:
+                        original_count = len(analyzer.features)
+                        analyzer.features, removed_count = apply_r2_filter(
+                            analyzer.features, 
+                            st.session_state.r2_threshold
+                        )
+                        
+                        st.success(f"✅ Successfully fitted Reaction-Diffusion model to {len(analyzer.curves)} curves!")
+                        if removed_count > 0:
+                            st.info(f"🔍 R² filter: Removed {removed_count}/{original_count} fits with R² < {st.session_state.r2_threshold}")
+                    else:
+                        st.success(f"✅ Successfully fitted Reaction-Diffusion model to {len(analyzer.curves)} curves!")
+                        
+                elif fitting_mode == "🚀 Fit All Models":
                     # Fit all models for comparison
                     analyzer.analyze_group(model_name=None)  # None triggers all models
                     
@@ -973,7 +1294,7 @@ elif page == "3. Model Fitting":
             with col_sum2:
                 if 'model' in analyzer.features.columns:
                     best_models = analyzer.features['model'].value_counts()
-                    st.metric("🏆 Most Common Model", best_models.index[0].title() if len(best_models) > 0 else "N/A")
+                    st.metric("🏆 Model", best_models.index[0].replace('_', '-').title() if len(best_models) > 0 else "N/A")
             with col_sum3:
                 if 'mobile_fraction' in analyzer.features.columns:
                     avg_mobile = analyzer.features['mobile_fraction'].mean()
@@ -983,12 +1304,35 @@ elif page == "3. Model Fitting":
                     avg_r2 = analyzer.features['r2'].mean()
                     st.metric("✨ Avg R²", f"{avg_r2:.3f}" if np.isfinite(avg_r2) else "N/A")
             
+            # Additional reaction-diffusion metrics
+            if 'k_diff' in analyzer.features.columns or 'k_bind' in analyzer.features.columns:
+                col_rd1, col_rd2, col_rd3, col_rd4 = st.columns(4)
+                with col_rd1:
+                    if 'k_diff' in analyzer.features.columns:
+                        avg_k_diff = analyzer.features['k_diff'].mean()
+                        st.metric("⚡ Avg k_diff (s⁻¹)", f"{avg_k_diff:.3f}" if np.isfinite(avg_k_diff) else "N/A")
+                with col_rd2:
+                    if 'k_bind' in analyzer.features.columns:
+                        avg_k_bind = analyzer.features['k_bind'].mean()
+                        st.metric("🔗 Avg k_bind (s⁻¹)", f"{avg_k_bind:.3f}" if np.isfinite(avg_k_bind) else "N/A")
+                with col_rd3:
+                    if 't_half_diff' in analyzer.features.columns:
+                        avg_t_half_diff = analyzer.features['t_half_diff'].mean()
+                        st.metric("⏱️ Avg t½ Diffusion (s)", f"{avg_t_half_diff:.2f}" if np.isfinite(avg_t_half_diff) else "N/A")
+                with col_rd4:
+                    if 't_half_bind' in analyzer.features.columns:
+                        avg_t_half_bind = analyzer.features['t_half_bind'].mean()
+                        st.metric("⏱️ Avg t½ Binding (s)", f"{avg_t_half_bind:.2f}" if np.isfinite(avg_t_half_bind) else "N/A")
+            
             # Model comparison table
             st.markdown("### 🔬 Model Comparison by Curve")
             
             # Create a display dataframe with selected columns
             display_cols = []
-            for col in ['model', 'r2', 'adj_r2', 'aic', 'aicc', 'bic', 'mobile_fraction', 'half_time_fast', 'k_fast']:
+            # Include reaction-diffusion specific columns
+            for col in ['model', 'r2', 'adj_r2', 'aic', 'aicc', 'bic', 'mobile_fraction', 
+                        'k_diff', 'k_bind', 't_half_diff', 't_half_bind', 'diffusion_fraction',
+                        'half_time_fast', 'k_fast', 'k_slow']:
                 if col in analyzer.features.columns:
                     display_cols.append(col)
             
@@ -999,17 +1343,25 @@ elif page == "3. Model Fitting":
                 if 'model' in display_df.columns:
                     display_df['model'] = display_df['model'].apply(lambda x: x.title() if isinstance(x, str) else x)
                 
+                # Build format dict based on available columns
+                format_dict = {}
+                if 'r2' in display_df.columns: format_dict['r2'] = '{:.4f}'
+                if 'adj_r2' in display_df.columns: format_dict['adj_r2'] = '{:.4f}'
+                if 'aic' in display_df.columns: format_dict['aic'] = '{:.2f}'
+                if 'aicc' in display_df.columns: format_dict['aicc'] = '{:.2f}'
+                if 'bic' in display_df.columns: format_dict['bic'] = '{:.2f}'
+                if 'mobile_fraction' in display_df.columns: format_dict['mobile_fraction'] = '{:.1f}'
+                if 'diffusion_fraction' in display_df.columns: format_dict['diffusion_fraction'] = '{:.1f}'
+                if 'k_diff' in display_df.columns: format_dict['k_diff'] = '{:.4f}'
+                if 'k_bind' in display_df.columns: format_dict['k_bind'] = '{:.4f}'
+                if 't_half_diff' in display_df.columns: format_dict['t_half_diff'] = '{:.2f}'
+                if 't_half_bind' in display_df.columns: format_dict['t_half_bind'] = '{:.2f}'
+                if 'half_time_fast' in display_df.columns: format_dict['half_time_fast'] = '{:.2f}'
+                if 'k_fast' in display_df.columns: format_dict['k_fast'] = '{:.4f}'
+                if 'k_slow' in display_df.columns: format_dict['k_slow'] = '{:.4f}'
+                
                 st.dataframe(
-                    display_df.style.format({
-                        'r2': '{:.4f}',
-                        'adj_r2': '{:.4f}',
-                        'aic': '{:.2f}',
-                        'aicc': '{:.2f}',
-                        'bic': '{:.2f}',
-                        'mobile_fraction': '{:.1f}',
-                        'half_time_fast': '{:.2f}',
-                        'k_fast': '{:.4f}'
-                    }),
+                    display_df.style.format(format_dict),
                     use_container_width=True,
                     height=400
                 )
