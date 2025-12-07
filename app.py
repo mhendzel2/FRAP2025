@@ -1695,6 +1695,7 @@ elif page == "6. Global Fitting":
         status_text.markdown("### Step 1: Fitting all models to all curves...")
         
         st.session_state.global_model_results = {}
+        st.session_state.global_raw_curves = {}  # Store raw curve data for plotting
         best_model_summary = []
         
         for g_idx, group_name in enumerate(selected_groups):
@@ -1702,6 +1703,7 @@ elif page == "6. Global Fitting":
             
             analyzer = st.session_state.data_groups[group_name]
             st.session_state.global_model_results[group_name] = {}
+            st.session_state.global_raw_curves[group_name] = []  # Store curves for this group
             
             model_results = {model: [] for model in all_models}
             best_per_curve = []
@@ -1712,6 +1714,14 @@ elif page == "6. Global Fitting":
                 
                 time_data = curve.time
                 intensity_data = curve.normalized_intensity
+                
+                # Store raw curve data
+                st.session_state.global_raw_curves[group_name].append({
+                    'curve_idx': curve_idx,
+                    'time': time_data.copy(),
+                    'intensity': intensity_data.copy()
+                })
+                
                 curve_fits = {}
                 
                 # Fit Single Exponential
@@ -2219,6 +2229,250 @@ elif page == "6. Global Fitting":
             st.metric("Recommended Model", recommendation)
         
         st.success("🎉 Comprehensive analysis complete! Use the tabs above to explore each model's results.")
+        
+        # ============================================================
+        # SECTION 4: Mean ± SD Recovery Curves with Fits
+        # ============================================================
+        st.markdown("---")
+        st.header("📉 Recovery Curves: Mean ± SD with Model Fits")
+        
+        st.info("**Recovery curves** show the mean ± SD of normalized intensity across all curves in each group, with the reaction-diffusion model fit overlaid.")
+        
+        # Define reaction-diffusion model function for plotting
+        def reaction_diffusion_model(t, A_diff, k_diff, A_bind, k_bind, C):
+            return A_diff * (1 - np.exp(-k_diff * t)) + A_bind * (1 - np.exp(-k_bind * t)) + C
+        
+        # Create tabs for different views
+        curve_tabs = st.tabs(["📊 By Group", "🔬 By Subpopulation (if detected)"])
+        
+        with curve_tabs[0]:
+            st.subheader("Mean ± SD Recovery Curves by Group")
+            
+            # Calculate mean and SD for each group
+            group_curve_stats = {}
+            
+            for group_name in selected_groups:
+                raw_curves = st.session_state.global_raw_curves.get(group_name, [])
+                if not raw_curves:
+                    continue
+                
+                # Find common time grid (use first curve as reference)
+                ref_time = raw_curves[0]['time']
+                
+                # Interpolate all curves to common time grid
+                interpolated = []
+                for curve_data in raw_curves:
+                    try:
+                        interp_intensity = np.interp(ref_time, curve_data['time'], curve_data['intensity'])
+                        interpolated.append(interp_intensity)
+                    except Exception:
+                        continue
+                
+                if len(interpolated) >= 2:
+                    intensity_matrix = np.array(interpolated)
+                    mean_curve = np.nanmean(intensity_matrix, axis=0)
+                    std_curve = np.nanstd(intensity_matrix, axis=0)
+                    sem_curve = std_curve / np.sqrt(len(interpolated))
+                    
+                    group_curve_stats[group_name] = {
+                        'time': ref_time,
+                        'mean': mean_curve,
+                        'std': std_curve,
+                        'sem': sem_curve,
+                        'n': len(interpolated)
+                    }
+            
+            if group_curve_stats:
+                # Plot all groups on one figure
+                n_groups = len(group_curve_stats)
+                fig_curves, axes = plt.subplots(1, n_groups, figsize=(5*n_groups, 5), squeeze=False)
+                
+                group_colors = plt.cm.Set1(np.linspace(0, 1, n_groups))
+                
+                for idx, (group_name, stats) in enumerate(group_curve_stats.items()):
+                    ax = axes[0, idx]
+                    time = stats['time']
+                    mean = stats['mean']
+                    std = stats['std']
+                    
+                    # Plot mean ± SD
+                    ax.fill_between(time, mean - std, mean + std, alpha=0.3, color=group_colors[idx], label='±1 SD')
+                    ax.plot(time, mean, '-', color=group_colors[idx], linewidth=2, label=f'Mean (n={stats["n"]})')
+                    
+                    # Get reaction-diffusion fit parameters for this group
+                    rd_df = st.session_state.global_model_results.get(group_name, {}).get('reaction_diffusion', pd.DataFrame())
+                    if not rd_df.empty:
+                        # Use median parameters for the fit line
+                        A_diff_med = rd_df['pop_diffusion'].median() / 100 * rd_df['mobile_fraction'].median() / 100
+                        k_diff_med = rd_df['k_diff'].median()
+                        A_bind_med = rd_df['pop_binding'].median() / 100 * rd_df['mobile_fraction'].median() / 100
+                        k_bind_med = rd_df['k_bind'].median()
+                        
+                        # Estimate C from mobile fraction
+                        mf_med = rd_df['mobile_fraction'].median() / 100
+                        C_med = mean[0]  # Use initial value as C
+                        
+                        # Generate fit curve
+                        t_fit = np.linspace(time.min(), time.max(), 200)
+                        try:
+                            fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                            ax.plot(t_fit, fit_curve, '--', color='darkred', linewidth=2, label='R-D Fit')
+                        except Exception:
+                            pass
+                    
+                    ax.set_xlabel('Time (s)', fontsize=10)
+                    ax.set_ylabel('Normalized Intensity', fontsize=10)
+                    ax.set_title(f'{group_name}', fontsize=11, fontweight='bold')
+                    ax.legend(loc='lower right', fontsize=8)
+                    ax.set_ylim(0, 1.1)
+                    ax.grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                st.pyplot(fig_curves)
+                plt.close(fig_curves)
+                
+                # Also create overlay plot
+                st.markdown("#### All Groups Overlaid")
+                fig_overlay, ax_overlay = plt.subplots(figsize=(10, 6))
+                
+                for idx, (group_name, stats) in enumerate(group_curve_stats.items()):
+                    time = stats['time']
+                    mean = stats['mean']
+                    std = stats['std']
+                    
+                    ax_overlay.fill_between(time, mean - std, mean + std, alpha=0.2, color=group_colors[idx])
+                    ax_overlay.plot(time, mean, '-', color=group_colors[idx], linewidth=2, label=f'{group_name} (n={stats["n"]})')
+                
+                ax_overlay.set_xlabel('Time (s)', fontsize=11)
+                ax_overlay.set_ylabel('Normalized Intensity', fontsize=11)
+                ax_overlay.set_title('Recovery Curves: All Groups (Mean ± SD)', fontsize=12, fontweight='bold')
+                ax_overlay.legend(loc='lower right', fontsize=9)
+                ax_overlay.set_ylim(0, 1.1)
+                ax_overlay.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_overlay)
+                plt.close(fig_overlay)
+        
+        with curve_tabs[1]:
+            st.subheader("Mean ± SD Recovery Curves by Subpopulation")
+            
+            if not run_subpopulations:
+                st.warning("⚠️ Subpopulation detection was not enabled. Enable it in the sidebar and re-run analysis.")
+            else:
+                # Check if subpopulations were detected
+                has_subpops = False
+                for group_name in selected_groups:
+                    rd_df = st.session_state.global_model_results.get(group_name, {}).get('reaction_diffusion', pd.DataFrame())
+                    if not rd_df.empty and 'subpopulation' in rd_df.columns:
+                        has_subpops = True
+                        break
+                
+                if not has_subpops:
+                    st.info("No subpopulations were detected in the data (BIC selected 1 component).")
+                else:
+                    # Plot subpopulation curves for each group
+                    for group_name in selected_groups:
+                        rd_df = st.session_state.global_model_results.get(group_name, {}).get('reaction_diffusion', pd.DataFrame())
+                        raw_curves = st.session_state.global_raw_curves.get(group_name, [])
+                        
+                        if rd_df.empty or 'subpopulation' not in rd_df.columns or not raw_curves:
+                            continue
+                        
+                        n_subpops = int(rd_df['n_subpopulations'].mode().iloc[0]) if 'n_subpopulations' in rd_df.columns else 1
+                        
+                        if n_subpops <= 1:
+                            continue
+                        
+                        st.markdown(f"#### {group_name} - {n_subpops} Subpopulations Detected")
+                        
+                        # Map curve indices to subpopulation labels
+                        curve_to_subpop = dict(zip(rd_df['curve_idx'], rd_df['subpopulation']))
+                        
+                        # Group curves by subpopulation
+                        subpop_curves = {i: [] for i in range(n_subpops)}
+                        ref_time = raw_curves[0]['time'] if raw_curves else None
+                        
+                        for curve_data in raw_curves:
+                            curve_idx = curve_data['curve_idx']
+                            if curve_idx in curve_to_subpop:
+                                subpop = int(curve_to_subpop[curve_idx])
+                                try:
+                                    interp_intensity = np.interp(ref_time, curve_data['time'], curve_data['intensity'])
+                                    subpop_curves[subpop].append(interp_intensity)
+                                except Exception:
+                                    continue
+                        
+                        # Calculate stats for each subpopulation
+                        subpop_stats = {}
+                        for subpop, curves in subpop_curves.items():
+                            if len(curves) >= 2:
+                                intensity_matrix = np.array(curves)
+                                subpop_stats[subpop] = {
+                                    'time': ref_time,
+                                    'mean': np.nanmean(intensity_matrix, axis=0),
+                                    'std': np.nanstd(intensity_matrix, axis=0),
+                                    'n': len(curves)
+                                }
+                        
+                        if subpop_stats:
+                            fig_subpop, ax_subpop = plt.subplots(figsize=(10, 5))
+                            subpop_colors = plt.cm.tab10(np.linspace(0, 1, n_subpops))
+                            
+                            for subpop, stats in subpop_stats.items():
+                                time = stats['time']
+                                mean = stats['mean']
+                                std = stats['std']
+                                
+                                ax_subpop.fill_between(time, mean - std, mean + std, alpha=0.2, color=subpop_colors[subpop])
+                                ax_subpop.plot(time, mean, '-', color=subpop_colors[subpop], linewidth=2, 
+                                              label=f'Subpop {subpop+1} (n={stats["n"]})')
+                                
+                                # Add R-D fit for this subpopulation
+                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                if len(subpop_df) >= 2:
+                                    A_diff_med = subpop_df['pop_diffusion'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
+                                    k_diff_med = subpop_df['k_diff'].median()
+                                    A_bind_med = subpop_df['pop_binding'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
+                                    k_bind_med = subpop_df['k_bind'].median()
+                                    C_med = mean[0]
+                                    
+                                    t_fit = np.linspace(time.min(), time.max(), 200)
+                                    try:
+                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                                        ax_subpop.plot(t_fit, fit_curve, '--', color=subpop_colors[subpop], linewidth=1.5, alpha=0.8)
+                                    except Exception:
+                                        pass
+                            
+                            ax_subpop.set_xlabel('Time (s)', fontsize=11)
+                            ax_subpop.set_ylabel('Normalized Intensity', fontsize=11)
+                            ax_subpop.set_title(f'{group_name}: Subpopulation Recovery Curves', fontsize=12, fontweight='bold')
+                            ax_subpop.legend(loc='lower right', fontsize=9)
+                            ax_subpop.set_ylim(0, 1.1)
+                            ax_subpop.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                            st.pyplot(fig_subpop)
+                            plt.close(fig_subpop)
+                            
+                            # Show subpopulation statistics
+                            subpop_param_summary = []
+                            for subpop in range(n_subpops):
+                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                if len(subpop_df) >= 1:
+                                    subpop_param_summary.append({
+                                        'Subpopulation': f'Subpop {subpop+1}',
+                                        'N': len(subpop_df),
+                                        'Mobile Fraction (%)': f"{subpop_df['mobile_fraction'].mean():.1f} ± {subpop_df['mobile_fraction'].std():.1f}",
+                                        'k_diff (s⁻¹)': f"{subpop_df['k_diff'].mean():.3f} ± {subpop_df['k_diff'].std():.3f}",
+                                        'k_bind (s⁻¹)': f"{subpop_df['k_bind'].mean():.3f} ± {subpop_df['k_bind'].std():.3f}",
+                                        'Diffusion Pop (%)': f"{subpop_df['pop_diffusion'].mean():.1f} ± {subpop_df['pop_diffusion'].std():.1f}",
+                                    })
+                            
+                            if subpop_param_summary:
+                                st.markdown("**Subpopulation Parameters (Mean ± SD):**")
+                                st.dataframe(pd.DataFrame(subpop_param_summary), use_container_width=True)
+        
+        # Store raw curves in session state for HTML report
+        st.session_state.global_group_curve_stats = group_curve_stats if 'group_curve_stats' in dir() else {}
         
         # Store recommendation in session state
         st.session_state.global_recommendation = recommendation
