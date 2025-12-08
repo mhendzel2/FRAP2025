@@ -2383,7 +2383,9 @@ elif page == "6. Global Fitting":
                         if n_subpops <= 1:
                             continue
                         
-                        st.markdown(f"#### {group_name} - {n_subpops} Subpopulations Detected")
+                        total_curves = len(rd_df)
+                        st.markdown(f"### 🔬 {group_name} - {n_subpops} Subpopulations Detected")
+                        st.markdown(f"*Total curves analyzed: {total_curves}*")
                         
                         # Map curve indices to subpopulation labels
                         curve_to_subpop = dict(zip(rd_df['curve_idx'], rd_df['subpopulation']))
@@ -2405,31 +2407,88 @@ elif page == "6. Global Fitting":
                         # Calculate stats for each subpopulation
                         subpop_stats = {}
                         for subpop, curves in subpop_curves.items():
-                            if len(curves) >= 2:
+                            if len(curves) >= 1:
                                 intensity_matrix = np.array(curves)
                                 subpop_stats[subpop] = {
                                     'time': ref_time,
                                     'mean': np.nanmean(intensity_matrix, axis=0),
-                                    'std': np.nanstd(intensity_matrix, axis=0),
-                                    'n': len(curves)
+                                    'std': np.nanstd(intensity_matrix, axis=0) if len(curves) > 1 else np.zeros_like(ref_time),
+                                    'n': len(curves),
+                                    'proportion': len(curves) / total_curves * 100
                                 }
                         
                         if subpop_stats:
-                            fig_subpop, ax_subpop = plt.subplots(figsize=(10, 5))
-                            subpop_colors = plt.cm.tab10(np.linspace(0, 1, n_subpops))
+                            subpop_colors = plt.cm.tab10(np.linspace(0, 1, max(n_subpops, 3)))
                             
-                            for subpop, stats in subpop_stats.items():
+                            # ============================================
+                            # SECTION A: Population Proportion Summary
+                            # ============================================
+                            st.markdown("#### 📊 Population Distribution")
+                            
+                            # Create pie chart and bar chart side by side
+                            fig_dist, (ax_pie, ax_bar) = plt.subplots(1, 2, figsize=(12, 4))
+                            
+                            # Pie chart
+                            proportions = [subpop_stats[s]['proportion'] for s in sorted(subpop_stats.keys())]
+                            labels = [f'Subpop {s+1}\n({subpop_stats[s]["n"]} curves, {subpop_stats[s]["proportion"]:.1f}%)' 
+                                     for s in sorted(subpop_stats.keys())]
+                            colors_pie = [subpop_colors[s] for s in sorted(subpop_stats.keys())]
+                            
+                            wedges, texts, autotexts = ax_pie.pie(proportions, labels=None, colors=colors_pie,
+                                                                   autopct='%1.1f%%', startangle=90,
+                                                                   explode=[0.02]*len(proportions))
+                            ax_pie.legend(wedges, labels, title="Subpopulations", loc="center left", 
+                                         bbox_to_anchor=(1, 0, 0.5, 1), fontsize=9)
+                            ax_pie.set_title('Population Distribution', fontsize=11, fontweight='bold')
+                            
+                            # Bar chart with counts
+                            subpop_names = [f'Subpop {s+1}' for s in sorted(subpop_stats.keys())]
+                            counts = [subpop_stats[s]['n'] for s in sorted(subpop_stats.keys())]
+                            bars = ax_bar.bar(subpop_names, counts, color=colors_pie, edgecolor='black', alpha=0.8)
+                            ax_bar.set_ylabel('Number of Curves', fontsize=10)
+                            ax_bar.set_title('Curve Count by Subpopulation', fontsize=11, fontweight='bold')
+                            
+                            # Add count labels on bars
+                            for bar, count, prop in zip(bars, counts, proportions):
+                                ax_bar.annotate(f'{count}\n({prop:.1f}%)', 
+                                               xy=(bar.get_x() + bar.get_width()/2, bar.get_height()),
+                                               ha='center', va='bottom', fontsize=9, fontweight='bold')
+                            
+                            ax_bar.set_ylim(0, max(counts) * 1.2)
+                            plt.tight_layout()
+                            st.pyplot(fig_dist)
+                            plt.close(fig_dist)
+                            
+                            # ============================================
+                            # SECTION B: Individual Subpopulation Plots
+                            # ============================================
+                            st.markdown("#### 📈 Individual Subpopulation Recovery Curves")
+                            
+                            # Create individual plots for each subpopulation
+                            n_cols = min(n_subpops, 3)
+                            n_rows = (n_subpops + n_cols - 1) // n_cols
+                            fig_indiv, axes_indiv = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows), squeeze=False)
+                            
+                            for idx, subpop in enumerate(sorted(subpop_stats.keys())):
+                                row_idx = idx // n_cols
+                                col_idx = idx % n_cols
+                                ax = axes_indiv[row_idx, col_idx]
+                                
+                                stats = subpop_stats[subpop]
                                 time = stats['time']
                                 mean = stats['mean']
                                 std = stats['std']
                                 
-                                ax_subpop.fill_between(time, mean - std, mean + std, alpha=0.2, color=subpop_colors[subpop])
-                                ax_subpop.plot(time, mean, '-', color=subpop_colors[subpop], linewidth=2, 
-                                              label=f'Subpop {subpop+1} (n={stats["n"]})')
+                                # Plot mean ± SD
+                                ax.fill_between(time, mean - std, mean + std, alpha=0.3, color=subpop_colors[subpop])
+                                ax.plot(time, mean, '-', color=subpop_colors[subpop], linewidth=2.5, 
+                                       label=f'Mean ± SD (n={stats["n"]})')
                                 
-                                # Add R-D fit for this subpopulation
+                                # Get kinetic parameters for this subpopulation
                                 subpop_df = rd_df[rd_df['subpopulation'] == subpop]
-                                if len(subpop_df) >= 2:
+                                
+                                # Add R-D fit
+                                if len(subpop_df) >= 1:
                                     A_diff_med = subpop_df['pop_diffusion'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
                                     k_diff_med = subpop_df['k_diff'].median()
                                     A_bind_med = subpop_df['pop_binding'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
@@ -2439,37 +2498,144 @@ elif page == "6. Global Fitting":
                                     t_fit = np.linspace(time.min(), time.max(), 200)
                                     try:
                                         fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
-                                        ax_subpop.plot(t_fit, fit_curve, '--', color=subpop_colors[subpop], linewidth=1.5, alpha=0.8)
+                                        ax.plot(t_fit, fit_curve, '--', color='darkred', linewidth=2, label='R-D Model Fit')
+                                        
+                                        # Calculate half-time from fit
+                                        plateau = fit_curve[-1]
+                                        half_recovery = (C_med + plateau) / 2
+                                        half_time_idx = np.argmin(np.abs(fit_curve - half_recovery))
+                                        t_half = t_fit[half_time_idx]
+                                        
+                                        # Add annotation with key parameters
+                                        mf = subpop_df['mobile_fraction'].median()
+                                        textstr = f't½ ≈ {t_half:.2f}s\nMF: {mf:.1f}%'
+                                        ax.text(0.95, 0.15, textstr, transform=ax.transAxes, fontsize=9,
+                                               verticalalignment='bottom', horizontalalignment='right',
+                                               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+                                    except Exception:
+                                        pass
+                                
+                                ax.set_xlabel('Time (s)', fontsize=10)
+                                ax.set_ylabel('Normalized Intensity', fontsize=10)
+                                ax.set_title(f'Subpopulation {subpop+1} ({stats["proportion"]:.1f}% of total)', 
+                                            fontsize=11, fontweight='bold', color=subpop_colors[subpop])
+                                ax.legend(loc='lower right', fontsize=8)
+                                ax.set_ylim(0, 1.15)
+                                ax.grid(True, alpha=0.3)
+                            
+                            # Hide empty subplots
+                            for idx in range(n_subpops, n_rows * n_cols):
+                                row_idx = idx // n_cols
+                                col_idx = idx % n_cols
+                                axes_indiv[row_idx, col_idx].set_visible(False)
+                            
+                            plt.tight_layout()
+                            st.pyplot(fig_indiv)
+                            plt.close(fig_indiv)
+                            
+                            # ============================================
+                            # SECTION C: Overlay Comparison Plot
+                            # ============================================
+                            st.markdown("#### 🔄 Subpopulation Comparison (Overlay)")
+                            
+                            fig_overlay, ax_overlay = plt.subplots(figsize=(10, 6))
+                            
+                            for subpop in sorted(subpop_stats.keys()):
+                                stats = subpop_stats[subpop]
+                                time = stats['time']
+                                mean = stats['mean']
+                                std = stats['std']
+                                
+                                ax_overlay.fill_between(time, mean - std, mean + std, alpha=0.15, color=subpop_colors[subpop])
+                                ax_overlay.plot(time, mean, '-', color=subpop_colors[subpop], linewidth=2.5, 
+                                               label=f'Subpop {subpop+1} ({stats["proportion"]:.1f}%, n={stats["n"]})')
+                                
+                                # Add R-D fit
+                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                if len(subpop_df) >= 1:
+                                    A_diff_med = subpop_df['pop_diffusion'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
+                                    k_diff_med = subpop_df['k_diff'].median()
+                                    A_bind_med = subpop_df['pop_binding'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
+                                    k_bind_med = subpop_df['k_bind'].median()
+                                    C_med = mean[0]
+                                    
+                                    t_fit = np.linspace(time.min(), time.max(), 200)
+                                    try:
+                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                                        ax_overlay.plot(t_fit, fit_curve, '--', color=subpop_colors[subpop], linewidth=1.5, alpha=0.7)
                                     except Exception:
                                         pass
                             
-                            ax_subpop.set_xlabel('Time (s)', fontsize=11)
-                            ax_subpop.set_ylabel('Normalized Intensity', fontsize=11)
-                            ax_subpop.set_title(f'{group_name}: Subpopulation Recovery Curves', fontsize=12, fontweight='bold')
-                            ax_subpop.legend(loc='lower right', fontsize=9)
-                            ax_subpop.set_ylim(0, 1.1)
-                            ax_subpop.grid(True, alpha=0.3)
+                            ax_overlay.set_xlabel('Time (s)', fontsize=11)
+                            ax_overlay.set_ylabel('Normalized Intensity', fontsize=11)
+                            ax_overlay.set_title(f'{group_name}: All Subpopulations Compared', fontsize=12, fontweight='bold')
+                            ax_overlay.legend(loc='lower right', fontsize=10)
+                            ax_overlay.set_ylim(0, 1.15)
+                            ax_overlay.grid(True, alpha=0.3)
                             plt.tight_layout()
-                            st.pyplot(fig_subpop)
-                            plt.close(fig_subpop)
+                            st.pyplot(fig_overlay)
+                            plt.close(fig_overlay)
                             
-                            # Show subpopulation statistics
+                            # ============================================
+                            # SECTION D: Comprehensive Kinetic Properties Table
+                            # ============================================
+                            st.markdown("#### 📋 Subpopulation Kinetic Properties")
+                            
                             subpop_param_summary = []
-                            for subpop in range(n_subpops):
+                            for subpop in sorted(subpop_stats.keys()):
                                 subpop_df = rd_df[rd_df['subpopulation'] == subpop]
                                 if len(subpop_df) >= 1:
+                                    # Calculate half-times from rate constants
+                                    k_diff_mean = subpop_df['k_diff'].mean()
+                                    k_bind_mean = subpop_df['k_bind'].mean()
+                                    t_half_diff = np.log(2) / k_diff_mean if k_diff_mean > 0 else np.nan
+                                    t_half_bind = np.log(2) / k_bind_mean if k_bind_mean > 0 else np.nan
+                                    
+                                    # Residence times (1/k)
+                                    tau_diff = 1 / k_diff_mean if k_diff_mean > 0 else np.nan
+                                    tau_bind = 1 / k_bind_mean if k_bind_mean > 0 else np.nan
+                                    
+                                    n_curves = len(subpop_df)
+                                    proportion = n_curves / total_curves * 100
+                                    
                                     subpop_param_summary.append({
                                         'Subpopulation': f'Subpop {subpop+1}',
-                                        'N': len(subpop_df),
-                                        'Mobile Fraction (%)': f"{subpop_df['mobile_fraction'].mean():.1f} ± {subpop_df['mobile_fraction'].std():.1f}",
-                                        'k_diff (s⁻¹)': f"{subpop_df['k_diff'].mean():.3f} ± {subpop_df['k_diff'].std():.3f}",
-                                        'k_bind (s⁻¹)': f"{subpop_df['k_bind'].mean():.3f} ± {subpop_df['k_bind'].std():.3f}",
-                                        'Diffusion Pop (%)': f"{subpop_df['pop_diffusion'].mean():.1f} ± {subpop_df['pop_diffusion'].std():.1f}",
+                                        'N (curves)': n_curves,
+                                        'Proportion (%)': f'{proportion:.1f}',
+                                        'Mobile Fraction (%)': f"{subpop_df['mobile_fraction'].mean():.1f} ± {subpop_df['mobile_fraction'].std():.1f}" if n_curves > 1 else f"{subpop_df['mobile_fraction'].mean():.1f}",
+                                        'k_diff (s⁻¹)': f"{k_diff_mean:.4f} ± {subpop_df['k_diff'].std():.4f}" if n_curves > 1 else f"{k_diff_mean:.4f}",
+                                        't½_diff (s)': f"{t_half_diff:.2f}",
+                                        'τ_diff (s)': f"{tau_diff:.2f}",
+                                        'k_bind (s⁻¹)': f"{k_bind_mean:.4f} ± {subpop_df['k_bind'].std():.4f}" if n_curves > 1 else f"{k_bind_mean:.4f}",
+                                        't½_bind (s)': f"{t_half_bind:.2f}",
+                                        'τ_bind (s)': f"{tau_bind:.2f}",
+                                        'Diffusion Pop (%)': f"{subpop_df['pop_diffusion'].mean():.1f} ± {subpop_df['pop_diffusion'].std():.1f}" if n_curves > 1 else f"{subpop_df['pop_diffusion'].mean():.1f}",
+                                        'Binding Pop (%)': f"{subpop_df['pop_binding'].mean():.1f} ± {subpop_df['pop_binding'].std():.1f}" if n_curves > 1 else f"{subpop_df['pop_binding'].mean():.1f}",
                                     })
                             
                             if subpop_param_summary:
-                                st.markdown("**Subpopulation Parameters (Mean ± SD):**")
-                                st.dataframe(pd.DataFrame(subpop_param_summary), use_container_width=True)
+                                df_params = pd.DataFrame(subpop_param_summary)
+                                st.dataframe(df_params, use_container_width=True, hide_index=True)
+                                
+                                # Add explanation of parameters
+                                with st.expander("📖 Parameter Definitions"):
+                                    st.markdown("""
+                                    | Parameter | Description |
+                                    |-----------|-------------|
+                                    | **N (curves)** | Number of recovery curves assigned to this subpopulation |
+                                    | **Proportion (%)** | Percentage of total curves belonging to this subpopulation |
+                                    | **Mobile Fraction (%)** | Percentage of fluorescence that recovers (plateau level × 100) |
+                                    | **k_diff (s⁻¹)** | Diffusion rate constant |
+                                    | **t½_diff (s)** | Diffusion half-time = ln(2)/k_diff |
+                                    | **τ_diff (s)** | Diffusion residence time = 1/k_diff |
+                                    | **k_bind (s⁻¹)** | Binding/unbinding rate constant |
+                                    | **t½_bind (s)** | Binding half-time = ln(2)/k_bind |
+                                    | **τ_bind (s)** | Binding residence time = 1/k_bind |
+                                    | **Diffusion Pop (%)** | Proportion of mobile fraction due to pure diffusion |
+                                    | **Binding Pop (%)** | Proportion of mobile fraction due to binding kinetics |
+                                    """)
+                            
+                            st.markdown("---")
         
         # Store raw curves in session state for HTML report
         st.session_state.global_group_curve_stats = group_curve_stats if 'group_curve_stats' in dir() else {}
