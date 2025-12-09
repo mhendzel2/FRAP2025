@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import logging
 from io import BytesIO
+import base64
 import zipfile
 import tempfile
 import os
@@ -2238,6 +2239,18 @@ elif page == "6. Global Fitting":
         
         st.info("**Recovery curves** show the mean ± SD of normalized intensity across all curves in each group, with the reaction-diffusion model fit overlaid.")
         
+        # Initialize storage for report images and stats
+        st.session_state.global_plot_images = {}
+        st.session_state.global_subpop_stats = []
+        
+        # Helper function to save plot to base64
+        def save_plot_to_base64(fig):
+            buf = BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+            buf.seek(0)
+            img_str = base64.b64encode(buf.read()).decode('utf-8')
+            return img_str
+
         # Define reaction-diffusion model function for plotting
         def reaction_diffusion_model(t, A_diff, k_diff, A_bind, k_bind, C):
             return A_diff * (1 - np.exp(-k_diff * t)) + A_bind * (1 - np.exp(-k_bind * t)) + C
@@ -2329,6 +2342,8 @@ elif page == "6. Global Fitting":
                 
                 plt.tight_layout()
                 st.pyplot(fig_curves)
+                # Save figure for report
+                st.session_state.global_plot_images['group_curves'] = save_plot_to_base64(fig_curves)
                 plt.close(fig_curves)
                 
                 # Also create overlay plot
@@ -2351,6 +2366,8 @@ elif page == "6. Global Fitting":
                 ax_overlay.grid(True, alpha=0.3)
                 plt.tight_layout()
                 st.pyplot(fig_overlay)
+                # Save figure for report
+                st.session_state.global_plot_images['group_overlay'] = save_plot_to_base64(fig_overlay)
                 plt.close(fig_overlay)
         
         with curve_tabs[1]:
@@ -2457,6 +2474,8 @@ elif page == "6. Global Fitting":
                             ax_bar.set_ylim(0, max(counts) * 1.2)
                             plt.tight_layout()
                             st.pyplot(fig_dist)
+                            # Save figure for report
+                            st.session_state.global_plot_images[f'subpop_dist_{group_name}'] = save_plot_to_base64(fig_dist)
                             plt.close(fig_dist)
                             
                             # ============================================
@@ -2531,6 +2550,8 @@ elif page == "6. Global Fitting":
                             
                             plt.tight_layout()
                             st.pyplot(fig_indiv)
+                            # Save figure for report
+                            st.session_state.global_plot_images[f'subpop_indiv_{group_name}'] = save_plot_to_base64(fig_indiv)
                             plt.close(fig_indiv)
                             
                             # ============================================
@@ -2574,6 +2595,8 @@ elif page == "6. Global Fitting":
                             ax_overlay.grid(True, alpha=0.3)
                             plt.tight_layout()
                             st.pyplot(fig_overlay)
+                            # Save figure for report
+                            st.session_state.global_plot_images[f'subpop_overlay_{group_name}'] = save_plot_to_base64(fig_overlay)
                             plt.close(fig_overlay)
                             
                             # ============================================
@@ -2616,6 +2639,12 @@ elif page == "6. Global Fitting":
                             if subpop_param_summary:
                                 df_params = pd.DataFrame(subpop_param_summary)
                                 st.dataframe(df_params, use_container_width=True, hide_index=True)
+                                
+                                # Store stats for report
+                                st.session_state.global_subpop_stats.append({
+                                    'group': group_name,
+                                    'stats': subpop_param_summary
+                                })
                                 
                                 # Add explanation of parameters
                                 with st.expander("📖 Parameter Definitions"):
@@ -2815,6 +2844,59 @@ elif page == "6. Global Fitting":
             
             html_parts.append("<hr/>")
         
+        # Recovery Curves Section
+        if 'global_plot_images' in st.session_state and st.session_state.global_plot_images:
+            html_parts.append("<h2>📉 Recovery Curves Analysis</h2>")
+            
+            # Group Level Plots
+            if 'group_curves' in st.session_state.global_plot_images:
+                html_parts.append("<h3>Group Recovery Curves (Mean ± SD)</h3>")
+                img = st.session_state.global_plot_images['group_curves']
+                html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+            
+            if 'group_overlay' in st.session_state.global_plot_images:
+                html_parts.append("<h3>All Groups Overlay</h3>")
+                img = st.session_state.global_plot_images['group_overlay']
+                html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+            
+            # Subpopulation Plots & Stats
+            if 'global_subpop_stats' in st.session_state and st.session_state.global_subpop_stats:
+                html_parts.append("<h2>🔬 Detailed Subpopulation Analysis</h2>")
+                
+                for item in st.session_state.global_subpop_stats:
+                    group_name = item['group']
+                    stats_list = item['stats']
+                    
+                    html_parts.append(f"<h3>{group_name} Subpopulations</h3>")
+                    
+                    # Population Distribution
+                    dist_key = f'subpop_dist_{group_name}'
+                    if dist_key in st.session_state.global_plot_images:
+                        html_parts.append("<h4>Population Distribution</h4>")
+                        img = st.session_state.global_plot_images[dist_key]
+                        html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; margin-bottom:20px;">')
+                    
+                    # Individual Plots
+                    indiv_key = f'subpop_indiv_{group_name}'
+                    if indiv_key in st.session_state.global_plot_images:
+                        html_parts.append("<h4>Individual Subpopulation Curves</h4>")
+                        img = st.session_state.global_plot_images[indiv_key]
+                        html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; margin-bottom:20px;">')
+                    
+                    # Overlay Plot
+                    overlay_key = f'subpop_overlay_{group_name}'
+                    if overlay_key in st.session_state.global_plot_images:
+                        html_parts.append("<h4>Subpopulation Comparison</h4>")
+                        img = st.session_state.global_plot_images[overlay_key]
+                        html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; margin-bottom:20px;">')
+                    
+                    # Stats Table
+                    if stats_list:
+                        df_stats = pd.DataFrame(stats_list)
+                        html_parts.append("<h4>Kinetic Parameters</h4>")
+                        html_parts.append(df_stats.to_html(index=False, classes='data-table'))
+                        html_parts.append("<br/><hr/>")
+
         # Subpopulation summary if enabled
         if subpop_enabled:
             html_parts.append("<h2>🔍 Subpopulation Analysis Summary</h2>")
