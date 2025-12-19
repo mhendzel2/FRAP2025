@@ -27,6 +27,29 @@ from frap_pde_solver import (
 )
 
 
+def _aic(n: int, rss: float, k: int) -> float:
+    n = int(n)
+    k = int(k)
+    rss = float(rss)
+    if n <= 0:
+        return float('nan')
+    return n * float(np.log(max(rss, 1e-30) / n)) + 2.0 * k
+
+
+def _summarize_t_half(time: np.ndarray, curve: np.ndarray) -> float:
+    """Return approximate half-time for a monotone-ish recovery curve."""
+    time = np.asarray(time, dtype=float)
+    curve = np.asarray(curve, dtype=float)
+    if len(time) == 0 or len(curve) == 0 or len(time) != len(curve):
+        return float('nan')
+
+    y0 = float(curve[0])
+    yinf = float(np.mean(curve[-min(len(curve), 5):]))
+    target = y0 + 0.5 * (yinf - y0)
+    idx = np.where(curve >= target)[0]
+    return float(time[idx[0]]) if len(idx) else float('nan')
+
+
 @dataclass(frozen=True)
 class MultiSpotDataset:
     """One FRAP acquisition for global multi-spot fitting."""
@@ -93,7 +116,7 @@ def _prepare_dataset(ds: MultiSpotDataset) -> Dict[str, Any]:
 def global_multi_spot_fit(
     datasets: Sequence[MultiSpotDataset],
     *,
-    model: str = "single_binding",
+    model: str = "compare",
     initial: Optional[Sequence[float]] = None,
     method: str = "Nelder-Mead",
 ) -> Dict[str, Any]:
@@ -107,9 +130,12 @@ def global_multi_spot_fit(
     ----------
     datasets:
         A list of acquisitions with different bleach radii.
-    model:
-        - 'single_binding': shared (D, k_on, k_off) using a coupled U+V model
-        - 'diffusion_only': shared (D)
+    model (5 options):
+        - 'diffusion_only': shared (D) using original scalar PDE
+        - 'reaction_diffusion': shared (D, k_on, k_off) using original scalar PDE
+        - 'reaction_diffusion_immobile': shared (D, k_on, k_off, immobile_fraction) using original scalar PDE
+        - 'fast_exchange_plus_specific': shared (D_eff, k_on, k_off) using coupled solver (reduced vs 2-binding)
+        - 'two_binding': shared (D, k_on1, k_off1, k_on2, k_off2) using coupled solver
     initial:
         Optional initial guess vector.
     method:
@@ -127,102 +153,298 @@ def global_multi_spot_fit(
     if len(datasets) < 2:
         raise ValueError("Provide at least 2 datasets (different spot sizes) for global fitting")
 
+    model = str(model)
+    if model in {"compare", "all"}:
+        return global_multi_spot_compare_models(datasets, method=method)
+
     prepared = [_prepare_dataset(ds) for ds in datasets]
 
-    solvers = [
+    scalar_solvers = [
+        FiniteDifferenceSolver(p["cell_mask"], p["bleach_mask"], pixel_size=p["pixel_size"])
+        for p in prepared
+    ]
+    coupled_solvers = [
         CoupledPDESolver(p["cell_mask"], p["bleach_mask"], pixel_size=p["pixel_size"])
         for p in prepared
     ]
 
-    model = str(model)
-    if model not in {"single_binding", "diffusion_only"}:
-        raise ValueError("model must be 'single_binding' or 'diffusion_only'")
+    valid = {
+        "diffusion_only",
+        "reaction_diffusion",
+        "reaction_diffusion_immobile",
+        "fast_exchange_plus_specific",
+        "two_binding",
+    }
+    if model not in valid:
+        raise ValueError(f"model must be one of: {sorted(valid)}")
 
+    # Define objective per model
     if model == "diffusion_only":
         x0 = [1.0] if initial is None else list(initial)
+        k_params = 1
 
         def obj(x: Sequence[float]) -> float:
             D = float(x[0])
             if D <= 0:
                 return 1e12
             rss = 0.0
-            for p, solver in zip(prepared, solvers, strict=False):
+            for p, solver in zip(prepared, scalar_solvers, strict=False):
                 sim = solver.simulate(
-                    CoupledPDEParameters(D=D, k_on1=0.0, k_off1=0.0, k_on2=0.0, k_off2=0.0),
+                    PDEParameters(D=D, k_on=0.0, k_off=0.0, immobile_fraction=0.0),
                     p["t"],
-                    bleach_depth=p["bleach_depth"],
+                    bleach_depth=float(p["bleach_depth"]),
                 )
-                rss += float(np.sum((p["y"] - sim["recovery"]) ** 2))
+                rss += float(np.sum((p["y"] - np.asarray(sim["recovery_curve"])) ** 2))
             return rss
 
-    else:
+    elif model == "reaction_diffusion":
         x0 = [1.0, 0.1, 0.1] if initial is None else list(initial)
+        k_params = 3
 
         def obj(x: Sequence[float]) -> float:
             D, k_on, k_off = map(float, x)
             if D <= 0 or k_on < 0 or k_off < 0:
                 return 1e12
             rss = 0.0
-            for p, solver in zip(prepared, solvers, strict=False):
+            for p, solver in zip(prepared, scalar_solvers, strict=False):
                 sim = solver.simulate(
-                    CoupledPDEParameters(D=D, k_on1=k_on, k_off1=k_off, k_on2=0.0, k_off2=0.0),
+                    PDEParameters(D=D, k_on=k_on, k_off=k_off, immobile_fraction=0.0),
                     p["t"],
-                    bleach_depth=p["bleach_depth"],
+                    bleach_depth=float(p["bleach_depth"]),
                 )
-                rss += float(np.sum((p["y"] - sim["recovery"]) ** 2))
+                rss += float(np.sum((p["y"] - np.asarray(sim["recovery_curve"])) ** 2))
+            return rss
+
+    elif model == "reaction_diffusion_immobile":
+        x0 = [1.0, 0.1, 0.1, 0.2] if initial is None else list(initial)
+        k_params = 4
+
+        def obj(x: Sequence[float]) -> float:
+            D, k_on, k_off, immobile = map(float, x)
+            if D <= 0 or k_on < 0 or k_off < 0 or not (0.0 <= immobile <= 0.95):
+                return 1e12
+            rss = 0.0
+            for p, solver in zip(prepared, scalar_solvers, strict=False):
+                sim = solver.simulate(
+                    PDEParameters(D=D, k_on=k_on, k_off=k_off, immobile_fraction=immobile),
+                    p["t"],
+                    bleach_depth=float(p["bleach_depth"]),
+                )
+                rss += float(np.sum((p["y"] - np.asarray(sim["recovery_curve"])) ** 2))
+            return rss
+
+    elif model == "fast_exchange_plus_specific":
+        x0 = [1.0, 0.1, 0.1] if initial is None else list(initial)
+        k_params = 3
+
+        def obj(x: Sequence[float]) -> float:
+            D_eff, k_on, k_off = map(float, x)
+            if D_eff <= 0 or k_on < 0 or k_off < 0:
+                return 1e12
+            rss = 0.0
+            for p, solver in zip(prepared, coupled_solvers, strict=False):
+                sim = solver.simulate(
+                    CoupledPDEParameters(D=D_eff, k_on1=k_on, k_off1=k_off, k_on2=0.0, k_off2=0.0),
+                    p["t"],
+                    bleach_depth=float(p["bleach_depth"]),
+                )
+                rss += float(np.sum((p["y"] - np.asarray(sim["recovery"])) ** 2))
+            return rss
+
+    else:  # two_binding
+        x0 = [1.0, 0.1, 0.1, 0.05, 0.05] if initial is None else list(initial)
+        k_params = 5
+
+        def obj(x: Sequence[float]) -> float:
+            D, k1on, k1off, k2on, k2off = map(float, x)
+            if D <= 0 or any(v < 0 for v in [k1on, k1off, k2on, k2off]):
+                return 1e12
+            rss = 0.0
+            for p, solver in zip(prepared, coupled_solvers, strict=False):
+                sim = solver.simulate(
+                    CoupledPDEParameters(D=D, k_on1=k1on, k_off1=k1off, k_on2=k2on, k_off2=k2off),
+                    p["t"],
+                    bleach_depth=float(p["bleach_depth"]),
+                )
+                rss += float(np.sum((p["y"] - np.asarray(sim["recovery"])) ** 2))
             return rss
 
     result = optimize.minimize(obj, x0, method=method)
+    x_hat = np.asarray(result.x, dtype=float)
 
     # Build per-dataset predictions
-    x_hat = result.x
-    per = []
-    for p, solver in zip(prepared, solvers, strict=False):
+    per: List[Dict[str, Any]] = []
+    for p, solver_scalar, solver_coupled in zip(prepared, scalar_solvers, coupled_solvers, strict=False):
         if model == "diffusion_only":
-            params = CoupledPDEParameters(D=float(x_hat[0]))
+            sim = solver_scalar.simulate(
+                PDEParameters(D=float(x_hat[0]), k_on=0.0, k_off=0.0, immobile_fraction=0.0),
+                p["t"],
+                bleach_depth=float(p["bleach_depth"]),
+            )
+            fit = np.asarray(sim["recovery_curve"], dtype=float)
+        elif model == "reaction_diffusion":
+            sim = solver_scalar.simulate(
+                PDEParameters(D=float(x_hat[0]), k_on=float(x_hat[1]), k_off=float(x_hat[2]), immobile_fraction=0.0),
+                p["t"],
+                bleach_depth=float(p["bleach_depth"]),
+            )
+            fit = np.asarray(sim["recovery_curve"], dtype=float)
+        elif model == "reaction_diffusion_immobile":
+            sim = solver_scalar.simulate(
+                PDEParameters(D=float(x_hat[0]), k_on=float(x_hat[1]), k_off=float(x_hat[2]), immobile_fraction=float(x_hat[3])),
+                p["t"],
+                bleach_depth=float(p["bleach_depth"]),
+            )
+            fit = np.asarray(sim["recovery_curve"], dtype=float)
+        elif model == "fast_exchange_plus_specific":
+            sim = solver_coupled.simulate(
+                CoupledPDEParameters(D=float(x_hat[0]), k_on1=float(x_hat[1]), k_off1=float(x_hat[2]), k_on2=0.0, k_off2=0.0),
+                p["t"],
+                bleach_depth=float(p["bleach_depth"]),
+            )
+            fit = np.asarray(sim["recovery"], dtype=float)
         else:
-            params = CoupledPDEParameters(D=float(x_hat[0]), k_on1=float(x_hat[1]), k_off1=float(x_hat[2]))
-        sim = solver.simulate(params, p["t"], bleach_depth=p["bleach_depth"])
+            sim = solver_coupled.simulate(
+                CoupledPDEParameters(D=float(x_hat[0]), k_on1=float(x_hat[1]), k_off1=float(x_hat[2]), k_on2=float(x_hat[3]), k_off2=float(x_hat[4])),
+                p["t"],
+                bleach_depth=float(p["bleach_depth"]),
+            )
+            fit = np.asarray(sim["recovery"], dtype=float)
+
         per.append(
             {
                 "bleach_radius_um": p["bleach_radius_um"],
                 "time": p["t"],
                 "data": p["y"],
-                "fit": sim["recovery"],
+                "fit": fit,
+                "t_half": _summarize_t_half(p["t"], fit),
             }
         )
 
-    # Rough scaling diagnostic: t_half vs radius^2
-    scaling = []
-    for item in per:
-        y = item["fit"]
-        t = item["time"]
-        y0 = float(y[0])
-        yinf = float(np.mean(y[-min(len(y), 5):]))
-        target = y0 + 0.5 * (yinf - y0)
-        idx = np.where(y >= target)[0]
-        t_half = float(t[idx[0]]) if len(idx) else float("nan")
-        scaling.append(
-            {
-                "bleach_radius_um": float(item["bleach_radius_um"]),
-                "bleach_radius_um2": float(item["bleach_radius_um"]) ** 2,
-                "t_half": t_half,
-            }
-        )
+    n_total = int(sum(len(p["y"]) for p in prepared))
+    rss = float(result.fun)
+
+    scaling = [
+        {
+            "bleach_radius_um": float(item["bleach_radius_um"]),
+            "bleach_radius_um2": float(item["bleach_radius_um"]) ** 2,
+            "t_half": float(item["t_half"]),
+        }
+        for item in per
+    ]
 
     out: Dict[str, Any] = {
         "model": model,
         "success": bool(result.success),
         "message": str(result.message),
-        "rss": float(result.fun),
+        "rss": rss,
+        "n_points": n_total,
+        "aic": _aic(n_total, rss, k_params),
         "datasets": per,
         "scaling": scaling,
     }
+
     if model == "diffusion_only":
         out["params"] = {"D": float(x_hat[0])}
-    else:
+    elif model == "reaction_diffusion":
         out["params"] = {"D": float(x_hat[0]), "k_on": float(x_hat[1]), "k_off": float(x_hat[2])}
+    elif model == "reaction_diffusion_immobile":
+        out["params"] = {
+            "D": float(x_hat[0]),
+            "k_on": float(x_hat[1]),
+            "k_off": float(x_hat[2]),
+            "immobile_fraction": float(x_hat[3]),
+        }
+    elif model == "fast_exchange_plus_specific":
+        out["params"] = {"D_eff": float(x_hat[0]), "k_on": float(x_hat[1]), "k_off": float(x_hat[2])}
+    else:
+        out["params"] = {
+            "D": float(x_hat[0]),
+            "k_on1": float(x_hat[1]),
+            "k_off1": float(x_hat[2]),
+            "k_on2": float(x_hat[3]),
+            "k_off2": float(x_hat[4]),
+        }
+
     return out
+
+
+def global_multi_spot_compare_models(
+    datasets: Sequence[MultiSpotDataset],
+    *,
+    method: str = "Nelder-Mead",
+) -> Dict[str, Any]:
+    """Fit all 5 global models and pick the statistically best (AIC)."""
+
+    models = [
+        "diffusion_only",
+        "reaction_diffusion",
+        "reaction_diffusion_immobile",
+        "fast_exchange_plus_specific",
+        "two_binding",
+    ]
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for m in models:
+        results[m] = global_multi_spot_fit(datasets, model=m, method=method)
+
+    # Choose best by AIC among successful fits
+    candidates = [(m, r) for m, r in results.items() if np.isfinite(r.get("aic", np.nan))]
+    best_model = min(candidates, key=lambda mr: float(mr[1]["aic"]))[0] if candidates else None
+    best_aic = float(results[best_model]["aic"]) if best_model else float('nan')
+
+    for m, r in results.items():
+        r["delta_aic"] = float(r.get("aic", np.nan) - best_aic) if best_model else float('nan')
+
+    return {
+        "best_model": best_model,
+        "results": results,
+    }
+
+
+def format_global_multi_spot_report(compare: Dict[str, Any]) -> str:
+    """Render a simple markdown report with separate sections per model."""
+
+    best_model = compare.get("best_model")
+    results = compare.get("results") or {}
+
+    lines: List[str] = []
+    lines.append("# Global Multi-Spot Fitting Report")
+    lines.append("")
+    lines.append(f"**Best model (AIC):** {best_model}")
+    lines.append("")
+
+    order = [
+        "diffusion_only",
+        "reaction_diffusion",
+        "reaction_diffusion_immobile",
+        "fast_exchange_plus_specific",
+        "two_binding",
+    ]
+
+    for m in order:
+        r = results.get(m)
+        if not isinstance(r, dict):
+            continue
+        lines.append(f"## Model: {m}")
+        lines.append(f"- Success: {r.get('success')} ({r.get('message')})")
+        lines.append(f"- RSS: {r.get('rss'):.6g}")
+        lines.append(f"- AIC: {r.get('aic'):.3f}")
+        if "delta_aic" in r:
+            lines.append(f"- ΔAIC vs best: {r.get('delta_aic'):.3f}")
+        lines.append(f"- Params: {r.get('params')}")
+        lines.append("")
+        lines.append("### Spot-size scaling (fit curves)")
+        for row in r.get("scaling", []) or []:
+            try:
+                lines.append(
+                    f"- w={row['bleach_radius_um']:.3f} µm, w²={row['bleach_radius_um2']:.3f}, t½={row['t_half']:.3g} s"
+                )
+            except Exception:
+                continue
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def effective_diffusion(D_free: float, k_on_star: float, k_off_star: float) -> float:
@@ -310,9 +532,10 @@ def _mittag_leffler_E(alpha: float, z: np.ndarray) -> np.ndarray:
     try:
         from scipy import special
 
-        if hasattr(special, "mittag_leffler"):
+        ml = getattr(special, "mittag_leffler", None)
+        if ml is not None:
             # scipy.special.mittag_leffler(alpha, beta, z) with beta default=1
-            return np.asarray(special.mittag_leffler(alpha, 1.0, z), dtype=float)
+            return np.asarray(ml(alpha, 1.0, z), dtype=float)
     except Exception:
         pass
 
