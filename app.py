@@ -1575,7 +1575,7 @@ elif page == "6. Global Fitting":
     **Comprehensive Analysis** fits all models to all curves and provides statistical comparisons between groups.
     
     ### Features:
-    - **All models fitted**: Single, Double, Triple exponential, and Reaction-Diffusion
+    - **All models fitted**: Single, Double, Triple exponential, Reaction-Diffusion, and Reaction-Diffusion (Two Binding)
     - **Same model applied across conditions**: Compare groups using identical model parameters
     - **Statistical comparisons**: Each kinetic parameter compared between groups
     - **Population analysis**: Component fractions and kinetic properties
@@ -1668,12 +1668,13 @@ elif page == "6. Global Fitting":
     st.markdown("---")
     
     # Define model labels (needed both inside and outside the analysis block)
-    all_models = ['single', 'double', 'triple', 'reaction_diffusion']
+    all_models = ['single', 'double', 'triple', 'reaction_diffusion', 'reaction_diffusion_two_binding']
     model_labels = {
         'single': 'Single Exponential',
         'double': 'Double Exponential',
         'triple': 'Triple Exponential',
-        'reaction_diffusion': 'Reaction-Diffusion'
+        'reaction_diffusion': 'Reaction-Diffusion',
+        'reaction_diffusion_two_binding': 'Reaction-Diffusion (Two Binding)'
     }
     
     # Run analysis button
@@ -1838,6 +1839,37 @@ elif page == "6. Global Fitting":
                                 curve_fits['reaction_diffusion'] = result
                 except Exception:
                     pass
+
+                # Fit Reaction-Diffusion (Two Binding)
+                try:
+                    fit = FRAPAnalysisCore.fit_reaction_diffusion_two_binding(time_data, intensity_data)
+                    if fit and fit.get('success', False):
+                        params = fit.get('params', [])
+                        if len(params) >= 7:
+                            A_diff, k_diff, A_bind1, k_bind1, A_bind2, k_bind2, C = params[:7]
+                            total_A = A_diff + A_bind1 + A_bind2
+                            # Mobile fraction = plateau intensity = (A_diff + A_bind1 + A_bind2 + C) × 100%
+                            endpoint = total_A + C
+                            result = {
+                                'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion_two_binding',
+                                'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
+                                'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'mobile_fraction': endpoint * 100,
+                                'k_diff': k_diff, 'k_bind1': k_bind1, 'k_bind2': k_bind2,
+                                't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                't_half_bind1': np.log(2) / k_bind1 if k_bind1 > 0 else np.nan,
+                                't_half_bind2': np.log(2) / k_bind2 if k_bind2 > 0 else np.nan,
+                                'pop_diffusion': A_diff / total_A * 100 if total_A > 0 else np.nan,
+                                'pop_binding1': A_bind1 / total_A * 100 if total_A > 0 else np.nan,
+                                'pop_binding2': A_bind2 / total_A * 100 if total_A > 0 else np.nan,
+                            }
+                            # Apply R² and mobile fraction filters
+                            mf = result['mobile_fraction']
+                            if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
+                                model_results['reaction_diffusion_two_binding'].append(result)
+                                curve_fits['reaction_diffusion_two_binding'] = result
+                except Exception:
+                    pass
                 
                 # Determine best model for this curve
                 if curve_fits:
@@ -1882,8 +1914,10 @@ elif page == "6. Global Fitting":
                         cluster_cols = ['mobile_fraction', 'k1', 'k2', 'pop1_fraction']
                     elif model == 'triple':
                         cluster_cols = ['mobile_fraction', 'k1', 'k2', 'k3', 'pop1_fraction', 'pop2_fraction']
-                    else:  # reaction_diffusion
+                    elif model == 'reaction_diffusion':
                         cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind', 'pop_diffusion']
+                    else:  # reaction_diffusion_two_binding
+                        cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind1', 'k_bind2', 'pop_diffusion']
                     
                     cluster_cols = [c for c in cluster_cols if c in df.columns]
                     if not cluster_cols:
@@ -1957,7 +1991,7 @@ elif page == "6. Global Fitting":
         # Plot R² comparison
         fig_r2, ax_r2 = plt.subplots(figsize=(12, 5))
         x = np.arange(len(selected_groups))
-        width = 0.2
+        width = 0.8 / max(1, len(model_labels))
         colors = {'Single Exponential': '#1f77b4', 'Double Exponential': '#ff7f0e', 
                   'Triple Exponential': '#2ca02c', 'Reaction-Diffusion': '#d62728'}
         
@@ -1970,7 +2004,7 @@ elif page == "6. Global Fitting":
         ax_r2.set_ylabel('Mean R²')
         ax_r2.set_xlabel('Group')
         ax_r2.set_title('Model Fit Quality Comparison')
-        ax_r2.set_xticks(x + width * 1.5)
+        ax_r2.set_xticks(x + width * (len(model_labels) - 1) / 2)
         ax_r2.set_xticklabels(selected_groups, rotation=45, ha='right')
         ax_r2.legend(loc='lower right')
         ax_r2.axhline(y=r2_threshold, color='red', linestyle='--', alpha=0.5, label=f'R² threshold')
@@ -2037,7 +2071,7 @@ elif page == "6. Global Fitting":
                         ('pop2_fraction', 'Medium Population (%)', 'population'),
                         ('pop3_fraction', 'Slow Population (%)', 'population'),
                     ]
-                else:  # reaction_diffusion
+                elif model == 'reaction_diffusion':
                     params = [
                         ('mobile_fraction', 'Mobile Fraction (%)', 'kinetic'),
                         ('k_diff', 'Diffusion Rate (s⁻¹)', 'kinetic'),
@@ -2048,6 +2082,21 @@ elif page == "6. Global Fitting":
                     pop_params = [
                         ('pop_diffusion', 'Diffusion Population (%)', 'population'),
                         ('pop_binding', 'Binding Population (%)', 'population'),
+                    ]
+                else:  # reaction_diffusion_two_binding
+                    params = [
+                        ('mobile_fraction', 'Mobile Fraction (%)', 'kinetic'),
+                        ('k_diff', 'Diffusion Rate (s⁻¹)', 'kinetic'),
+                        ('k_bind1', 'Binding Rate 1 (s⁻¹)', 'kinetic'),
+                        ('k_bind2', 'Binding Rate 2 (s⁻¹)', 'kinetic'),
+                        ('t_half_diff', 'Diffusion t½ (s)', 'kinetic'),
+                        ('t_half_bind1', 'Binding t½ 1 (s)', 'kinetic'),
+                        ('t_half_bind2', 'Binding t½ 2 (s)', 'kinetic'),
+                    ]
+                    pop_params = [
+                        ('pop_diffusion', 'Diffusion Population (%)', 'population'),
+                        ('pop_binding1', 'Binding Population 1 (%)', 'population'),
+                        ('pop_binding2', 'Binding Population 2 (%)', 'population'),
                     ]
                 
                 all_params = params + pop_params

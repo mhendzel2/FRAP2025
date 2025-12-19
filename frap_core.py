@@ -856,6 +856,22 @@ class FRAPAnalysisCore:
         return diffusion_recovery + binding_recovery + C
 
     @staticmethod
+    def reaction_diffusion_two_binding(t, A_diff, k_diff, A_bind1, k_off1, A_bind2, k_off2, C):
+        """Reaction-diffusion model with two kinetically distinct binding populations.
+
+        I(t) = A_diff*(1-exp(-k_diff*t)) + A_bind1*(1-exp(-k_off1*t)) + A_bind2*(1-exp(-k_off2*t)) + C
+
+        Notes
+        -----
+        - Total mobile fraction = A_diff + A_bind1 + A_bind2
+        - The two binding components may swap labels during fitting (k_off1/k_off2 order is not constrained).
+        """
+        diffusion_recovery = A_diff * (1 - np.exp(-k_diff * t))
+        binding1_recovery = A_bind1 * (1 - np.exp(-k_off1 * t))
+        binding2_recovery = A_bind2 * (1 - np.exp(-k_off2 * t))
+        return diffusion_recovery + binding1_recovery + binding2_recovery + C
+
+    @staticmethod
     def compute_r_squared(y, y_fit):
         """
         Calculate R-squared value
@@ -1758,6 +1774,144 @@ class FRAPAnalysisCore:
         except Exception as e:
             logging.error(f"Reaction-diffusion fit failed: {e}")
             return {'success': False, 'error': str(e), 'model': 'reaction_diffusion'}
+
+    @staticmethod
+    def fit_reaction_diffusion_two_binding(time, intensity):
+        """Fit the two-binding reaction-diffusion model to FRAP data.
+
+        Parameters
+        ----------
+        time : numpy.ndarray
+            Time points
+        intensity : numpy.ndarray
+            Normalized intensity values
+
+        Returns
+        -------
+        dict
+            Fit result dictionary with keys similar to `fit_reaction_diffusion`.
+        """
+        try:
+            if len(time) != len(intensity):
+                raise ValueError("Time and intensity arrays must have the same length")
+
+            if len(time) < 7:
+                raise ValueError("Insufficient data points for two-binding reaction-diffusion fit")
+
+            if np.any(np.isnan(time)) or np.any(np.isnan(intensity)):
+                raise ValueError("Input data contains NaN values")
+
+            t_fit, intensity_fit, _ = FRAPAnalysisCore.get_post_bleach_data(time, intensity)
+            n = len(t_fit)
+
+            if n < 7:
+                raise ValueError("Insufficient post-bleach data points")
+
+            y_min = np.min(intensity_fit)
+            y_max = np.max(intensity_fit)
+            y_end = np.mean(intensity_fit[-3:])
+
+            A0 = min(y_end, 1.0)
+            C0 = max(0, y_min)
+
+            if A0 <= C0 or A0 <= 0:
+                A0 = min(y_max, 1.0)
+                C0 = max(0, y_min * 0.9)
+
+            max_plateau = min(1.05, y_max * 1.1)
+            A0 = min(A0, max_plateau * 0.9)
+            C0 = min(C0, max_plateau * 0.5)
+
+            time_span = t_fit[-1] - t_fit[0]
+            k0 = -np.log(0.4) / (time_span / 3) if time_span > 0 else 0.1
+            k0 = max(1e-6, min(k0, 10.0))
+
+            # Initial guesses: [A_diff, k_diff, A_bind1, k_off1, A_bind2, k_off2, C]
+            # Use a fast diffusion component and two binding components at different time scales.
+            A_diff_0 = A0 * 0.2
+            k_diff_0 = k0 * 5
+            A_bind1_0 = A0 * 0.4
+            k_off1_0 = k0 * 0.7
+            A_bind2_0 = A0 * 0.4
+            k_off2_0 = k0 * 0.2
+            p0 = [A_diff_0, k_diff_0, A_bind1_0, k_off1_0, A_bind2_0, k_off2_0, C0]
+
+            max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
+            bounds = (
+                [0, 1e-6, 0, 1e-6, 0, 1e-6, -0.1],
+                [max_amplitude, 50.0, max_amplitude, 10.0, max_amplitude, 10.0, max_amplitude],
+            )
+
+            try:
+                popt, pcov = curve_fit(
+                    FRAPAnalysisCore.reaction_diffusion_two_binding,
+                    t_fit,
+                    intensity_fit,
+                    p0=p0,
+                    bounds=bounds,
+                    maxfev=3000,
+                )
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Strict bounds failed for two-binding reaction-diffusion, trying relaxed: {e}")
+                max_amplitude_relaxed = min(1.15, np.max(intensity_fit) * 1.2)
+                bounds_relaxed = (
+                    [0, 1e-6, 0, 1e-6, 0, 1e-6, -0.2],
+                    [max_amplitude_relaxed, 50.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed, 10.0, max_amplitude_relaxed],
+                )
+                popt, pcov = curve_fit(
+                    FRAPAnalysisCore.reaction_diffusion_two_binding,
+                    t_fit,
+                    intensity_fit,
+                    p0=p0,
+                    bounds=bounds_relaxed,
+                    maxfev=3000,
+                )
+
+            fitted = FRAPAnalysisCore.reaction_diffusion_two_binding(t_fit, *popt)
+            rss = np.sum((intensity_fit - fitted) ** 2)
+            r2 = FRAPAnalysisCore.compute_r_squared(intensity_fit, fitted)
+            adj_r2 = FRAPAnalysisCore.compute_adjusted_r_squared(intensity_fit, fitted, len(p0))
+            aic = FRAPAnalysisCore.compute_aic(rss, n, len(p0))
+            aicc = FRAPAnalysisCore.compute_aicc(rss, n, len(p0))
+            bic = FRAPAnalysisCore.compute_bic(rss, n, len(p0))
+            red_chi2 = FRAPAnalysisCore.compute_reduced_chi_squared(intensity_fit, fitted, len(p0))
+            ci = FRAPAnalysisCore.compute_confidence_intervals(popt, pcov, n, len(p0))
+
+            A_diff, k_diff, A_bind1, k_off1, A_bind2, k_off2, C_immobile = popt
+            total_mobile = A_diff + A_bind1 + A_bind2
+
+            return {
+                'model': 'reaction_diffusion_two_binding',
+                'func': FRAPAnalysisCore.reaction_diffusion_two_binding,
+                'params': popt,
+                'pcov': pcov,
+                'rss': rss,
+                'r2': r2,
+                'adj_r2': adj_r2,
+                'aic': aic,
+                'aicc': aicc,
+                'bic': bic,
+                'red_chi2': red_chi2,
+                'fitted_values': fitted,
+                'ci': ci,
+                'success': True,
+                'A_diff': A_diff,
+                'k_diff': k_diff,
+                'A_bind1': A_bind1,
+                'k_off1': k_off1,
+                'A_bind2': A_bind2,
+                'k_off2': k_off2,
+                'C_immobile': C_immobile,
+                'residence_time1': 1.0 / k_off1 if k_off1 > 0 else np.inf,
+                'residence_time2': 1.0 / k_off2 if k_off2 > 0 else np.inf,
+                'diffusion_fraction': A_diff / total_mobile if total_mobile > 0 else np.nan,
+                'binding1_fraction': A_bind1 / total_mobile if total_mobile > 0 else np.nan,
+                'binding2_fraction': A_bind2 / total_mobile if total_mobile > 0 else np.nan,
+            }
+
+        except Exception as e:
+            logging.error(f"Two-binding reaction-diffusion fit failed: {e}")
+            return {'success': False, 'error': str(e), 'model': 'reaction_diffusion_two_binding'}
 
     @staticmethod
     def select_best_fit(fits, criterion='aicc'):
