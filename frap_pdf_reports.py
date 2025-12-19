@@ -92,7 +92,14 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         # Group summaries
         elements.append(Paragraph("Group Summaries", styles['FRAPSubtitle']))
         elements.append(Spacer(1, 0.15 * inch))
-        key_metrics = ['mobile_fraction', 'immobile_fraction', 'rate_constant', 'k_off', 'half_time', 'diffusion_coefficient', 'radius_of_gyration', 'molecular_weight_estimate']
+        key_metrics = [
+            'mobile_fraction', 'immobile_fraction', 'rate_constant', 'k_off', 'half_time',
+            'diffusion_coefficient', 'radius_of_gyration', 'molecular_weight_estimate',
+            # PDE coupled binding comparison (when available)
+            'pde_one_state_D', 'pde_one_state_k_on', 'pde_one_state_k_off', 'pde_one_state_aic',
+            'pde_two_state_D', 'pde_two_state_k_on1', 'pde_two_state_k_off1', 'pde_two_state_k_on2', 'pde_two_state_k_off2', 'pde_two_state_aic',
+            'pde_delta_aic', 'pde_prefers_two_state'
+        ]
         component_metrics = ['fast', 'medium', 'slow']
 
         for gname in groups_to_compare:

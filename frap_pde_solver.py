@@ -924,3 +924,334 @@ def quick_pde_fit(time_data: np.ndarray,
         'concentration_profiles': sim['concentration_profiles'],
         'radial_positions': sim['radial_positions']
     }
+
+
+# -----------------------------------------------------------------------------
+# MULTI-COMPONENT REACTION-DIFFUSION SOLVER (Two-State Binding)
+# -----------------------------------------------------------------------------
+
+
+@dataclass
+class CoupledPDEParameters:
+    """Parameters for coupled multi-state FRAP fitting (two binding interactions)."""
+
+    D: float              # Diffusion coefficient (µm²/s)
+    k_on1: float = 0.0    # Binding rate 1 (s⁻¹)
+    k_off1: float = 0.0   # Unbinding rate 1 (s⁻¹)
+    k_on2: float = 0.0    # Binding rate 2 (s⁻¹)
+    k_off2: float = 0.0   # Unbinding rate 2 (s⁻¹)
+
+    @property
+    def fractions(self) -> Tuple[float, float, float]:
+        """Return equilibrium fractions (Mobile, Bound1, Bound2).
+
+        At steady state (local kinetics only):
+        V1 = (k_on1/k_off1) * U, V2 = (k_on2/k_off2) * U, with U+V1+V2 = 1.
+        """
+        K1 = (self.k_on1 / self.k_off1) if self.k_off1 > 1e-12 else 0.0
+        K2 = (self.k_on2 / self.k_off2) if self.k_off2 > 1e-12 else 0.0
+        total = 1.0 + K1 + K2
+        if total <= 0:
+            return 1.0, 0.0, 0.0
+        return 1.0 / total, K1 / total, K2 / total
+
+
+class CoupledPDESolver:
+    """Solve the coupled U/V1/V2 reaction–diffusion FRAP system.
+
+    Mobile species U diffuses; bound states V1 and V2 are immobile.
+
+    Operator splitting per step:
+    - Reaction (local kinetics) via a backward-Euler (semi-implicit) update
+    - Diffusion of U via Crank–Nicolson
+    """
+
+    def __init__(
+        self,
+        cell_mask: np.ndarray,
+        bleach_mask: np.ndarray,
+        pixel_size: float = 1.0,
+        boundary_condition: BoundaryCondition = BoundaryCondition.NEUMANN,
+    ):
+        self.cell_mask = cell_mask.astype(bool)
+        self.bleach_mask = bleach_mask.astype(bool)
+        self.pixel_size = float(pixel_size)
+        self.boundary_condition = boundary_condition
+
+        self.ny, self.nx = self.cell_mask.shape
+        self.n_points = int(np.sum(self.cell_mask))
+
+        self.idx_2d_to_1d = np.full((self.ny, self.nx), -1, dtype=int)
+        self.idx_1d_to_2d: np.ndarray
+
+        idx_pairs = []
+        idx = 0
+        for j in range(self.ny):
+            for i in range(self.nx):
+                if self.cell_mask[j, i]:
+                    self.idx_2d_to_1d[j, i] = idx
+                    idx_pairs.append((j, i))
+                    idx += 1
+        self.idx_1d_to_2d = np.array(idx_pairs, dtype=int)
+
+        bleach_indices = []
+        for k in range(self.n_points):
+            j, i = self.idx_1d_to_2d[k]
+            if self.bleach_mask[j, i]:
+                bleach_indices.append(k)
+        self.bleach_indices = np.array(bleach_indices, dtype=int)
+
+    def _build_laplacian(self, D: float) -> csr_matrix:
+        """Standard 5-point Laplacian matrix for the masked domain."""
+        n = self.n_points
+        h2 = self.pixel_size ** 2
+        coeff = float(D) / (h2 + 1e-20)
+
+        row_idx: List[int] = []
+        col_idx: List[int] = []
+        values: List[float] = []
+
+        for idx in range(n):
+            j, i = self.idx_1d_to_2d[idx]
+
+            diag = -4.0 * coeff
+            neighbor_count = 0
+            neighbors = [(j - 1, i), (j + 1, i), (j, i - 1), (j, i + 1)]
+            for nj, ni in neighbors:
+                if 0 <= nj < self.ny and 0 <= ni < self.nx:
+                    if self.cell_mask[nj, ni]:
+                        n_idx = int(self.idx_2d_to_1d[nj, ni])
+                        row_idx.append(idx)
+                        col_idx.append(n_idx)
+                        values.append(coeff)
+                        neighbor_count += 1
+                    elif self.boundary_condition == BoundaryCondition.NEUMANN:
+                        diag += coeff
+
+            if self.boundary_condition == BoundaryCondition.NEUMANN:
+                diag = -neighbor_count * coeff
+
+            row_idx.append(idx)
+            col_idx.append(idx)
+            values.append(diag)
+
+        return csr_matrix((values, (row_idx, col_idx)), shape=(n, n))
+
+    @staticmethod
+    def _reaction_step_backward_euler(
+        U: np.ndarray,
+        V1: np.ndarray,
+        V2: np.ndarray,
+        dt: float,
+        p: CoupledPDEParameters,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Stable local kinetics update using backward Euler.
+
+        Solves per-voxel linear system:
+        dU/dt = -(k1+k2)U + koff1 V1 + koff2 V2
+        dV1/dt = kon1 U - koff1 V1
+        dV2/dt = kon2 U - koff2 V2
+        """
+        dt = float(dt)
+        k1on = float(p.k_on1)
+        k1off = float(p.k_off1)
+        k2on = float(p.k_on2)
+        k2off = float(p.k_off2)
+
+        a1 = 1.0 + dt * k1off
+        a2 = 1.0 + dt * k2off
+        # Coefficient for U_new after eliminating V1_new/V2_new
+        coef = (
+            1.0
+            + dt * (k1on + k2on)
+            - (dt * dt * k1off * k1on) / a1
+            - (dt * dt * k2off * k2on) / a2
+        )
+        coef = max(coef, 1e-12)
+
+        rhs = U + (dt * k1off / a1) * V1 + (dt * k2off / a2) * V2
+        U_new = rhs / coef
+        V1_new = (V1 + dt * k1on * U_new) / a1
+        V2_new = (V2 + dt * k2on * U_new) / a2
+
+        # Physical bounds (concentrations / fractions)
+        U_new = np.clip(U_new, 0.0, 1.0)
+        V1_new = np.clip(V1_new, 0.0, 1.0)
+        V2_new = np.clip(V2_new, 0.0, 1.0)
+        return U_new, V1_new, V2_new
+
+    def simulate(
+        self,
+        params: CoupledPDEParameters,
+        time_points: np.ndarray,
+        bleach_depth: float = 0.0,
+        dt: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Simulate recovery curve for the coupled binding model.
+
+        Parameters
+        ----------
+        params : CoupledPDEParameters
+            Physical parameters.
+        time_points : np.ndarray
+            Time points (s) at which to sample output, starting at 0.
+        bleach_depth : float
+            Fraction remaining immediately after bleach in ROI.
+        dt : float, optional
+            Internal integration step. If None, chosen from time_points.
+        """
+        time_points = np.asarray(time_points, dtype=float)
+        if time_points.ndim != 1 or len(time_points) == 0:
+            raise ValueError("time_points must be a 1D non-empty array")
+
+        n = self.n_points
+        if n <= 0:
+            raise ValueError("Empty cell mask domain")
+
+        # Determine integration step
+        if dt is None:
+            diffs = np.diff(time_points)
+            diffs = diffs[diffs > 0]
+            base = float(np.min(diffs)) if len(diffs) else 0.05
+            dt = min(0.05, max(0.002, base / 4.0))
+        dt = float(dt)
+
+        # 1) Pre-bleach equilibrium initial conditions
+        f_m, f_b1, f_b2 = params.fractions
+        U = np.full(n, f_m, dtype=float)
+        V1 = np.full(n, f_b1, dtype=float)
+        V2 = np.full(n, f_b2, dtype=float)
+
+        # 2) Apply bleach (all species affected)
+        bleach_depth = float(bleach_depth)
+        if len(self.bleach_indices) > 0:
+            U[self.bleach_indices] *= bleach_depth
+            V1[self.bleach_indices] *= bleach_depth
+            V2[self.bleach_indices] *= bleach_depth
+
+        # Diffusion operator (U only)
+        L = self._build_laplacian(params.D)
+        I = diags(np.ones(n), 0, format='csr')
+        A_implicit = I - 0.5 * dt * L
+        A_explicit = I + 0.5 * dt * L
+
+        recovery_curve: List[float] = []
+
+        t_idx = 0
+        sim_time = 0.0
+        max_time = float(time_points[-1])
+
+        while sim_time <= max_time + dt:
+            while t_idx < len(time_points) and sim_time >= time_points[t_idx] - 1e-12:
+                total = U + V1 + V2
+                if len(self.bleach_indices) > 0:
+                    mean_int = float(np.mean(total[self.bleach_indices]))
+                else:
+                    mean_int = float(np.mean(total))
+                recovery_curve.append(mean_int)
+                t_idx += 1
+
+            if t_idx >= len(time_points):
+                break
+
+            # Reaction
+            U, V1, V2 = self._reaction_step_backward_euler(U, V1, V2, dt, params)
+
+            # Diffusion (Crank–Nicolson)
+            rhs = A_explicit @ U
+            U = np.asarray(spsolve(A_implicit, rhs), dtype=float)
+            U = np.clip(U, 0.0, 1.0)
+
+            sim_time += dt
+
+        return {
+            'time': time_points,
+            'recovery': np.asarray(recovery_curve, dtype=float),
+            'final_distribution': (U, V1, V2),
+        }
+
+
+def compare_binding_models(
+    image_stack: np.ndarray,
+    time_points: np.ndarray,
+    bleach_frame: int,
+    pixel_size: float = 1.0,
+    bleach_threshold: float = 0.3,
+    cell_threshold: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Fit and compare 1-binding vs 2-binding coupled PDE models using AIC.
+
+    Returns a dict containing per-model parameters and AIC/RSS, plus a preferred model.
+    """
+    # Extract geometry
+    extractor = GeometryExtractor()
+    pre = np.mean(image_stack[:bleach_frame], axis=0)
+    post = image_stack[bleach_frame]
+
+    cell_mask = extractor.extract_cell_mask(pre, threshold=cell_threshold)
+    bleach_mask = extractor.extract_bleach_roi(pre, post, intensity_drop_threshold=bleach_threshold)
+    bleach_mask = bleach_mask & cell_mask
+    if np.sum(bleach_mask) == 0:
+        raise ValueError("No bleach region detected within cell mask")
+
+    # Normalized recovery curve in bleach ROI
+    y_data = np.array([np.mean(frame[bleach_mask]) for frame in image_stack[bleach_frame:]], dtype=float)
+    pre_int = float(np.mean(pre[bleach_mask]))
+    if pre_int <= 0:
+        raise ValueError("Invalid pre-bleach intensity for normalization")
+    y_data = y_data / pre_int
+    bleach_depth = float(y_data[0])
+
+    t_data = np.asarray(time_points[bleach_frame:], dtype=float) - float(time_points[bleach_frame])
+    solver = CoupledPDESolver(cell_mask, bleach_mask, pixel_size=pixel_size)
+
+    # --- Model 1: Single binding (k_on2 = k_off2 = 0) ---
+    def obj_1state(x):
+        D, kon, koff = x
+        if D <= 0 or kon < 0 or koff < 0:
+            return 1e12
+        p = CoupledPDEParameters(D=D, k_on1=kon, k_off1=koff, k_on2=0.0, k_off2=0.0)
+        sim = solver.simulate(p, t_data, bleach_depth=bleach_depth)
+        return float(np.sum((y_data - sim['recovery']) ** 2))
+
+    res1 = optimize.minimize(obj_1state, [1.0, 0.1, 0.1], method='Nelder-Mead')
+    rss1 = float(res1.fun)
+    aic1 = len(y_data) * np.log(max(rss1, 1e-30) / len(y_data)) + 2 * 3
+
+    # --- Model 2: Two binding ---
+    def obj_2state(x):
+        D, k1on, k1off, k2on, k2off = x
+        if any(v < 0 for v in x) or D <= 0:
+            return 1e12
+        p = CoupledPDEParameters(D=D, k_on1=k1on, k_off1=k1off, k_on2=k2on, k_off2=k2off)
+        sim = solver.simulate(p, t_data, bleach_depth=bleach_depth)
+        return float(np.sum((y_data - sim['recovery']) ** 2))
+
+    d_guess, k_guess, koff_guess = (res1.x if hasattr(res1, 'x') else [1.0, 0.1, 0.1])
+    guess2 = [float(d_guess), float(k_guess), float(koff_guess), 0.05, 0.05]
+    res2 = optimize.minimize(obj_2state, guess2, method='Nelder-Mead')
+    rss2 = float(res2.fun)
+    aic2 = len(y_data) * np.log(max(rss2, 1e-30) / len(y_data)) + 2 * 5
+
+    preferred = "Two-State" if aic2 < aic1 - 2 else "Single-State"
+
+    return {
+        "model_1": {
+            "D": float(res1.x[0]),
+            "k_on": float(res1.x[1]),
+            "k_off": float(res1.x[2]),
+            "AIC": float(aic1),
+            "RSS": float(rss1),
+        },
+        "model_2": {
+            "D": float(res2.x[0]),
+            "k_on1": float(res2.x[1]),
+            "k_off1": float(res2.x[2]),
+            "k_on2": float(res2.x[3]),
+            "k_off2": float(res2.x[4]),
+            "AIC": float(aic2),
+            "RSS": float(rss2),
+        },
+        "preferred_model": preferred,
+        "delta_aic": float(aic1 - aic2),
+    }

@@ -294,6 +294,8 @@ class FRAPDataManager:
 
                     for file_in_group in filenames:
                         file_path_in_temp = os.path.join(dirpath, file_in_group)
+                        tp = None
+                        pde_compare = None
                         try:
                             file_ext = os.path.splitext(file_in_group)[1].lower()
                             file_name = os.path.basename(file_in_group)
@@ -312,10 +314,10 @@ class FRAPDataManager:
                                 os.makedirs(os.path.dirname(tp), exist_ok=True)
                                 if file_ext in ['.tif', '.tiff']:
                                     analyzer = FRAPImageAnalyzer()
-                                    if not analyzer.load_image_stack(file_path_in_temp):
-                                        raise ValueError("Failed to load image stack.")
                                     analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
                                     analyzer.time_interval = settings.get('default_time_interval', 1.0)
+                                    if not analyzer.load_image_stack(file_path_in_temp):
+                                        raise ValueError("Failed to load image stack.")
                                     bleach_frame, bleach_coords = analyzer.detect_bleach_event()
                                     if bleach_frame is None or bleach_coords is None:
                                         raise ValueError("Failed to detect bleach event automatically.")
@@ -323,11 +325,59 @@ class FRAPDataManager:
                                     analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
                                     intensity_df = analyzer.extract_intensity_profiles().rename(columns={'Time': 'time'})
                                     intensity_df.to_csv(tp, index=False)
+
+                                    # Optional: PDE binding model comparison (single vs two-state)
+                                    try:
+                                        from frap_pde_solver import compare_binding_models
+                                        if analyzer.image_stack is not None and analyzer.time_points is not None:
+                                            pde_compare = compare_binding_models(
+                                                analyzer.image_stack,
+                                                analyzer.time_points,
+                                                bleach_frame,
+                                                pixel_size=analyzer.pixel_size,
+                                            )
+                                    except Exception as _pde_e:
+                                        pde_compare = {"error": str(_pde_e)}
                                 else:
                                     shutil.copy(file_path_in_temp, tp)
 
                                 final_file_path = self.load_file(tp, file_name, original_path=rel_path, group_name=group_name, settings=settings)
                                 if final_file_path:
+                                    # Attach PDE comparison outputs to the file's features (so they show up in features_df/reports)
+                                    if file_ext in ['.tif', '.tiff'] and isinstance(pde_compare, dict) and pde_compare:
+                                        try:
+                                            file_rec = self.files.get(final_file_path)
+                                            if file_rec is not None:
+                                                feats = file_rec.get('features') or {}
+                                                if 'error' in pde_compare:
+                                                    feats['pde_compare_error'] = pde_compare.get('error')
+                                                else:
+                                                    m1 = pde_compare.get('model_1') or {}
+                                                    m2 = pde_compare.get('model_2') or {}
+                                                    if not isinstance(m1, dict):
+                                                        m1 = {}
+                                                    if not isinstance(m2, dict):
+                                                        m2 = {}
+                                                    feats.update({
+                                                        'pde_one_state_D': m1.get('D'),
+                                                        'pde_one_state_k_on': m1.get('k_on'),
+                                                        'pde_one_state_k_off': m1.get('k_off'),
+                                                        'pde_one_state_aic': m1.get('AIC'),
+                                                        'pde_one_state_rss': m1.get('RSS'),
+                                                        'pde_two_state_D': m2.get('D'),
+                                                        'pde_two_state_k_on1': m2.get('k_on1'),
+                                                        'pde_two_state_k_off1': m2.get('k_off1'),
+                                                        'pde_two_state_k_on2': m2.get('k_on2'),
+                                                        'pde_two_state_k_off2': m2.get('k_off2'),
+                                                        'pde_two_state_aic': m2.get('AIC'),
+                                                        'pde_two_state_rss': m2.get('RSS'),
+                                                        'pde_delta_aic': pde_compare.get('delta_aic'),
+                                                        'pde_prefers_two_state': 1.0 if pde_compare.get('preferred_model') == 'Two-State' else 0.0,
+                                                        'pde_preferred_model': pde_compare.get('preferred_model'),
+                                                    })
+                                                file_rec['features'] = feats
+                                        except Exception:
+                                            pass
                                     self.add_file_to_group(group_name, final_file_path)
                                     group_file_counts[group_name] += 1
                                     success_count += 1
@@ -342,7 +392,7 @@ class FRAPDataManager:
                             msg = f"Error processing file {file_in_group} in group {group_name}: {e}"
                             error_details.append(msg)
                             logger.error(msg, exc_info=True)
-                            if 'tp' in locals() and tp not in self.files and os.path.exists(tp):
+                            if tp and tp not in self.files and os.path.exists(tp):
                                 os.remove(tp)
 
             # 4. Finalize
