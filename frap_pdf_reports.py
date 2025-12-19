@@ -102,6 +102,62 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         ]
         component_metrics = ['fast', 'medium', 'slow']
 
+        # Global multi-spot comparison (special application; included only if present)
+        multi_spot_any = False
+        for gname in groups_to_compare:
+            g = data_manager.groups.get(gname)
+            if g and g.get('global_multispot_compare'):
+                multi_spot_any = True
+                break
+
+        if multi_spot_any:
+            elements.append(Paragraph("Global Multi-Spot Model Comparison", styles['FRAPSubtitle']))
+            elements.append(Paragraph("(Included only when run manually; not part of batch processing.)", styles['FRAPBody']))
+            elements.append(Spacer(1, 0.15 * inch))
+
+            order = [
+                'diffusion_only',
+                'reaction_diffusion',
+                'reaction_diffusion_immobile',
+                'fast_exchange_plus_specific',
+                'two_binding',
+            ]
+
+            for gname in groups_to_compare:
+                g = data_manager.groups.get(gname)
+                if not g or not isinstance(g.get('global_multispot_compare'), dict):
+                    continue
+                compare = g['global_multispot_compare']
+                best_model = compare.get('best_model')
+                results = compare.get('results') or {}
+
+                elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
+                elements.append(Paragraph(f"Best model (AIC): {best_model}", styles['FRAPBody']))
+
+                rows = [["Model", "AIC", "ΔAIC", "RSS", "Params"]]
+                for m in order:
+                    r = results.get(m)
+                    if not isinstance(r, dict):
+                        continue
+                    rows.append([
+                        str(m),
+                        f"{r.get('aic'):.3f}" if isinstance(r.get('aic'), (int, float)) else str(r.get('aic')),
+                        f"{r.get('delta_aic'):.3f}" if isinstance(r.get('delta_aic'), (int, float)) else str(r.get('delta_aic')),
+                        f"{r.get('rss'):.6g}" if isinstance(r.get('rss'), (int, float)) else str(r.get('rss')),
+                        str(r.get('params')),
+                    ])
+
+                tbl = Table(rows, colWidths=[1.3*inch, 0.7*inch, 0.7*inch, 0.9*inch, 2.4*inch])
+                tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                ]))
+                elements.append(tbl)
+                elements.append(Spacer(1, 0.2 * inch))
+
         for gname in groups_to_compare:
             g = data_manager.groups.get(gname)
             if not g or g.get('features_df') is None or g['features_df'].empty:

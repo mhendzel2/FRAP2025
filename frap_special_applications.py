@@ -447,6 +447,28 @@ def format_global_multi_spot_report(compare: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def attach_global_multispot_to_group(data_manager: Any, group_name: str, compare: Dict[str, Any]) -> None:
+    """Store global multi-spot comparison results on a group for HTML/PDF export.
+
+    This is a small convenience helper. It does not run any fitting.
+
+    Stores:
+    - group['global_multispot_compare']: raw comparison dict
+    - group['global_multispot_report_md']: formatted markdown (for quick display)
+    """
+
+    if not hasattr(data_manager, 'groups'):
+        raise AttributeError("data_manager must have a 'groups' attribute")
+    if group_name not in data_manager.groups:
+        raise KeyError(f"Group {group_name} not found")
+    group = data_manager.groups[group_name]
+    group['global_multispot_compare'] = compare
+    try:
+        group['global_multispot_report_md'] = format_global_multi_spot_report(compare)
+    except Exception:
+        group['global_multispot_report_md'] = None
+
+
 def effective_diffusion(D_free: float, k_on_star: float, k_off_star: float) -> float:
     """Fast-exchange effective diffusion approximation.
 

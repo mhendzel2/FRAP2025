@@ -1,6 +1,7 @@
 import os
 import io
 import base64
+import html as _html
 import pandas as pd
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -134,6 +135,83 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
     # Detailed results
     html_parts.append("<h2>Detailed Results</h2>")
     html_parts.append(combined_df.to_html(index=False))
+
+    # Global multi-spot comparison (special application; included only if present on group)
+    multi_spot_any = False
+    for group_name in groups_to_compare:
+        grp = data_manager.groups.get(group_name) if hasattr(data_manager, 'groups') else None
+        if not grp:
+            continue
+        if grp.get('global_multispot_compare') or grp.get('global_multispot_report_md'):
+            multi_spot_any = True
+            break
+
+    if multi_spot_any:
+        html_parts.append("<h2>Global Multi-Spot Model Comparison</h2>")
+        html_parts.append("<p><i>Included only when run manually; not part of batch processing.</i></p>")
+        for group_name in groups_to_compare:
+            grp = data_manager.groups.get(group_name)
+            if not grp:
+                continue
+            compare = grp.get('global_multispot_compare')
+            report_md = grp.get('global_multispot_report_md')
+
+            if not (compare or report_md):
+                continue
+
+            html_parts.append(f"<h3>Group: {_html.escape(str(group_name))}</h3>")
+
+            # Preferred: structured dict
+            if isinstance(compare, dict):
+                best_model = compare.get('best_model')
+                results = compare.get('results') or {}
+                html_parts.append(f"<p><b>Best model (AIC):</b> {_html.escape(str(best_model))}</p>")
+
+                # Summary table
+                rows = []
+                for m, r in results.items():
+                    if not isinstance(r, dict):
+                        continue
+                    rows.append({
+                        'model': m,
+                        'success': r.get('success'),
+                        'aic': r.get('aic'),
+                        'delta_aic': r.get('delta_aic'),
+                        'rss': r.get('rss'),
+                        'params': r.get('params'),
+                    })
+                if rows:
+                    df_ms = pd.DataFrame(rows)
+                    html_parts.append(df_ms.to_html(index=False))
+
+                # Detailed per-model sections
+                order = [
+                    'diffusion_only',
+                    'reaction_diffusion',
+                    'reaction_diffusion_immobile',
+                    'fast_exchange_plus_specific',
+                    'two_binding',
+                ]
+                for m in order:
+                    r = results.get(m)
+                    if not isinstance(r, dict):
+                        continue
+                    html_parts.append(f"<h4>Model: {_html.escape(str(m))}</h4>")
+                    html_parts.append("<ul>")
+                    html_parts.append(f"<li><b>Success:</b> {_html.escape(str(r.get('success')))} ({_html.escape(str(r.get('message')))} )</li>")
+                    if r.get('rss') is not None:
+                        html_parts.append(f"<li><b>RSS:</b> {_html.escape(str(r.get('rss')))}</li>")
+                    if r.get('aic') is not None:
+                        html_parts.append(f"<li><b>AIC:</b> {_html.escape(str(r.get('aic')))}</li>")
+                    if r.get('delta_aic') is not None:
+                        html_parts.append(f"<li><b>ΔAIC:</b> {_html.escape(str(r.get('delta_aic')))}</li>")
+                    html_parts.append(f"<li><b>Params:</b> {_html.escape(str(r.get('params')))}</li>")
+                    html_parts.append("</ul>")
+            else:
+                # Fallback: render saved markdown as preformatted text
+                html_parts.append("<pre style='white-space:pre-wrap;border:1px solid #ddd;padding:8px'>")
+                html_parts.append(_html.escape(str(report_md)))
+                html_parts.append("</pre>")
 
     # Assemble full HTML
     body_html = '\n'.join(html_parts)
