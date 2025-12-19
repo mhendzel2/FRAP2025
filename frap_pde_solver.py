@@ -1108,14 +1108,6 @@ class CoupledPDESolver:
         if n <= 0:
             raise ValueError("Empty cell mask domain")
 
-        # Determine integration step
-        if dt is None:
-            diffs = np.diff(time_points)
-            diffs = diffs[diffs > 0]
-            base = float(np.min(diffs)) if len(diffs) else 0.05
-            dt = min(0.05, max(0.002, base / 4.0))
-        dt = float(dt)
-
         # 1) Pre-bleach equilibrium initial conditions
         f_m, f_b1, f_b2 = params.fractions
         U = np.full(n, f_m, dtype=float)
@@ -1129,40 +1121,50 @@ class CoupledPDESolver:
             V1[self.bleach_indices] *= bleach_depth
             V2[self.bleach_indices] *= bleach_depth
 
-        # Diffusion operator (U only)
+        # Diffusion operator (U only). Note: CN matrices depend on dt (built per step).
         L = self._build_laplacian(params.D)
         I = diags(np.ones(n), 0, format='csr')
-        A_implicit = I - 0.5 * dt * L
-        A_explicit = I + 0.5 * dt * L
 
         recovery_curve: List[float] = []
 
-        t_idx = 0
-        sim_time = 0.0
-        max_time = float(time_points[-1])
+        def _record() -> None:
+            total = U + V1 + V2
+            if len(self.bleach_indices) > 0:
+                recovery_curve.append(float(np.mean(total[self.bleach_indices])))
+            else:
+                recovery_curve.append(float(np.mean(total)))
 
-        while sim_time <= max_time + dt:
-            while t_idx < len(time_points) and sim_time >= time_points[t_idx] - 1e-12:
-                total = U + V1 + V2
-                if len(self.bleach_indices) > 0:
-                    mean_int = float(np.mean(total[self.bleach_indices]))
-                else:
-                    mean_int = float(np.mean(total))
-                recovery_curve.append(mean_int)
-                t_idx += 1
+        # Record at the first time point
+        _record()
 
-            if t_idx >= len(time_points):
-                break
+        # Step interval-by-interval between observation time points
+        for k in range(len(time_points) - 1):
+            delta_t = float(time_points[k + 1] - time_points[k])
+            if delta_t <= 0:
+                _record()
+                continue
 
-            # Reaction
-            U, V1, V2 = self._reaction_step_backward_euler(U, V1, V2, dt, params)
+            # Optional sub-stepping for accuracy if dt is provided
+            if dt is None or dt >= delta_t:
+                n_sub = 1
+                dt_sub = delta_t
+            else:
+                n_sub = int(np.ceil(delta_t / float(dt)))
+                n_sub = max(n_sub, 1)
+                dt_sub = delta_t / n_sub
 
-            # Diffusion (Crank–Nicolson)
-            rhs = A_explicit @ U
-            U = np.asarray(spsolve(A_implicit, rhs), dtype=float)
-            U = np.clip(U, 0.0, 1.0)
+            for _ in range(n_sub):
+                # Reaction
+                U, V1, V2 = self._reaction_step_backward_euler(U, V1, V2, dt_sub, params)
 
-            sim_time += dt
+                # Diffusion (Crank–Nicolson)
+                A_implicit = I - 0.5 * dt_sub * L
+                A_explicit = I + 0.5 * dt_sub * L
+                rhs = A_explicit @ U
+                U = np.asarray(spsolve(A_implicit, rhs), dtype=float)
+                U = np.clip(U, 0.0, 1.0)
+
+            _record()
 
         return {
             'time': time_points,
