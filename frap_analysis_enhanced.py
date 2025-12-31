@@ -182,7 +182,7 @@ class FRAPFitter:
         elif model_name == 'reaction_diffusion':
             params.add('k_diff', value=1.0, min=1e-6)  # Diffusion rate constant
             params.add('f_diff', value=0.5, min=0, max=1)  # Diffusion fraction
-            params.add('k_bind', value=0.1, min=1e-6)  # Binding rate constant
+            params.add('k_off', value=0.1, min=1e-6)  # Binding/off rate constant
             
         # Override with user provided p0
         if p0:

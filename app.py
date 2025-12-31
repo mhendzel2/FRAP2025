@@ -473,13 +473,14 @@ elif page == "2. Batch Process All Groups":
             if fitting_mode == "single_model":
                 model_select = st.selectbox(
                     "Select Model",
-                    ["single", "double", "triple", "anomalous_diffusion", "reaction_diffusion"],
+                    ["single", "double", "triple", "anomalous_diffusion", "reaction_diffusion", "reaction_diffusion_two_binding"],
                     format_func=lambda x: {
                         "single": "Single Exponential",
                         "double": "Double Exponential (2-Component)",
                         "triple": "Triple Exponential (3-Component)",
                         "anomalous_diffusion": "Anomalous Diffusion",
-                        "reaction_diffusion": "Reaction-Diffusion"
+                        "reaction_diffusion": "Reaction-Diffusion",
+                        "reaction_diffusion_two_binding": "Reaction-Diffusion (Two Binding)"
                     }[x]
                 )
             else:
@@ -556,8 +557,8 @@ elif page == "2. Batch Process All Groups":
                 from frap_core import FRAPAnalysisCore
                 from scipy import stats as scipy_stats
                 
-                # Define all models to fit
-                all_models = ['single', 'double', 'triple', 'reaction_diffusion']
+                # Define all models to fit (including two-binding RD)
+                all_models = ['single', 'double', 'triple', 'reaction_diffusion', 'reaction_diffusion_two_binding']
                 
                 results_summary = []
                 
@@ -706,6 +707,38 @@ elif page == "2. Batch Process All Groups":
                                             model_results['reaction_diffusion'].append({'curve_idx': curve_idx, 'success': False})
                                     except Exception as e:
                                         model_results['reaction_diffusion'].append({'curve_idx': curve_idx, 'success': False, 'error': str(e)})
+
+                                    # Fit Reaction-Diffusion with Two Binding Components
+                                    try:
+                                        rxn_two_fit = FRAPAnalysisCore.fit_reaction_diffusion_two_binding(time_data, intensity_data)
+                                        if rxn_two_fit and rxn_two_fit.get('success', False):
+                                            params = rxn_two_fit.get('params', [])
+                                            if len(params) >= 7:
+                                                A_diff, k_diff, A_bind1, k_bind1, A_bind2, k_bind2, C = params[:7]
+                                                total_A = A_diff + A_bind1 + A_bind2
+                                                result = {
+                                                    'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion_two_binding',
+                                                    'r2': rxn_two_fit.get('r2', np.nan),
+                                                    'adj_r2': rxn_two_fit.get('adj_r2', np.nan),
+                                                    'aic': rxn_two_fit.get('aic', np.nan),
+                                                    'aicc': rxn_two_fit.get('aicc', np.nan),
+                                                    'bic': rxn_two_fit.get('bic', np.nan),
+                                                    'mobile_fraction': total_A * 100,
+                                                    'A_diff': A_diff, 'k_diff': k_diff, 'A_bind1': A_bind1, 'k_bind1': k_bind1,
+                                                    'A_bind2': A_bind2, 'k_bind2': k_bind2, 'C': C,
+                                                    'fraction_diffusion': A_diff / total_A * 100 if total_A > 0 else np.nan,
+                                                    'fraction_binding1': A_bind1 / total_A * 100 if total_A > 0 else np.nan,
+                                                    'fraction_binding2': A_bind2 / total_A * 100 if total_A > 0 else np.nan,
+                                                    't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                                    't_half_bind1': np.log(2) / k_bind1 if k_bind1 > 0 else np.nan,
+                                                    't_half_bind2': np.log(2) / k_bind2 if k_bind2 > 0 else np.nan,
+                                                }
+                                                model_results['reaction_diffusion_two_binding'].append(result)
+                                                curve_fits['reaction_diffusion_two_binding'] = result
+                                        else:
+                                            model_results['reaction_diffusion_two_binding'].append({'curve_idx': curve_idx, 'success': False})
+                                    except Exception as e:
+                                        model_results['reaction_diffusion_two_binding'].append({'curve_idx': curve_idx, 'success': False, 'error': str(e)})
                                     
                                     # Determine best model for this curve based on criterion
                                     if curve_fits:
@@ -730,8 +763,10 @@ elif page == "2. Batch Process All Groups":
                                 group_results['best_model_counts'] = best_counts
                                 group_results['fit_success'] = sum(len(st.session_state.all_model_results[group_name][m]) for m in all_models)
                                 
-                                # Use reaction_diffusion as default for analyzer.features
-                                if not st.session_state.all_model_results[group_name]['reaction_diffusion'].empty:
+                                # Use the richest reaction-diffusion model available for downstream analyses
+                                if not st.session_state.all_model_results[group_name]['reaction_diffusion_two_binding'].empty:
+                                    analyzer.features = st.session_state.all_model_results[group_name]['reaction_diffusion_two_binding'].copy()
+                                elif not st.session_state.all_model_results[group_name]['reaction_diffusion'].empty:
                                     analyzer.features = st.session_state.all_model_results[group_name]['reaction_diffusion'].copy()
                                 elif not st.session_state.all_model_results[group_name]['double'].empty:
                                     analyzer.features = st.session_state.all_model_results[group_name]['double'].copy()
@@ -744,10 +779,74 @@ elif page == "2. Batch Process All Groups":
                     else:
                         # Single model mode
                         with st.spinner(f"🔬 Fitting {model_select} model for {group_name}..."):
-                            analyzer.analyze_group(model_name=model_select)
-                            if analyzer.features is not None:
-                                group_results['fit_success'] = len(analyzer.features.dropna(subset=['r2']))
-                                analyzer.features, removed = apply_r2_filter(analyzer.features, st.session_state.r2_threshold)
+                            if model_select in ("reaction_diffusion", "reaction_diffusion_two_binding"):
+                                from frap_core import FRAPAnalysisCore
+
+                                rd_rows = []
+                                for curve_idx, curve in enumerate(analyzer.curves):
+                                    if curve.normalized_intensity is None:
+                                        continue
+
+                                    time_data = curve.time
+                                    intensity_data = curve.normalized_intensity
+
+                                    try:
+                                        if model_select == "reaction_diffusion":
+                                            fit = FRAPAnalysisCore.fit_reaction_diffusion(time_data, intensity_data)
+                                        else:
+                                            fit = FRAPAnalysisCore.fit_reaction_diffusion_two_binding(time_data, intensity_data)
+
+                                        if fit and fit.get("success", False):
+                                            params = fit.get("params", [])
+                                            if model_select == "reaction_diffusion" and len(params) >= 5:
+                                                A_diff, k_diff, A_bind, k_bind, C = params[:5]
+                                                total_A = A_diff + A_bind
+                                                rd_rows.append({
+                                                    "curve_idx": curve_idx, "success": True, "model": model_select,
+                                                    "r2": fit.get("r2", np.nan), "adj_r2": fit.get("adj_r2", np.nan),
+                                                    "aic": fit.get("aic", np.nan), "aicc": fit.get("aicc", np.nan),
+                                                    "bic": fit.get("bic", np.nan),
+                                                    "mobile_fraction": total_A * 100,
+                                                    "A_diff": A_diff, "k_diff": k_diff, "A_bind": A_bind, "k_bind": k_bind, "C": C,
+                                                    "fraction_diffusion": A_diff / total_A * 100 if total_A > 0 else np.nan,
+                                                    "fraction_binding": A_bind / total_A * 100 if total_A > 0 else np.nan,
+                                                    "t_half_diff": np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                                    "t_half_bind": np.log(2) / k_bind if k_bind > 0 else np.nan,
+                                                })
+                                            elif model_select == "reaction_diffusion_two_binding" and len(params) >= 7:
+                                                A_diff, k_diff, A_bind1, k_bind1, A_bind2, k_bind2, C = params[:7]
+                                                total_A = A_diff + A_bind1 + A_bind2
+                                                rd_rows.append({
+                                                    "curve_idx": curve_idx, "success": True, "model": model_select,
+                                                    "r2": fit.get("r2", np.nan), "adj_r2": fit.get("adj_r2", np.nan),
+                                                    "aic": fit.get("aic", np.nan), "aicc": fit.get("aicc", np.nan),
+                                                    "bic": fit.get("bic", np.nan),
+                                                    "mobile_fraction": total_A * 100,
+                                                    "A_diff": A_diff, "k_diff": k_diff,
+                                                    "A_bind1": A_bind1, "k_bind1": k_bind1,
+                                                    "A_bind2": A_bind2, "k_bind2": k_bind2,
+                                                    "C": C,
+                                                    "fraction_diffusion": A_diff / total_A * 100 if total_A > 0 else np.nan,
+                                                    "fraction_binding1": A_bind1 / total_A * 100 if total_A > 0 else np.nan,
+                                                    "fraction_binding2": A_bind2 / total_A * 100 if total_A > 0 else np.nan,
+                                                    "t_half_diff": np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                                    "t_half_bind1": np.log(2) / k_bind1 if k_bind1 > 0 else np.nan,
+                                                    "t_half_bind2": np.log(2) / k_bind2 if k_bind2 > 0 else np.nan,
+                                                })
+                                    except Exception as e:
+                                        logger.error(f"Error fitting {model_select} for curve {curve_idx} in {group_name}: {e}")
+
+                                analyzer.features = pd.DataFrame(rd_rows)
+                                if not analyzer.features.empty:
+                                    analyzer.features, removed = apply_r2_filter(analyzer.features, st.session_state.r2_threshold)
+                                group_results["fit_success"] = len(analyzer.features)
+                            else:
+                                analyzer.analyze_group(model_name=model_select)
+                                if analyzer.features is not None:
+                                    group_results['fit_success'] = len(analyzer.features.dropna(subset=['r2']))
+                                    analyzer.features, removed = apply_r2_filter(analyzer.features, st.session_state.r2_threshold)
+                                else:
+                                    group_results['fit_success'] = 0
                             st.success(f"✅ {model_select} model fitted: {group_results['fit_success']} successful fits")
                     
                     # Subpopulation and outlier detection (optional)
@@ -821,17 +920,23 @@ elif page == "2. Batch Process All Groups":
                         # Plot best model distribution
                         fig_best, ax_best = plt.subplots(figsize=(10, 5))
                         x = np.arange(len(selected_groups))
-                        width = 0.2
-                        colors = {'single': '#1f77b4', 'double': '#ff7f0e', 'triple': '#2ca02c', 'reaction_diffusion': '#d62728'}
+                        width = 0.8 / max(1, len(all_models))
+                        colors = {
+                            'single': '#1f77b4',
+                            'double': '#ff7f0e',
+                            'triple': '#2ca02c',
+                            'reaction_diffusion': '#d62728',
+                            'reaction_diffusion_two_binding': '#9467bd',
+                        }
                         
                         for i, model in enumerate(all_models):
                             counts = [best_model_df[best_model_df['Group'] == g][model].values[0] if g in best_model_df['Group'].values else 0 for g in selected_groups]
-                            ax_best.bar(x + i*width, counts, width, label=model.replace('_', ' ').title(), color=colors[model])
+                            ax_best.bar(x + i*width, counts, width, label=model.replace('_', ' ').title(), color=colors.get(model, '#999999'))
                         
                         ax_best.set_xlabel('Group')
                         ax_best.set_ylabel('Number of Curves')
                         ax_best.set_title(f'Best Model Distribution by Group (Based on {criterion.upper()})')
-                        ax_best.set_xticks(x + width * 1.5)
+                        ax_best.set_xticks(x + width * (len(all_models) - 1) / 2)
                         ax_best.set_xticklabels(selected_groups, rotation=45, ha='right')
                         ax_best.legend()
                         plt.tight_layout()
@@ -866,18 +971,18 @@ elif page == "2. Batch Process All Groups":
                         groups = selected_groups
                         models = [m.replace('_', ' ').title() for m in all_models]
                         x = np.arange(len(groups))
-                        width = 0.2
+                        width = 0.8 / max(1, len(models))
                         
                         for i, model in enumerate(models):
                             model_data = r2_df[r2_df['Model'] == model]
                             means = [model_data[model_data['Group'] == g]['Mean R²'].values[0] if g in model_data['Group'].values else 0 for g in groups]
                             stds = [model_data[model_data['Group'] == g]['Std R²'].values[0] if g in model_data['Group'].values else 0 for g in groups]
-                            ax_r2.bar(x + i*width, means, width, yerr=stds, label=model, capsize=3, color=list(colors.values())[i])
+                            ax_r2.bar(x + i*width, means, width, yerr=stds, label=model, capsize=3, color=list(colors.values())[i % len(colors)])
                         
                         ax_r2.set_ylabel('R²')
                         ax_r2.set_xlabel('Group')
                         ax_r2.set_title('Model Fit Quality Comparison (Mean R² ± SD)')
-                        ax_r2.set_xticks(x + width * 1.5)
+                        ax_r2.set_xticks(x + width * (len(models) - 1) / 2)
                         ax_r2.set_xticklabels(groups, rotation=45, ha='right')
                         ax_r2.legend()
                         ax_r2.axhline(y=st.session_state.r2_threshold, color='red', linestyle='--', alpha=0.5, label=f'R² threshold')
@@ -947,6 +1052,19 @@ elif page == "2. Batch Process All Groups":
                                         ('fraction_binding', 'Binding Population (%)'),
                                         ('t_half_diff', 'Diffusion t½ (s)'),
                                         ('t_half_bind', 'Binding t½ (s)'),
+                                    ]
+                                else:  # reaction_diffusion_two_binding
+                                    params = [
+                                        ('mobile_fraction', 'Mobile Fraction (%)'),
+                                        ('k_diff', 'Diffusion Rate (s⁻¹)'),
+                                        ('k_bind1', 'Binding k₁ (s⁻¹)'),
+                                        ('k_bind2', 'Binding k₂ (s⁻¹)'),
+                                        ('fraction_diffusion', 'Diffusion Population (%)'),
+                                        ('fraction_binding1', 'Binding₁ Population (%)'),
+                                        ('fraction_binding2', 'Binding₂ Population (%)'),
+                                        ('t_half_diff', 'Diffusion t½ (s)'),
+                                        ('t_half_bind1', 'Binding₁ t½ (s)'),
+                                        ('t_half_bind2', 'Binding₂ t½ (s)'),
                                     ]
                                 
                                 # Filter to available parameters
