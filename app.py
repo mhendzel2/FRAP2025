@@ -2891,6 +2891,96 @@ elif page == "6. Global Fitting":
                         mime="text/csv",
                         key="download_rec_csv"
                     )
+
+        # Additional CSV table downloads
+        st.markdown("### 📄 Download Tables (CSV)")
+        col_csv1, col_csv2 = st.columns(2)
+
+        with col_csv1:
+            best_overall = st.session_state.get('global_best_overall', 'N/A')
+            most_selected = st.session_state.get('global_most_selected', 'N/A')
+            avg_r2_dict = st.session_state.get('global_avg_r2_by_model', {})
+            total_best_dict = st.session_state.get('global_total_best_counts', {})
+
+            rec_df = pd.DataFrame([
+                {
+                    'Criterion': 'Highest Mean R²',
+                    'Best Model': str(best_overall),
+                    'Value': f"R² = {avg_r2_dict.get(best_overall, 0):.4f}" if isinstance(avg_r2_dict, dict) else str(avg_r2_dict),
+                },
+                {
+                    'Criterion': 'Most Selected (AICc)',
+                    'Best Model': str(most_selected),
+                    'Value': f"{total_best_dict.get(most_selected, 0)} curves" if isinstance(total_best_dict, dict) else str(total_best_dict),
+                },
+                {
+                    'Criterion': 'Recommended',
+                    'Best Model': str(recommendation),
+                    'Value': '',
+                },
+            ])
+
+            st.download_button(
+                "🏆 Download Recommendation Table (CSV)",
+                data=rec_df.to_csv(index=False),
+                file_name="global_model_recommendation.csv",
+                mime="text/csv",
+                key="download_global_recommendation_csv",
+            )
+
+        with col_csv2:
+            label_to_key = {v: k for k, v in model_labels.items()}
+            model_labels_list = list(label_to_key.keys())
+            default_idx = model_labels_list.index(recommendation) if recommendation in model_labels_list else 0
+            chosen_model_label = st.selectbox(
+                "Select model table:",
+                options=model_labels_list,
+                index=default_idx,
+                key="global_model_csv_select",
+            )
+
+            chosen_key = label_to_key.get(chosen_model_label)
+            if chosen_key:
+                all_model_data = []
+                for group_name in stored_groups:
+                    df = st.session_state.global_model_results.get(group_name, {}).get(chosen_key, pd.DataFrame())
+                    if not df.empty:
+                        df_copy = df.copy()
+                        df_copy['Group'] = group_name
+                        all_model_data.append(df_copy)
+
+                if all_model_data:
+                    combined_model = pd.concat(all_model_data, ignore_index=True)
+                    st.download_button(
+                        "📄 Download Selected Model Results (CSV)",
+                        data=combined_model.to_csv(index=False),
+                        file_name=f"global_{chosen_key}_results.csv",
+                        mime="text/csv",
+                        key="download_global_selected_model_csv",
+                    )
+
+                    # Summary statistics (Mean ± SEM) by group, matching the HTML report summary table
+                    try:
+                        numeric_cols = combined_model.select_dtypes(include=[np.number]).columns.tolist()
+                        exclude_cols = ['curve_idx', 'success', 'subpopulation', 'n_subpopulations']
+                        summary_cols = [c for c in numeric_cols if c not in exclude_cols]
+                        if summary_cols and 'Group' in combined_model.columns:
+                            summary_stats = combined_model.groupby('Group')[summary_cols].agg(['mean', 'sem']).round(6)
+                            summary_stats.columns = [f"{col[0]} ({col[1]})" for col in summary_stats.columns]
+                            summary_csv = summary_stats.reset_index().to_csv(index=False)
+                            st.download_button(
+                                "📊 Download Selected Model Summary (CSV)",
+                                data=summary_csv,
+                                file_name=f"global_{chosen_key}_summary_mean_sem.csv",
+                                mime="text/csv",
+                                key="download_global_selected_model_summary_csv",
+                            )
+                        else:
+                            st.caption("No numeric columns available for summary stats.")
+                    except Exception:
+                        st.caption("Could not compute summary statistics for this model.")
+                else:
+                    st.caption("No results available for the selected model.")
         
         # HTML Report Generation
         st.markdown("---")
@@ -3119,15 +3209,166 @@ elif page == "6. Global Fitting":
         
         # Provide download button directly
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        st.download_button(
-            "🌐 Download HTML Report",
-            data=html_template,
-            file_name=f"FRAP_Global_Fitting_Report_{timestamp}.html",
-            mime="text/html",
-            type="secondary",
-            use_container_width=True,
-            key="download_html_report"
-        )
+        col_html, col_pdf = st.columns(2)
+
+        with col_html:
+            st.download_button(
+                "🌐 Download HTML Report",
+                data=html_template,
+                file_name=f"FRAP_Global_Fitting_Report_{timestamp}.html",
+                mime="text/html",
+                type="secondary",
+                use_container_width=True,
+                key="download_html_report"
+            )
+
+        with col_pdf:
+            pdf_bytes = None
+            try:
+                import base64
+                from reportlab.lib import colors
+                from reportlab.lib.pagesizes import letter
+                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                from reportlab.lib.units import inch
+                from reportlab.lib.enums import TA_CENTER
+                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+
+                def _df_to_rl_table(df: pd.DataFrame, max_rows: int = 60, col_widths=None):
+                    if df is None or df.empty:
+                        return None
+                    df2 = df.head(max_rows)
+                    data = [list(df2.columns)] + df2.astype(str).values.tolist()
+                    tbl = Table(data, colWidths=col_widths)
+                    tbl.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                    ]))
+                    return tbl
+
+                def _add_b64_image(story, b64_str: str, title: str):
+                    if not b64_str:
+                        return
+                    try:
+                        raw = base64.b64decode(b64_str)
+                        buf = io.BytesIO(raw)
+                        story.append(Paragraph(title, styles['Heading3']))
+                        story.append(Spacer(1, 0.1 * inch))
+                        story.append(Image(buf, width=6.5 * inch, height=4.0 * inch))
+                        story.append(Spacer(1, 0.2 * inch))
+                    except Exception:
+                        return
+
+                styles = getSampleStyleSheet()
+                if 'GFTitle' not in styles:
+                    styles.add(ParagraphStyle(name='GFTitle', parent=styles['Heading1'], alignment=TA_CENTER, fontSize=16))
+
+                buf = io.BytesIO()
+                doc = SimpleDocTemplate(
+                    buf,
+                    pagesize=letter,
+                    rightMargin=54,
+                    leftMargin=54,
+                    topMargin=54,
+                    bottomMargin=54,
+                    title="FRAP Global Fitting Report",
+                )
+                story = []
+
+                story.append(Paragraph("FRAP Global Fitting Analysis Report", styles['GFTitle']))
+                story.append(Spacer(1, 0.2 * inch))
+                story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+                story.append(Paragraph(f"Groups Analyzed: {', '.join(stored_groups)}", styles['Normal']))
+                story.append(Paragraph(f"Quality Filters: R² ≥ {r2_thresh}, Mobile Fraction: {min_mf}% - {max_mf}%", styles['Normal']))
+                story.append(Spacer(1, 0.25 * inch))
+
+                # Model Fit Quality Summary
+                if not summary_df.empty:
+                    story.append(Paragraph("Model Fit Quality Summary", styles['Heading2']))
+                    tbl = _df_to_rl_table(summary_df, max_rows=80)
+                    if tbl is not None:
+                        story.append(tbl)
+                        story.append(Spacer(1, 0.2 * inch))
+
+                # Model Recommendation
+                story.append(Paragraph("Model Recommendation", styles['Heading2']))
+                rec_data = [
+                    ["Criterion", "Best Model", "Value"],
+                    ["Highest Mean R²", str(best_overall), f"R² = {avg_r2_dict.get(best_overall, 0):.4f}"],
+                    ["Most Selected (AICc)", str(most_selected), f"{total_best_dict.get(most_selected, 0)} curves"],
+                    ["Recommended", str(recommendation), ""],
+                ]
+                rec_tbl = Table(rec_data, colWidths=[2.2 * inch, 2.2 * inch, 2.1 * inch])
+                rec_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                    ('BACKGROUND', (0, -1), (-1, -1), colors.whitesmoke),
+                    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ]))
+                story.append(rec_tbl)
+                story.append(Spacer(1, 0.25 * inch))
+
+                # Per-model summary tables (avoid dumping huge detail tables into PDF)
+                story.append(Paragraph("Per-Model Summary Statistics", styles['Heading2']))
+                for model in all_models:
+                    model_name = model_labels[model]
+                    model_all_data = []
+                    for group_name in stored_groups:
+                        df = st.session_state.global_model_results.get(group_name, {}).get(model, pd.DataFrame())
+                        if not df.empty:
+                            df_copy = df.copy()
+                            df_copy['Group'] = group_name
+                            model_all_data.append(df_copy)
+                    if not model_all_data:
+                        continue
+
+                    model_combined = pd.concat(model_all_data, ignore_index=True)
+                    numeric_cols = model_combined.select_dtypes(include=[np.number]).columns.tolist()
+                    exclude_cols = ['curve_idx', 'success', 'subpopulation', 'n_subpopulations']
+                    summary_cols = [c for c in numeric_cols if c not in exclude_cols]
+
+                    story.append(Paragraph(f"{model_name}", styles['Heading3']))
+                    story.append(Paragraph(f"Curves: {len(model_combined)}", styles['Normal']))
+                    if summary_cols:
+                        summary_stats = model_combined.groupby('Group')[summary_cols].agg(['mean', 'sem']).round(4)
+                        summary_stats.columns = [f"{col[0]} ({col[1]})" for col in summary_stats.columns]
+                        tbl = _df_to_rl_table(summary_stats.reset_index(), max_rows=25)
+                        if tbl is not None:
+                            story.append(tbl)
+                    story.append(Spacer(1, 0.2 * inch))
+
+                # Plots (if available)
+                if 'global_plot_images' in st.session_state and st.session_state.global_plot_images:
+                    story.append(PageBreak())
+                    story.append(Paragraph("Recovery Curves", styles['Heading2']))
+                    imgs = st.session_state.global_plot_images
+                    if 'group_curves' in imgs:
+                        _add_b64_image(story, imgs['group_curves'], "Group Recovery Curves (Mean ± SD)")
+                    if 'group_overlay' in imgs:
+                        _add_b64_image(story, imgs['group_overlay'], "All Groups Overlay")
+
+                doc.build(story)
+                pdf_bytes = buf.getvalue()
+            except Exception:
+                pdf_bytes = None
+
+            if pdf_bytes:
+                st.download_button(
+                    "📑 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"FRAP_Global_Fitting_Report_{timestamp}.pdf",
+                    mime="application/pdf",
+                    type="secondary",
+                    use_container_width=True,
+                    key="download_pdf_report_global"
+                )
+            else:
+                st.caption("PDF report unavailable (missing dependency or generation error).")
 
 # --- Page 7: Report ---
 elif page == "7. Report":
@@ -3288,19 +3529,68 @@ elif page == "7. Report":
                                     filename=report_filename
                                 )
                             else:
-                                st.warning("⚠️ PDF reports are not supported in the enhanced analytical engine yet. Please select HTML.")
+                                # PDF report (printable) via reportlab
+                                try:
+                                    from frap_pdf_reports import generate_pdf_report
+                                except Exception as import_err:
+                                    raise RuntimeError(
+                                        "PDF report generation is unavailable. Ensure 'reportlab' is installed and frap_pdf_reports imports cleanly."
+                                    ) from import_err
+
+                                class _PDFDataManager:
+                                    def __init__(self, analyzers, group_names):
+                                        self.groups = {}
+                                        for group_name in group_names:
+                                            analyzer = analyzers.get(group_name)
+                                            if analyzer is None:
+                                                continue
+
+                                            # Map analyzer -> data_manager.groups[group]['features_df']
+                                            features_df = getattr(analyzer, 'features', None)
+                                            if features_df is None and isinstance(analyzer, dict):
+                                                features_df = analyzer.get('features_df')
+
+                                            # Best-effort list of source files
+                                            files = []
+                                            curves = getattr(analyzer, 'curves', None)
+                                            if curves:
+                                                for c in curves:
+                                                    fp = getattr(c, 'filename', None)
+                                                    if fp:
+                                                        files.append(fp)
+
+                                            self.groups[group_name] = {
+                                                'features_df': features_df,
+                                                'files': files,
+                                            }
+
+                                pdf_dm = _PDFDataManager(st.session_state.data_groups, selected_report_groups)
+                                pdf_settings = st.session_state.get('global_analysis_settings', {})
+                                output_path = generate_pdf_report(
+                                    data_manager=pdf_dm,
+                                    groups_to_compare=selected_report_groups,
+                                    output_filename=report_filename,
+                                    settings=pdf_settings,
+                                )
+                                if not output_path:
+                                    raise RuntimeError("PDF report generation failed (no output file produced).")
+
+                                # Normalize the file we will offer for download below
+                                report_filename = output_path
 
                             
-                            st.success(f"✅ Report generated successfully: {report_filename}")
+                            display_report_name = os.path.basename(str(report_filename))
+                            st.success(f"✅ Report generated successfully: {display_report_name}")
                             
                             # Download button
-                            if os.path.exists(report_filename):
-                                with open(report_filename, "rb") as f:
+                            report_path = str(report_filename)
+                            if os.path.exists(report_path):
+                                with open(report_path, "rb") as f:
                                     mime_type = "text/html" if report_format == "html" else "application/pdf"
                                     st.download_button(
                                         "📥 Download Report", 
                                         f, 
-                                        file_name=report_filename,
+                                        file_name=display_report_name,
                                         mime=mime_type,
                                         use_container_width=True
                                     )
