@@ -6,6 +6,7 @@ pandas>=2.0.0
 plotly>=5.15.0
 psycopg2-binary>=2.9.0
 reportlab>=4.0.0
+pillow>=10.0.0
 roifile>=2023.1.26
 scikit-image>=0.21.0
 scikit-learn>=1.3.0
