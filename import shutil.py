@@ -7,7 +7,7 @@ from pathlib import Path
 # --- CONFIGURATION ---
 # This is the folder the script will flatten by default.
 # I have set it to the folder name usually created when you unzip the file normally.
-DEFAULT_TARGET_DIR = r"C:\Users\mjhen\Downloads\orignal data excel sheets"
+DEFAULT_TARGET_DIR = r"C:\Users\mjhen\Downloads\GFP-PARP2 at DSBs raw data -20260103T033329Z-1-001\GFP-PARP2 at DSBs raw data"
 
 def unique_destination(root: Path, folder_name: str) -> Path:
     """
