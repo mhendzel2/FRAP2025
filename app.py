@@ -3046,10 +3046,63 @@ elif page == "6. Global Fitting":
             else:
                 groups_present = [g for g in selected_groups if len(dom[dom['Group'] == g]) > 0]
 
+                st.markdown("**Pairwise comparisons vs a control (default):**")
+                c1, c2 = st.columns(2)
+                with c1:
+                    bestfit_control_group = st.selectbox(
+                        "Control group (best-fit)",
+                        options=groups_present,
+                        index=0,
+                        key="bestfit_control_group",
+                    )
+                with c2:
+                    bestfit_compare_options = [g for g in groups_present if g != bestfit_control_group]
+                    bestfit_compare_groups = st.multiselect(
+                        "Comparison groups (best-fit)",
+                        options=bestfit_compare_options,
+                        default=bestfit_compare_options,
+                        key="bestfit_compare_groups",
+                    )
+
+                enable_global_bestfit_stats = st.checkbox(
+                    "Enable global best-fit stats (all groups)",
+                    value=False,
+                    help="When enabled, runs a global Kruskal–Wallis (or MWU for 2 groups) across all groups, in addition to pairwise-vs-control comparisons.",
+                    key="bestfit_enable_global_stats",
+                )
+
                 # Choose key parameters to emphasize
                 key_params = []
                 if dominant_model in ['reaction_diffusion', 'reaction_diffusion_two_binding']:
-                    for c in ['diffusion_coefficient_um2_s', 't_half_diffusion_s', 'residence_time_s', 'pop_binding', 'mobile_fraction']:
+                    if dominant_model == 'reaction_diffusion':
+                        candidates = [
+                            'diffusion_coefficient_um2_s',
+                            'k_diff',
+                            'k_off',
+                            't_half_diffusion_s',
+                            't_half_binding_s',
+                            'residence_time_s',
+                            'pop_diffusion',
+                            'pop_binding',
+                            'mobile_fraction',
+                        ]
+                    else:
+                        candidates = [
+                            'diffusion_coefficient_um2_s',
+                            'k_diff',
+                            'k_off1',
+                            'k_off2',
+                            't_half_diffusion_s',
+                            't_half_binding1_s',
+                            't_half_binding2_s',
+                            'residence_time1_s',
+                            'residence_time2_s',
+                            'pop_diffusion',
+                            'pop_binding1',
+                            'pop_binding2',
+                            'mobile_fraction',
+                        ]
+                    for c in candidates:
                         if c in dom.columns:
                             key_params.append(c)
                 elif dominant_model == 'single':
@@ -3081,6 +3134,71 @@ elif page == "6. Global Fitting":
                                 row[p] = f"{vals.median():.4g} (IQR {vals.quantile(0.25):.4g}-{vals.quantile(0.75):.4g})"
                         sum_rows.append(row)
                     st.dataframe(pd.DataFrame(sum_rows), width="stretch")
+
+                    # Pairwise vs-control stats for all key parameters (default)
+                    try:
+                        rng = np.random.default_rng(123)
+                        vs_rows = []
+                        pvals = []
+
+                        def _param_use_log10(param_name: str) -> bool:
+                            if param_name in {'diffusion_coefficient_um2_s'}:
+                                return True
+                            if param_name.startswith('k_'):
+                                return True
+                            if 't_half' in param_name or 'residence_time' in param_name:
+                                return True
+                            return False
+
+                        # Ensure at least one comparison group
+                        plot_groups = [bestfit_control_group] + [g for g in bestfit_compare_groups if g in groups_present]
+                        if len(plot_groups) >= 2:
+                            for col in [p for p in key_params if p in dom.columns]:
+                                use_log10 = _param_use_log10(str(col))
+                                v0 = dom.loc[dom['Group'] == bestfit_control_group, col].dropna().astype(float).values
+                                if use_log10:
+                                    v0 = np.log10(np.clip(v0, 1e-12, np.inf))
+                                if len(v0) < 3:
+                                    continue
+                                for gname in plot_groups[1:]:
+                                    v1 = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
+                                    if use_log10:
+                                        v1 = np.log10(np.clip(v1, 1e-12, np.inf))
+                                    if len(v1) < 3:
+                                        continue
+                                    stat, pval = scipy_stats.mannwhitneyu(v0, v1, alternative='two-sided')
+                                    delta = _cliffs_delta(v0, v1)
+                                    n = int(min(len(v0), len(v1), 800))
+                                    s0 = rng.choice(v0, size=n, replace=True)
+                                    s1 = rng.choice(v1, size=n, replace=True)
+                                    d = s1 - s0
+                                    vs_rows.append({
+                                        'dominant_model': dominant_model,
+                                        'parameter': col,
+                                        'scale': 'log10' if use_log10 else 'linear',
+                                        'control': bestfit_control_group,
+                                        'comparison': gname,
+                                        'test': 'Mann-Whitney U',
+                                        'statistic': float(stat),
+                                        'p_value': float(pval),
+                                        'effect_cliffs_delta': float(delta) if np.isfinite(delta) else np.nan,
+                                        'delta_median_comparison_minus_control': float(np.nanmedian(v1) - np.nanmedian(v0)),
+                                        'delta_ci95_low': float(np.nanquantile(d, 0.025)),
+                                        'delta_ci95_high': float(np.nanquantile(d, 0.975)),
+                                    })
+                                    pvals.append(float(pval))
+
+                        vs_df = pd.DataFrame(vs_rows)
+                        if not vs_df.empty and pvals:
+                            vs_df['q_value_fdr_bh'] = _bh_fdr(np.asarray(pvals, dtype=float))
+                        st.session_state.global_bestfit_vs_control_stats_df = vs_df
+                        if isinstance(vs_df, pd.DataFrame) and not vs_df.empty:
+                            st.markdown("#### Pairwise best-fit comparisons vs control")
+                            st.dataframe(vs_df, width="stretch")
+                        else:
+                            st.caption("No pairwise-vs-control best-fit stats available (insufficient data).")
+                    except Exception:
+                        st.caption("Could not compute pairwise-vs-control best-fit stats.")
 
                     # Violin plots for the per-curve distributions under the dominant model
                     with st.expander("Violin plots (per-curve fitted distributions)", expanded=False):
@@ -3128,23 +3246,8 @@ elif page == "6. Global Fitting":
                                 st.caption("Not enough data to plot (need ≥2 groups and at least one parameter).")
                             else:
                                 st.markdown("**Choose a control group and comparison subset.**")
-                                c1, c2 = st.columns(2)
-                                with c1:
-                                    control_group = st.selectbox(
-                                        "Control group",
-                                        options=groups_present,
-                                        index=0,
-                                        key="bestfit_violin_control",
-                                    )
-                                with c2:
-                                    compare_options = [g for g in groups_present if g != control_group]
-                                    compare_groups = st.multiselect(
-                                        "Comparison groups",
-                                        options=compare_options,
-                                        default=compare_options,
-                                        key="bestfit_violin_compare_groups",
-                                    )
-
+                                control_group = bestfit_control_group
+                                compare_groups = bestfit_compare_groups
                                 plot_groups = [control_group] + [g for g in compare_groups if g in groups_present]
                                 if len(plot_groups) < 2:
                                     st.caption("Select at least one comparison group.")
@@ -3177,55 +3280,6 @@ elif page == "6. Global Fitting":
                                 )
                                 fig.tight_layout(rect=[0, 0, 1, 0.98])
                                 st.pyplot(fig)
-
-                                # Pairwise stats vs control for the plotted parameters
-                                try:
-                                    rng = np.random.default_rng(123)
-                                    vs_rows = []
-                                    pvals = []
-                                    for (col, _, use_log10) in plot_specs:
-                                        v0 = dom.loc[dom['Group'] == control_group, col].dropna().astype(float).values
-                                        if use_log10:
-                                            v0 = np.log10(np.clip(v0, 1e-12, np.inf))
-                                        if len(v0) < 3:
-                                            continue
-                                        for gname in plot_groups[1:]:
-                                            v1 = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
-                                            if use_log10:
-                                                v1 = np.log10(np.clip(v1, 1e-12, np.inf))
-                                            if len(v1) < 3:
-                                                continue
-                                            stat, pval = scipy_stats.mannwhitneyu(v0, v1, alternative='two-sided')
-                                            delta = _cliffs_delta(v0, v1)
-                                            n = int(min(len(v0), len(v1), 800))
-                                            s0 = rng.choice(v0, size=n, replace=True)
-                                            s1 = rng.choice(v1, size=n, replace=True)
-                                            d = s1 - s0
-                                            vs_rows.append({
-                                                'dominant_model': dominant_model,
-                                                'parameter': col,
-                                                'control': control_group,
-                                                'comparison': gname,
-                                                'test': 'Mann-Whitney U',
-                                                'statistic': float(stat),
-                                                'p_value': float(pval),
-                                                'effect_cliffs_delta': float(delta) if np.isfinite(delta) else np.nan,
-                                                'delta_median_comparison_minus_control': float(np.nanmedian(v1) - np.nanmedian(v0)),
-                                                'delta_ci95_low': float(np.nanquantile(d, 0.025)),
-                                                'delta_ci95_high': float(np.nanquantile(d, 0.975)),
-                                            })
-                                            pvals.append(float(pval))
-
-                                    vs_df = pd.DataFrame(vs_rows)
-                                    if not vs_df.empty and pvals:
-                                        vs_df['q_value_fdr_bh'] = _bh_fdr(np.asarray(pvals, dtype=float))
-                                    st.session_state.global_bestfit_vs_control_stats_df = vs_df
-                                    if not vs_df.empty:
-                                        st.markdown("**Pairwise statistics vs control (for plotted parameters)**")
-                                        st.dataframe(vs_df, width="stretch")
-                                except Exception:
-                                    st.caption("Could not compute pairwise statistics vs control for the violin plots.")
-
                                 try:
                                     st.session_state.global_plot_images['bestfit_dominant_violin'] = _fig_to_b64(fig)
                                     st.session_state.global_plot_images['bestfit_dominant_violin_control'] = str(control_group)
@@ -3236,37 +3290,44 @@ elif page == "6. Global Fitting":
                         except Exception:
                             st.caption("Could not generate violin plots for best-fit dominant model distributions.")
 
-                    # Stats (pairwise for 2 groups, KW for >2) + FDR
-                    stat_rows = []
-                    # (global test across all groups still reported below)
-                    for p in key_params:
-                        arrays = [dom[dom['Group'] == g][p].dropna().astype(float).values for g in groups_present]
-                        if len(groups_present) < 2 or not all(len(a) >= 3 for a in arrays[:2]):
-                            continue
-                        try:
-                            if len(groups_present) == 2:
-                                stat, pval = scipy_stats.mannwhitneyu(arrays[0], arrays[1], alternative='two-sided')
-                                delta = _cliffs_delta(arrays[0], arrays[1])
-                                test = 'Mann-Whitney U'
-                            else:
-                                stat, pval = scipy_stats.kruskal(*arrays)
-                                delta = np.nan
-                                test = 'Kruskal-Wallis'
-                            stat_rows.append({'Parameter': p, 'Test': test, 'Statistic': float(stat), 'p_value': float(pval), 'effect_cliffs_delta': float(delta)})
-                        except Exception:
-                            continue
+                    # Optional: global best-fit stats across all groups
+                    if enable_global_bestfit_stats:
+                        stat_rows = []
+                        for p in key_params:
+                            arrays = [dom[dom['Group'] == g][p].dropna().astype(float).values for g in groups_present]
+                            if len(groups_present) < 2 or not all(len(a) >= 3 for a in arrays[:2]):
+                                continue
+                            try:
+                                if len(groups_present) == 2:
+                                    stat, pval = scipy_stats.mannwhitneyu(arrays[0], arrays[1], alternative='two-sided')
+                                    delta = _cliffs_delta(arrays[0], arrays[1])
+                                    test = 'Mann-Whitney U'
+                                else:
+                                    stat, pval = scipy_stats.kruskal(*arrays)
+                                    delta = np.nan
+                                    test = 'Kruskal-Wallis'
+                                stat_rows.append({'Parameter': p, 'Test': test, 'Statistic': float(stat), 'p_value': float(pval), 'effect_cliffs_delta': float(delta)})
+                            except Exception:
+                                continue
 
-                    if stat_rows:
-                        stat_df = pd.DataFrame(stat_rows)
-                        stat_df['q_value_fdr_bh'] = _bh_fdr(stat_df['p_value'].tolist())
-                        st.session_state.global_bestfit_group_stats_df = stat_df
-                        st.dataframe(
-                            stat_df.assign(
-                                p_value=stat_df['p_value'].map(lambda v: f"{v:.3g}"),
-                                q_value_fdr_bh=pd.Series(stat_df['q_value_fdr_bh']).map(lambda v: f"{v:.3g}" if np.isfinite(v) else ""),
-                            ),
-                            width="stretch",
-                        )
+                        if stat_rows:
+                            stat_df = pd.DataFrame(stat_rows)
+                            stat_df['q_value_fdr_bh'] = _bh_fdr(stat_df['p_value'].tolist())
+                            st.session_state.global_bestfit_group_stats_df = stat_df
+                            st.markdown("#### Global best-fit statistics (all groups)")
+                            st.dataframe(
+                                stat_df.assign(
+                                    p_value=stat_df['p_value'].map(lambda v: f"{v:.3g}"),
+                                    q_value_fdr_bh=pd.Series(stat_df['q_value_fdr_bh']).map(lambda v: f"{v:.3g}" if np.isfinite(v) else ""),
+                                ),
+                                width="stretch",
+                            )
+                        else:
+                            st.session_state.global_bestfit_group_stats_df = pd.DataFrame()
+                            st.caption("No global best-fit stats available.")
+                    else:
+                        # Avoid exporting stale global stats into reports when disabled.
+                        st.session_state.global_bestfit_group_stats_df = pd.DataFrame()
 
         # Optional: legacy per-model comparisons retained for deep dives
         with st.expander("(Optional) Per-model comparisons (legacy)", expanded=False):
