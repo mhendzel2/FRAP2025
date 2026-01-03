@@ -10,6 +10,7 @@ import tempfile
 import os
 import shutil
 import openpyxl  # For Excel file support
+import json
 
 # Import our new enhanced modules
 from frap_input_handler import FRAPInputHandler, FRAPCurveData
@@ -39,6 +40,32 @@ st.set_page_config(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _physical_presets_path() -> str:
+    return os.path.join(os.path.dirname(__file__), 'physical_parameter_presets.json')
+
+
+def _load_physical_presets() -> list:
+    path = _physical_presets_path()
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [p for p in data if isinstance(p, dict) and 'name' in p]
+    except Exception as e:
+        logger.warning(f"Failed to load physical presets: {e}")
+    return []
+
+
+def _save_physical_presets(presets: list) -> None:
+    path = _physical_presets_path()
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(presets, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save physical presets: {e}")
+
 # --- Session State Management ---
 if 'data_groups' not in st.session_state:
     st.session_state.data_groups = {} # {group_name: FRAPGroupAnalyzer}
@@ -53,6 +80,20 @@ if 'bleach_radius' not in st.session_state:
     st.session_state.bleach_radius = 1.0  # microns
 if 'pixel_size' not in st.session_state:
     st.session_state.pixel_size = 0.065  # microns/pixel
+
+# Physical-parameter presets (persisted to a small JSON file)
+if 'physical_param_presets' not in st.session_state:
+    loaded = _load_physical_presets()
+    if not loaded:
+        loaded = [{
+            'name': 'Default',
+            'bleach_radius_um': float(st.session_state.bleach_radius),
+            'pixel_size_um_per_px': float(st.session_state.pixel_size),
+        }]
+    st.session_state.physical_param_presets = loaded
+
+if 'physical_preset_name' not in st.session_state:
+    st.session_state.physical_preset_name = 'Default'
 # Multi-model comparison results
 if 'model_comparison_results' not in st.session_state:
     st.session_state.model_comparison_results = {}  # {group_name: {'double': df, 'triple': df}}
@@ -74,24 +115,94 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Experimental Parameters")
 
 with st.sidebar.expander("🔬 Physical Parameters", expanded=False):
-    st.session_state.bleach_radius = st.number_input(
+    def _apply_selected_physical_preset():
+        name = st.session_state.get('physical_preset_name')
+        if not name or name == 'Custom':
+            return
+        presets = st.session_state.get('physical_param_presets') or []
+        preset = next((p for p in presets if p.get('name') == name), None)
+        if not preset:
+            return
+        # Update widget-backed state so number_input fields change immediately.
+        st.session_state['bleach_radius_input'] = float(preset.get('bleach_radius_um', st.session_state.bleach_radius))
+        st.session_state['pixel_size_input'] = float(preset.get('pixel_size_um_per_px', st.session_state.pixel_size))
+
+    preset_names = [p.get('name') for p in (st.session_state.get('physical_param_presets') or []) if p.get('name')]
+    options = preset_names + ['Custom']
+    if st.session_state.physical_preset_name not in options:
+        st.session_state.physical_preset_name = options[0] if options else 'Custom'
+
+    st.selectbox(
+        "Parameter preset",
+        options=options,
+        key='physical_preset_name',
+        on_change=_apply_selected_physical_preset,
+        help="Select a saved physical-parameter preset, or choose Custom to enter new values."
+    )
+
+    # Widget-backed values (so presets can update them)
+    if 'bleach_radius_input' not in st.session_state:
+        st.session_state['bleach_radius_input'] = float(st.session_state.bleach_radius)
+    if 'pixel_size_input' not in st.session_state:
+        st.session_state['pixel_size_input'] = float(st.session_state.pixel_size)
+
+    st.number_input(
         "Bleach Region Radius (µm)",
         min_value=0.1,
         max_value=50.0,
-        value=st.session_state.bleach_radius,
+        value=float(st.session_state['bleach_radius_input']),
         step=0.1,
+        key='bleach_radius_input',
         help="Radius of the bleached region in micrometers"
     )
-    
-    st.session_state.pixel_size = st.number_input(
+
+    st.number_input(
         "Pixel Size (µm/pixel)",
         min_value=0.001,
         max_value=1.0,
-        value=st.session_state.pixel_size,
+        value=float(st.session_state['pixel_size_input']),
         step=0.001,
         format="%.3f",
+        key='pixel_size_input',
         help="Size of one pixel in micrometers"
     )
+
+    # Copy widget values to the canonical session values used throughout the app
+    st.session_state.bleach_radius = float(st.session_state['bleach_radius_input'])
+    st.session_state.pixel_size = float(st.session_state['pixel_size_input'])
+
+    with st.expander("💾 Save as preset", expanded=False):
+        new_name = st.text_input("Preset name", value="", key='physical_preset_new_name')
+        if st.button("Save preset", key='save_physical_preset_btn'):
+            name = (new_name or '').strip()
+            if not name:
+                st.error("Enter a preset name.")
+            elif name.lower() == 'custom':
+                st.error("'Custom' is reserved.")
+            else:
+                presets = st.session_state.get('physical_param_presets') or []
+                presets = [p for p in presets if isinstance(p, dict) and p.get('name')]
+                # Upsert by name
+                updated = {
+                    'name': name,
+                    'bleach_radius_um': float(st.session_state.bleach_radius),
+                    'pixel_size_um_per_px': float(st.session_state.pixel_size),
+                }
+                replaced = False
+                for i, p in enumerate(presets):
+                    if p.get('name') == name:
+                        presets[i] = updated
+                        replaced = True
+                        break
+                if not replaced:
+                    presets.append(updated)
+
+                st.session_state.physical_param_presets = presets
+                _save_physical_presets(presets)
+                st.session_state.physical_preset_name = name
+                _apply_selected_physical_preset()
+                st.success("Preset saved.")
+        st.caption(f"Presets are stored in: {_physical_presets_path()}")
     
     # Calculate bleach radius in pixels
     bleach_radius_pixels = st.session_state.bleach_radius / st.session_state.pixel_size
