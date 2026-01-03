@@ -3125,6 +3125,34 @@ elif page == "6. Global Fitting":
                             if not plot_specs or len(groups_present) < 2:
                                 st.caption("Not enough data to plot (need ≥2 groups and at least one parameter).")
                             else:
+                                # Pairwise selector for multi-condition experiments
+                                pair_groups = groups_present
+                                if len(groups_present) > 2:
+                                    c1, c2 = st.columns(2)
+                                    default_a = groups_present[0]
+                                    default_b = groups_present[1] if len(groups_present) > 1 else groups_present[0]
+                                    with c1:
+                                        gA = st.selectbox(
+                                            "Group A",
+                                            options=groups_present,
+                                            index=0,
+                                            key="bestfit_violin_group_a",
+                                        )
+                                    with c2:
+                                        gB_options = [g for g in groups_present if g != gA]
+                                        if not gB_options:
+                                            gB_options = groups_present
+                                        idx_b = 0
+                                        if default_b in gB_options:
+                                            idx_b = gB_options.index(default_b)
+                                        gB = st.selectbox(
+                                            "Group B",
+                                            options=gB_options,
+                                            index=idx_b,
+                                            key="bestfit_violin_group_b",
+                                        )
+                                    pair_groups = [gA, gB]
+
                                 nrows = len(plot_specs)
                                 fig, axes = plt.subplots(nrows=nrows, ncols=1, figsize=(10, 2.4 * nrows), sharex=True)
                                 if nrows == 1:
@@ -3132,7 +3160,7 @@ elif page == "6. Global Fitting":
 
                                 for ax, (col, ylabel, use_log10) in zip(axes, plot_specs):
                                     data = []
-                                    for gname in groups_present:
+                                    for gname in pair_groups:
                                         vals = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
                                         if use_log10:
                                             vals = np.log10(np.clip(vals, 1e-12, np.inf))
@@ -3144,13 +3172,21 @@ elif page == "6. Global Fitting":
                                     ax.set_ylabel(ylabel)
                                     ax.grid(True, alpha=0.2)
 
-                                axes[-1].set_xticks(range(1, len(groups_present) + 1))
-                                axes[-1].set_xticklabels(groups_present, rotation=30, ha='right')
-                                fig.suptitle(f"Per-curve distributions under dominant model: {model_labels.get(dominant_model, dominant_model)}", y=0.995)
+                                axes[-1].set_xticks(range(1, len(pair_groups) + 1))
+                                axes[-1].set_xticklabels(pair_groups, rotation=30, ha='right')
+                                fig.suptitle(
+                                    f"Per-curve distributions under dominant model: {model_labels.get(dominant_model, dominant_model)}",
+                                    y=0.995,
+                                )
                                 fig.tight_layout(rect=[0, 0, 1, 0.98])
                                 st.pyplot(fig)
                                 try:
                                     st.session_state.global_plot_images['bestfit_dominant_violin'] = _fig_to_b64(fig)
+                                    # Store a dedicated key for the currently selected pair, for report embedding.
+                                    if len(pair_groups) == 2:
+                                        pair_key = f"bestfit_dominant_violin_pair__{pair_groups[0]}__vs__{pair_groups[1]}"
+                                        st.session_state.global_plot_images['bestfit_dominant_violin_pair'] = st.session_state.global_plot_images['bestfit_dominant_violin']
+                                        st.session_state.global_plot_images[pair_key] = st.session_state.global_plot_images['bestfit_dominant_violin']
                                 except Exception:
                                     pass
                                 plt.close(fig)
@@ -4210,9 +4246,9 @@ elif page == "6. Global Fitting":
                 # Best-fit dominant-model violin plots (per-curve distributions)
                 try:
                     imgs = st.session_state.get('global_plot_images', {})
-                    if isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
+                    if isinstance(imgs, dict) and (imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')):
                         html_parts.append("<h3>Best-Fit Distributions (Dominant Model Violin Plots)</h3>")
-                        img = imgs.get('bestfit_dominant_violin')
+                        img = imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')
                         html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
                 except Exception:
                     pass
@@ -4533,8 +4569,12 @@ elif page == "6. Global Fitting":
                         # Best-fit dominant-model violin plots (per-curve distributions)
                         try:
                             imgs = st.session_state.get('global_plot_images', {})
-                            if isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
-                                _add_b64_image(story, imgs.get('bestfit_dominant_violin'), "Best-Fit Distributions (Dominant Model Violin Plots)")
+                            if isinstance(imgs, dict) and (imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')):
+                                _add_b64_image(
+                                    story,
+                                    imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin'),
+                                    "Best-Fit Distributions (Dominant Model Violin Plots)",
+                                )
                         except Exception:
                             pass
 
