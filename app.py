@@ -2020,54 +2020,47 @@ elif page == "6. Global Fitting":
             status_text.markdown("### Step 2: Detecting subpopulations...")
             
             for group_name in selected_groups:
-                for model in all_models:
-                    df = st.session_state.global_model_results[group_name].get(model, pd.DataFrame())
-                    if df.empty or len(df) < 5:
-                        continue
-                    
-                    # Select clustering features based on model
-                    if model == 'single':
-                        cluster_cols = ['mobile_fraction', 'k1']
-                    elif model == 'double':
-                        cluster_cols = ['mobile_fraction', 'k1', 'k2', 'pop1_fraction']
-                    elif model == 'triple':
-                        cluster_cols = ['mobile_fraction', 'k1', 'k2', 'k3', 'pop1_fraction', 'pop2_fraction']
-                    elif model == 'reaction_diffusion':
-                        cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind', 'pop_diffusion']
-                    else:  # reaction_diffusion_two_binding
-                        cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind1', 'k_bind2', 'pop_diffusion']
-                    
-                    cluster_cols = [c for c in cluster_cols if c in df.columns]
-                    if not cluster_cols:
-                        continue
-                    
-                    X = df[cluster_cols].dropna()
-                    if len(X) < 5:
-                        continue
-                    
-                    # Standardize
-                    from sklearn.preprocessing import StandardScaler
-                    scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-                    
-                    # Find optimal number of clusters
-                    best_n = 1
-                    best_bic = np.inf
-                    for n in range(1, min(max_subpops + 1, len(X))):
-                        gmm = GaussianMixture(n_components=n, random_state=42, n_init=3)
-                        gmm.fit(X_scaled)
-                        bic = gmm.bic(X_scaled)
-                        if bic < best_bic:
-                            best_bic = bic
-                            best_n = n
-                    
-                    # Assign subpopulations
-                    gmm = GaussianMixture(n_components=best_n, random_state=42, n_init=3)
-                    labels = gmm.fit_predict(X_scaled)
-                    
-                    df.loc[X.index, 'subpopulation'] = labels
-                    df.loc[X.index, 'n_subpopulations'] = best_n
-                    st.session_state.global_model_results[group_name][model] = df
+                # Subpopulations are determined using a single consistent fitting model per group.
+                # Default to Reaction-Diffusion, since it is typically the best and is used for
+                # recovery-curve overlays and subpopulation plots.
+                model = 'reaction_diffusion'
+                df = st.session_state.global_model_results[group_name].get(model, pd.DataFrame())
+                if df.empty or len(df) < 5:
+                    continue
+
+                # Cluster on kinetics from the chosen model
+                cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind', 'pop_diffusion']
+                cluster_cols = [c for c in cluster_cols if c in df.columns]
+                if not cluster_cols:
+                    continue
+
+                X = df[cluster_cols].dropna()
+                if len(X) < 5:
+                    continue
+
+                # Standardize
+                from sklearn.preprocessing import StandardScaler
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+
+                # Find optimal number of clusters
+                best_n = 1
+                best_bic = np.inf
+                for n in range(1, min(max_subpops + 1, len(X))):
+                    gmm = GaussianMixture(n_components=n, random_state=42, n_init=3)
+                    gmm.fit(X_scaled)
+                    bic = gmm.bic(X_scaled)
+                    if bic < best_bic:
+                        best_bic = bic
+                        best_n = n
+
+                # Assign subpopulations
+                gmm = GaussianMixture(n_components=best_n, random_state=42, n_init=3)
+                labels = gmm.fit_predict(X_scaled)
+
+                df.loc[X.index, 'subpopulation'] = labels
+                df.loc[X.index, 'n_subpopulations'] = best_n
+                st.session_state.global_model_results[group_name][model] = df
         
         overall_progress.progress(0.7)
         
@@ -2079,6 +2072,19 @@ elif page == "6. Global Fitting":
         
         st.markdown("---")
         st.header("📈 Analysis Results")
+
+        # Storage for report assets (plots/tables) generated in this section
+        if 'global_plot_images' not in st.session_state or not isinstance(st.session_state.global_plot_images, dict):
+            st.session_state.global_plot_images = {}
+
+        import base64
+        import io
+
+        def _fig_to_b64(fig) -> str:
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode('utf-8')
         
         # --- Section 1: Model Fit Quality Overview ---
         st.subheader("🏆 Model Fit Quality Overview")
@@ -2129,6 +2135,10 @@ elif page == "6. Global Fitting":
         ax_r2.set_ylim(0.5, 1.05)
         plt.tight_layout()
         st.pyplot(fig_r2)
+        try:
+            st.session_state.global_plot_images['fit_quality_comparison'] = _fig_to_b64(fig_r2)
+        except Exception:
+            pass
         plt.close(fig_r2)
         
         # --- Section 2: Per-Model Group Comparisons ---
@@ -2282,6 +2292,10 @@ elif page == "6. Global Fitting":
                     
                     plt.tight_layout()
                     st.pyplot(fig_kin)
+                    try:
+                        st.session_state.global_plot_images[f'kinetic_distributions_{model}'] = _fig_to_b64(fig_kin)
+                    except Exception:
+                        pass
                     plt.close(fig_kin)
                 
                 # Population Fraction Plots
@@ -2314,6 +2328,10 @@ elif page == "6. Global Fitting":
                     ax_pop.set_ylim(0, 110)
                     plt.tight_layout()
                     st.pyplot(fig_pop)
+                    try:
+                        st.session_state.global_plot_images[f'population_fractions_{model}'] = _fig_to_b64(fig_pop)
+                    except Exception:
+                        pass
                     plt.close(fig_pop)
                 
                 # Statistical Tests
@@ -3019,6 +3037,24 @@ elif page == "6. Global Fitting":
         if not summary_df.empty:
             html_parts.append("<h2>📊 Model Fit Quality Summary</h2>")
             html_parts.append(summary_df.to_html(index=False, classes='summary-table'))
+
+            # Group-level pivot table (Mean R² by Group × Model)
+            try:
+                r2_pivot = summary_df.pivot(index='Group', columns='Model', values='Mean_R2')
+                html_parts.append("<h3>Mean R² by Group and Model</h3>")
+                html_parts.append(r2_pivot.to_html(classes='stats-table', float_format=lambda x: f"{x:.4f}" if pd.notnull(x) else ""))
+            except Exception:
+                pass
+
+            # Fit-quality comparison plot (captured from analysis run)
+            try:
+                imgs = st.session_state.get('global_plot_images', {})
+                img = imgs.get('fit_quality_comparison')
+                if img:
+                    html_parts.append("<h3>Model Fit Quality Comparison Plot</h3>")
+                    html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+            except Exception:
+                pass
         
         # Best Model Recommendation
         html_parts.append(f"""
@@ -3060,6 +3096,22 @@ elif page == "6. Global Fitting":
                     summary_stats = model_combined.groupby('Group')[summary_cols].agg(['mean', 'sem']).round(4)
                     summary_stats.columns = [f"{col[0]} ({col[1]})" for col in summary_stats.columns]
                     html_parts.append(summary_stats.to_html(classes='stats-table'))
+
+                # Graphs (captured from analysis run)
+                try:
+                    imgs = st.session_state.get('global_plot_images', {})
+                    kin_key = f'kinetic_distributions_{model}'
+                    pop_key = f'population_fractions_{model}'
+
+                    if imgs.get(kin_key):
+                        html_parts.append("<h3>Kinetic Parameter Distributions</h3>")
+                        html_parts.append(f'<img src="data:image/png;base64,{imgs[kin_key]}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+
+                    if imgs.get(pop_key):
+                        html_parts.append("<h3>Population Fractions by Group</h3>")
+                        html_parts.append(f'<img src="data:image/png;base64,{imgs[pop_key]}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                except Exception:
+                    pass
                 
                 # Statistical comparisons between groups
                 if len(stored_groups) >= 2:
@@ -3092,10 +3144,9 @@ elif page == "6. Global Fitting":
                         """)
                         html_parts.extend(stat_rows)
                         html_parts.append("</tbody></table>")
-                
-                # Full data table
-                html_parts.append(f"<h3>Detailed Results ({len(model_combined)} curves)</h3>")
-                html_parts.append(model_combined.to_html(index=False, classes='data-table'))
+
+                    # NOTE: Per-curve (individual file) tables are intentionally not embedded in the HTML report.
+                    # Use the CSV export buttons to download raw per-curve results.
             else:
                 html_parts.append("<p><i>No successful fits for this model.</i></p>")
             
@@ -3295,6 +3346,14 @@ elif page == "6. Global Fitting":
                         story.append(tbl)
                         story.append(Spacer(1, 0.2 * inch))
 
+                    # Fit-quality plot (captured from analysis run)
+                    try:
+                        imgs = st.session_state.get('global_plot_images', {})
+                        if isinstance(imgs, dict) and imgs.get('fit_quality_comparison'):
+                            _add_b64_image(story, imgs.get('fit_quality_comparison'), "Model Fit Quality Comparison")
+                    except Exception:
+                        pass
+
                 # Model Recommendation
                 story.append(Paragraph("Model Recommendation", styles['Heading2']))
                 rec_data = [
@@ -3343,6 +3402,19 @@ elif page == "6. Global Fitting":
                         if tbl is not None:
                             story.append(tbl)
                     story.append(Spacer(1, 0.2 * inch))
+
+                    # Captured plots for this model (if available)
+                    try:
+                        imgs = st.session_state.get('global_plot_images', {})
+                        if isinstance(imgs, dict):
+                            kin_key = f'kinetic_distributions_{model}'
+                            pop_key = f'population_fractions_{model}'
+                            if imgs.get(kin_key):
+                                _add_b64_image(story, imgs.get(kin_key), f"{model_name}: Kinetic Distributions")
+                            if imgs.get(pop_key):
+                                _add_b64_image(story, imgs.get(pop_key), f"{model_name}: Population Fractions")
+                    except Exception:
+                        pass
 
                 # Plots (if available)
                 if 'global_plot_images' in st.session_state and st.session_state.global_plot_images:
