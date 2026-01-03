@@ -1836,14 +1836,14 @@ elif page == "6. Global Fitting":
     st.header("🔬 Comprehensive Model Fitting & Group Comparison")
     
     st.markdown("""
-    **Comprehensive Analysis** fits all models to all curves and provides statistical comparisons between groups.
-    
-    ### Features:
-    - **All models fitted**: Single, Double, Triple exponential, Reaction-Diffusion, and Reaction-Diffusion (Two Binding)
-    - **Same model applied across conditions**: Compare groups using identical model parameters
-    - **Statistical comparisons**: Each kinetic parameter compared between groups
-    - **Population analysis**: Component fractions and kinetic properties
-    - **Subpopulation detection**: GMM clustering within each group
+    **Comprehensive Analysis** fits all models to all curves, selects the **best model per curve** (AICc),
+    detects **within-group kinetic subpopulations**, and compares groups using **best-fit-derived kinetics**.
+
+    ### Outputs:
+    - **All fits** (curve × model) saved/exportable as CSV
+    - **Best fit per curve** (used for comparisons)
+    - **Within-group subpopulations** (e.g., missing binding subpopulation)
+    - **Reports emphasize summaries + statistics + visualization** (raw details exported as CSV)
     """)
     
     if len(st.session_state.data_groups) < 1:
@@ -1947,6 +1947,49 @@ elif page == "6. Global Fitting":
         from frap_core import FRAPAnalysisCore
         from scipy import stats as scipy_stats
         from sklearn.mixture import GaussianMixture
+
+        def _akaike_weights(aicc_by_model: dict) -> dict:
+            finite = {m: float(v) for m, v in aicc_by_model.items() if v is not None and np.isfinite(v)}
+            if not finite:
+                return {}
+            min_aicc = min(finite.values())
+            weights = {m: np.exp(-0.5 * (v - min_aicc)) for m, v in finite.items()}
+            denom = float(np.sum(list(weights.values())))
+            if denom <= 0:
+                return {}
+            return {m: float(w / denom) for m, w in weights.items()}
+
+        def _bh_fdr(pvals: list[float]) -> list[float]:
+            p = np.asarray(pvals, dtype=float)
+            q = np.full_like(p, np.nan, dtype=float)
+            ok = np.isfinite(p)
+            if not np.any(ok):
+                return q.tolist()
+            p_ok = p[ok]
+            order = np.argsort(p_ok)
+            ranked = p_ok[order]
+            m = float(len(ranked))
+            q_ranked = ranked * (m / (np.arange(1, len(ranked) + 1, dtype=float)))
+            q_ranked = np.minimum.accumulate(q_ranked[::-1])[::-1]
+            q_ok = np.empty_like(q_ranked)
+            q_ok[order] = np.clip(q_ranked, 0.0, 1.0)
+            q[ok] = q_ok
+            return q.tolist()
+
+        def _cliffs_delta(x: np.ndarray, y: np.ndarray) -> float:
+            x = np.asarray(x, dtype=float)
+            y = np.asarray(y, dtype=float)
+            x = x[np.isfinite(x)]
+            y = y[np.isfinite(y)]
+            if len(x) == 0 or len(y) == 0:
+                return np.nan
+            # O(n*m) but typically small datasets; avoids new dependencies.
+            gt = 0
+            lt = 0
+            for xv in x:
+                gt += int(np.sum(xv > y))
+                lt += int(np.sum(xv < y))
+            return (gt - lt) / float(len(x) * len(y))
         
         # Initialize results storage
         if 'global_model_results' not in st.session_state:
@@ -1962,7 +2005,17 @@ elif page == "6. Global Fitting":
         
         st.session_state.global_model_results = {}
         st.session_state.global_raw_curves = {}  # Store raw curve data for plotting
+        st.session_state.global_all_fits_df = pd.DataFrame()
+        st.session_state.global_best_fits_df = pd.DataFrame()
+        st.session_state.global_population_summary_df = pd.DataFrame()
+        st.session_state.global_bestfit_group_stats_df = pd.DataFrame()
+        st.session_state.global_bestfit_model_composition_df = pd.DataFrame()
         best_model_summary = []
+
+        all_fit_rows: list[dict] = []
+        best_fit_rows: list[dict] = []
+
+        bleach_radius_um = float(getattr(st.session_state, 'bleach_radius', 1.0) or 1.0)
         
         for g_idx, group_name in enumerate(selected_groups):
             status_text.markdown(f"### Fitting models for **{group_name}** ({g_idx+1}/{len(selected_groups)})")
@@ -2012,6 +2065,7 @@ elif page == "6. Global Fitting":
                             if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
                                 model_results['single'].append(result)
                                 curve_fits['single'] = result
+                                all_fit_rows.append({**result, 'Group': group_name})
                 except Exception:
                     pass
                 
@@ -2041,6 +2095,7 @@ elif page == "6. Global Fitting":
                             if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
                                 model_results['double'].append(result)
                                 curve_fits['double'] = result
+                                all_fit_rows.append({**result, 'Group': group_name})
                 except Exception:
                     pass
                 
@@ -2072,6 +2127,7 @@ elif page == "6. Global Fitting":
                             if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
                                 model_results['triple'].append(result)
                                 curve_fits['triple'] = result
+                                all_fit_rows.append({**result, 'Group': group_name})
                 except Exception:
                     pass
                 
@@ -2081,18 +2137,25 @@ elif page == "6. Global Fitting":
                     if fit and fit.get('success', False):
                         params = fit.get('params', [])
                         if len(params) >= 5:
-                            A_diff, k_diff, A_bind, k_bind, C = params[:5]
+                            A_diff, k_diff, A_bind, k_off, C = params[:5]
                             total_A = A_diff + A_bind
                             # Mobile fraction = plateau intensity = (A_diff + A_bind + C) × 100%
                             endpoint = total_A + C
+
+                            diffusion_coefficient = (bleach_radius_um ** 2) * float(k_diff) / 4.0 if k_diff > 0 else np.nan
+                            residence_time = 1.0 / float(k_off) if k_off > 0 else np.nan
+
                             result = {
                                 'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
                                 'mobile_fraction': endpoint * 100,
-                                'k_diff': k_diff, 'k_bind': k_bind,
-                                't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
-                                't_half_bind': np.log(2) / k_bind if k_bind > 0 else np.nan,
+                                'k_diff': k_diff,
+                                'k_off': k_off,
+                                'diffusion_coefficient_um2_s': diffusion_coefficient,
+                                't_half_diffusion_s': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                't_half_binding_s': np.log(2) / k_off if k_off > 0 else np.nan,
+                                'residence_time_s': residence_time,
                                 'pop_diffusion': A_diff / total_A * 100 if total_A > 0 else np.nan,
                                 'pop_binding': A_bind / total_A * 100 if total_A > 0 else np.nan,
                             }
@@ -2101,6 +2164,7 @@ elif page == "6. Global Fitting":
                             if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
                                 model_results['reaction_diffusion'].append(result)
                                 curve_fits['reaction_diffusion'] = result
+                                all_fit_rows.append({**result, 'Group': group_name})
                 except Exception:
                     pass
 
@@ -2110,19 +2174,29 @@ elif page == "6. Global Fitting":
                     if fit and fit.get('success', False):
                         params = fit.get('params', [])
                         if len(params) >= 7:
-                            A_diff, k_diff, A_bind1, k_bind1, A_bind2, k_bind2, C = params[:7]
+                            A_diff, k_diff, A_bind1, k_off1, A_bind2, k_off2, C = params[:7]
                             total_A = A_diff + A_bind1 + A_bind2
                             # Mobile fraction = plateau intensity = (A_diff + A_bind1 + A_bind2 + C) × 100%
                             endpoint = total_A + C
+
+                            diffusion_coefficient = (bleach_radius_um ** 2) * float(k_diff) / 4.0 if k_diff > 0 else np.nan
+                            residence_time_1 = 1.0 / float(k_off1) if k_off1 > 0 else np.nan
+                            residence_time_2 = 1.0 / float(k_off2) if k_off2 > 0 else np.nan
+
                             result = {
                                 'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion_two_binding',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
                                 'mobile_fraction': endpoint * 100,
-                                'k_diff': k_diff, 'k_bind1': k_bind1, 'k_bind2': k_bind2,
-                                't_half_diff': np.log(2) / k_diff if k_diff > 0 else np.nan,
-                                't_half_bind1': np.log(2) / k_bind1 if k_bind1 > 0 else np.nan,
-                                't_half_bind2': np.log(2) / k_bind2 if k_bind2 > 0 else np.nan,
+                                'k_diff': k_diff,
+                                'k_off1': k_off1,
+                                'k_off2': k_off2,
+                                'diffusion_coefficient_um2_s': diffusion_coefficient,
+                                't_half_diffusion_s': np.log(2) / k_diff if k_diff > 0 else np.nan,
+                                't_half_binding1_s': np.log(2) / k_off1 if k_off1 > 0 else np.nan,
+                                't_half_binding2_s': np.log(2) / k_off2 if k_off2 > 0 else np.nan,
+                                'residence_time1_s': residence_time_1,
+                                'residence_time2_s': residence_time_2,
                                 'pop_diffusion': A_diff / total_A * 100 if total_A > 0 else np.nan,
                                 'pop_binding1': A_bind1 / total_A * 100 if total_A > 0 else np.nan,
                                 'pop_binding2': A_bind2 / total_A * 100 if total_A > 0 else np.nan,
@@ -2132,13 +2206,27 @@ elif page == "6. Global Fitting":
                             if result['r2'] >= r2_threshold and min_mobile_fraction <= mf <= max_mobile_fraction:
                                 model_results['reaction_diffusion_two_binding'].append(result)
                                 curve_fits['reaction_diffusion_two_binding'] = result
+                                all_fit_rows.append({**result, 'Group': group_name})
                 except Exception:
                     pass
                 
-                # Determine best model for this curve
+                # Determine best model for this curve (AICc) + weights
                 if curve_fits:
-                    best = min(curve_fits.keys(), key=lambda m: curve_fits[m].get('aicc', np.inf))
+                    aicc_by_model = {m: curve_fits[m].get('aicc', np.nan) for m in curve_fits.keys()}
+                    weights = _akaike_weights(aicc_by_model)
+                    best = min(aicc_by_model.keys(), key=lambda m: aicc_by_model[m] if np.isfinite(aicc_by_model[m]) else np.inf)
                     best_per_curve.append(best)
+
+                    # Record best-fit row (used for comparisons)
+                    best_row = dict(curve_fits[best])
+                    best_row['Group'] = group_name
+                    best_row['best_model'] = best
+                    best_row['best_aicc'] = float(aicc_by_model.get(best, np.nan))
+                    min_aicc = np.nanmin(list(aicc_by_model.values())) if any(np.isfinite(v) for v in aicc_by_model.values()) else np.nan
+                    best_row['delta_aicc'] = float(best_row['best_aicc'] - min_aicc) if np.isfinite(best_row['best_aicc']) and np.isfinite(min_aicc) else np.nan
+                    best_row['akaike_weight'] = float(weights.get(best, np.nan)) if weights else np.nan
+                    best_row['ambiguous_best'] = bool(best_row['delta_aicc'] < 2.0) if np.isfinite(best_row['delta_aicc']) else False
+                    best_fit_rows.append(best_row)
             
             # Store results
             for model in all_models:
@@ -2158,55 +2246,107 @@ elif page == "6. Global Fitting":
                 })
             
             overall_progress.progress((g_idx + 1) / len(selected_groups) * 0.5)
+
+        # Persist long-format + best-fit tables for export/reporting
+        st.session_state.global_all_fits_df = pd.DataFrame(all_fit_rows)
+        st.session_state.global_best_fits_df = pd.DataFrame(best_fit_rows)
         
         # ============================================================
         # STEP 2: Subpopulation Analysis (if enabled)
         # ============================================================
         if run_subpopulations:
             status_text.markdown("### Step 2: Detecting subpopulations...")
-            
-            for group_name in selected_groups:
-                # Subpopulations are determined using a single consistent fitting model per group.
-                # Default to Reaction-Diffusion, since it is typically the best and is used for
-                # recovery-curve overlays and subpopulation plots.
-                model = 'reaction_diffusion'
-                df = st.session_state.global_model_results[group_name].get(model, pd.DataFrame())
-                if df.empty or len(df) < 5:
-                    continue
 
-                # Cluster on kinetics from the chosen model
-                cluster_cols = ['mobile_fraction', 'k_diff', 'k_bind', 'pop_diffusion']
-                cluster_cols = [c for c in cluster_cols if c in df.columns]
-                if not cluster_cols:
-                    continue
+            # Subpopulations are detected within each group independently, using best-fit
+            # reaction-diffusion parameters when available. This is distinct from multi-component
+            # fitting within a single curve; here we detect cell-to-cell kinetic heterogeneity.
+            pop_summary_rows: list[dict] = []
+            best_df = st.session_state.global_best_fits_df.copy()
+            if not best_df.empty:
+                for group_name in selected_groups:
+                    gdf = best_df[best_df['Group'] == group_name].copy()
+                    if gdf.empty:
+                        continue
 
-                X = df[cluster_cols].dropna()
-                if len(X) < 5:
-                    continue
+                    # Focus population clustering on curves whose *best model* is RD
+                    rd_df = gdf[gdf['best_model'] == 'reaction_diffusion'].copy()
+                    if len(rd_df) < 8:
+                        continue
 
-                # Standardize
-                from sklearn.preprocessing import StandardScaler
-                scaler = StandardScaler()
-                X_scaled = scaler.fit_transform(X)
+                    # Prefer diffusion coefficient + residence time + bound fraction
+                    cluster_cols = [
+                        'diffusion_coefficient_um2_s',
+                        'residence_time_s',
+                        'pop_binding',
+                    ]
+                    cluster_cols = [c for c in cluster_cols if c in rd_df.columns]
+                    if len(cluster_cols) < 2:
+                        continue
 
-                # Find optimal number of clusters
-                best_n = 1
-                best_bic = np.inf
-                for n in range(1, min(max_subpops + 1, len(X))):
-                    gmm = GaussianMixture(n_components=n, random_state=42, n_init=3)
-                    gmm.fit(X_scaled)
-                    bic = gmm.bic(X_scaled)
-                    if bic < best_bic:
-                        best_bic = bic
-                        best_n = n
+                    X = rd_df[cluster_cols].copy()
+                    # log-transform strictly-positive kinetic scales
+                    for c in ['diffusion_coefficient_um2_s', 'residence_time_s']:
+                        if c in X.columns:
+                            X[c] = np.log10(np.clip(X[c].astype(float), 1e-12, np.inf))
 
-                # Assign subpopulations
-                gmm = GaussianMixture(n_components=best_n, random_state=42, n_init=3)
-                labels = gmm.fit_predict(X_scaled)
+                    X = X.dropna()
+                    if len(X) < 8:
+                        continue
 
-                df.loc[X.index, 'subpopulation'] = labels
-                df.loc[X.index, 'n_subpopulations'] = best_n
-                st.session_state.global_model_results[group_name][model] = df
+                    from sklearn.preprocessing import StandardScaler
+
+                    scaler = StandardScaler()
+                    X_scaled = scaler.fit_transform(X.values)
+
+                    # Find optimal number of clusters (BIC), but keep interpretation simple.
+                    max_k = int(min(max_subpops, 3, len(X)))
+                    best_n = 1
+                    best_bic = np.inf
+                    for n in range(1, max_k + 1):
+                        gmm = GaussianMixture(n_components=n, random_state=42, n_init=5)
+                        gmm.fit(X_scaled)
+                        bic = gmm.bic(X_scaled)
+                        if bic < best_bic:
+                            best_bic = bic
+                            best_n = n
+
+                    gmm = GaussianMixture(n_components=best_n, random_state=42, n_init=5)
+                    labels = gmm.fit_predict(X_scaled)
+                    probs = gmm.predict_proba(X_scaled)
+                    max_prob = probs.max(axis=1) if probs.size else np.full(len(labels), np.nan)
+
+                    # Re-label clusters by median diffusion coefficient (high D -> pop 0)
+                    relabel = None
+                    if 'diffusion_coefficient_um2_s' in rd_df.columns:
+                        tmp = rd_df.loc[X.index, ['diffusion_coefficient_um2_s']].copy()
+                        tmp['label'] = labels
+                        med_by = tmp.groupby('label')['diffusion_coefficient_um2_s'].median().sort_values(ascending=False)
+                        relabel = {int(old): int(new) for new, old in enumerate(med_by.index.tolist())}
+                    if relabel:
+                        labels = np.array([relabel.get(int(l), int(l)) for l in labels], dtype=int)
+
+                    rd_df.loc[X.index, 'kinetic_subpopulation'] = labels
+                    rd_df.loc[X.index, 'kinetic_n_subpopulations'] = best_n
+                    rd_df.loc[X.index, 'kinetic_assignment_prob'] = max_prob
+
+                    # Merge back into best_df
+                    best_df.loc[rd_df.index, ['kinetic_subpopulation', 'kinetic_n_subpopulations', 'kinetic_assignment_prob']] = rd_df[
+                        ['kinetic_subpopulation', 'kinetic_n_subpopulations', 'kinetic_assignment_prob']
+                    ]
+
+                    # Summary for reporting
+                    counts = pd.Series(labels).value_counts().sort_index()
+                    for pop_id, n_curves in counts.items():
+                        pop_summary_rows.append({
+                            'Group': group_name,
+                            'Best model': 'Reaction-Diffusion',
+                            'Kinetic subpopulation': int(pop_id),
+                            'N': int(n_curves),
+                            'Proportion': float(n_curves) / float(len(labels)),
+                        })
+
+                st.session_state.global_best_fits_df = best_df
+                st.session_state.global_population_summary_df = pd.DataFrame(pop_summary_rows)
         
         overall_progress.progress(0.7)
         
@@ -2218,6 +2358,29 @@ elif page == "6. Global Fitting":
         
         st.markdown("---")
         st.header("📈 Analysis Results")
+
+        # Best-fit exports (CSV) – keep raw data out of the report itself
+        with st.expander("💾 Export (CSV)", expanded=False):
+            all_df = st.session_state.get('global_all_fits_df', pd.DataFrame())
+            best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+            if all_df is not None and not all_df.empty:
+                st.download_button(
+                    "Download ALL fits (curve × model)",
+                    data=all_df.to_csv(index=False),
+                    file_name=f"global_fitting_all_fits_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    type="secondary",
+                    width="stretch",
+                )
+            if best_df is not None and not best_df.empty:
+                st.download_button(
+                    "Download BEST fits (one row per curve)",
+                    data=best_df.to_csv(index=False),
+                    file_name=f"global_fitting_best_fits_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    type="secondary",
+                    width="stretch",
+                )
 
         # Storage for report assets (plots/tables) generated in this section
         if 'global_plot_images' not in st.session_state or not isinstance(st.session_state.global_plot_images, dict):
@@ -2287,10 +2450,139 @@ elif page == "6. Global Fitting":
             pass
         plt.close(fig_r2)
         
-        # --- Section 2: Per-Model Group Comparisons ---
+        # --- Section 2: Best-fit composition + best-fit kinetics comparisons ---
         st.markdown("---")
-        st.header("🔬 Statistical Comparisons by Model")
-        st.info("Each tab compares all kinetic parameters between groups using the same model.")
+        st.header("🔬 Best-Fit Comparisons (Primary)")
+        st.info("Group comparisons below use ONLY the best-fit model for each curve (AICc).")
+
+        best_df = st.session_state.get('global_best_fits_df', pd.DataFrame()).copy()
+        if best_df.empty:
+            st.warning("No best-fit results available. Try lowering QC thresholds.")
+        else:
+            # A) Best-model composition by group (captures missing-binding subpopulations)
+            comp = (
+                best_df
+                .groupby(['Group', 'best_model'])
+                .size()
+                .reset_index(name='N')
+            )
+            comp['Proportion'] = comp.groupby('Group')['N'].transform(lambda x: x / x.sum())
+            st.session_state.global_bestfit_model_composition_df = comp
+
+            st.markdown("#### 🧩 Best-Model Composition")
+            comp_pivot = comp.pivot(index='Group', columns='best_model', values='Proportion').fillna(0.0)
+            st.dataframe((comp_pivot * 100).round(1), width="stretch")
+
+            # Chi-square on composition (if feasible)
+            try:
+                cont = comp.pivot(index='Group', columns='best_model', values='N').fillna(0).astype(int)
+                if cont.shape[0] >= 2 and cont.values.sum() > 0:
+                    chi2, pval, dof, _ = scipy_stats.chi2_contingency(cont.values)
+                    st.caption(f"Model-composition chi-square: p = {pval:.4g}")
+            except Exception:
+                pass
+
+            # B) Best-fit kinetics comparisons for dominant model (usually RD)
+            dominant_model = (
+                best_df['best_model']
+                .value_counts()
+                .index[0]
+            )
+            st.markdown(f"#### 🧪 Best-Fit Kinetics (Dominant model: **{model_labels.get(dominant_model, dominant_model)}**)" )
+            dom = best_df[best_df['best_model'] == dominant_model].copy()
+            if dom.empty or dom['Group'].nunique() < 2:
+                st.info("Not enough best-fit curves across ≥2 groups for dominant-model comparisons.")
+            else:
+                # Choose key parameters to emphasize
+                key_params = []
+                if dominant_model in ['reaction_diffusion', 'reaction_diffusion_two_binding']:
+                    for c in ['diffusion_coefficient_um2_s', 't_half_diffusion_s', 'residence_time_s', 'pop_binding', 'mobile_fraction']:
+                        if c in dom.columns:
+                            key_params.append(c)
+                elif dominant_model == 'single':
+                    for c in ['k1', 't_half', 'mobile_fraction']:
+                        if c in dom.columns:
+                            key_params.append(c)
+                elif dominant_model == 'double':
+                    for c in ['k1', 'k2', 'mobile_fraction', 'pop1_fraction', 'pop2_fraction']:
+                        if c in dom.columns:
+                            key_params.append(c)
+                elif dominant_model == 'triple':
+                    for c in ['k1', 'k2', 'k3', 'mobile_fraction', 'pop1_fraction', 'pop2_fraction', 'pop3_fraction']:
+                        if c in dom.columns:
+                            key_params.append(c)
+
+                if not key_params:
+                    st.info("No comparable parameters found for best-fit comparisons.")
+                else:
+                    # Summary table
+                    sum_rows = []
+                    for group_name in selected_groups:
+                        g = dom[dom['Group'] == group_name]
+                        if g.empty:
+                            continue
+                        row = {'Group': group_name, 'N_best': len(g)}
+                        for p in key_params:
+                            vals = g[p].dropna().astype(float)
+                            if len(vals):
+                                row[p] = f"{vals.median():.4g} (IQR {vals.quantile(0.25):.4g}-{vals.quantile(0.75):.4g})"
+                        sum_rows.append(row)
+                    st.dataframe(pd.DataFrame(sum_rows), width="stretch")
+
+                    # Stats (pairwise for 2 groups, KW for >2) + FDR
+                    stat_rows = []
+                    groups_present = [g for g in selected_groups if len(dom[dom['Group'] == g]) > 0]
+                    for p in key_params:
+                        arrays = [dom[dom['Group'] == g][p].dropna().astype(float).values for g in groups_present]
+                        if len(groups_present) < 2 or not all(len(a) >= 3 for a in arrays[:2]):
+                            continue
+                        try:
+                            if len(groups_present) == 2:
+                                stat, pval = scipy_stats.mannwhitneyu(arrays[0], arrays[1], alternative='two-sided')
+                                delta = _cliffs_delta(arrays[0], arrays[1])
+                                test = 'Mann-Whitney U'
+                            else:
+                                stat, pval = scipy_stats.kruskal(*arrays)
+                                delta = np.nan
+                                test = 'Kruskal-Wallis'
+                            stat_rows.append({'Parameter': p, 'Test': test, 'Statistic': float(stat), 'p_value': float(pval), 'effect_cliffs_delta': float(delta)})
+                        except Exception:
+                            continue
+
+                    if stat_rows:
+                        stat_df = pd.DataFrame(stat_rows)
+                        stat_df['q_value_fdr_bh'] = _bh_fdr(stat_df['p_value'].tolist())
+                        st.session_state.global_bestfit_group_stats_df = stat_df
+                        st.dataframe(
+                            stat_df.assign(
+                                p_value=stat_df['p_value'].map(lambda v: f"{v:.3g}"),
+                                q_value_fdr_bh=pd.Series(stat_df['q_value_fdr_bh']).map(lambda v: f"{v:.3g}" if np.isfinite(v) else ""),
+                            ),
+                            width="stretch",
+                        )
+
+        # Optional: legacy per-model comparisons retained for deep dives
+        with st.expander("(Optional) Per-model comparisons (legacy)", expanded=False):
+            st.info("These tabs compare groups within each model, regardless of whether that model is best for a given curve.")
+            model_tabs = st.tabs([f"📊 {model_labels[m]}" for m in all_models])
+
+            for tab, model in zip(model_tabs, all_models):
+                with tab:
+                    st.subheader(f"{model_labels[model]} Analysis")
+                    model_group_data = []
+                    for group_name in selected_groups:
+                        df = st.session_state.global_model_results.get(group_name, {}).get(model, pd.DataFrame())
+                        if not df.empty:
+                            df_copy = df.copy()
+                            df_copy['Group'] = group_name
+                            model_group_data.append(df_copy)
+
+                    if not model_group_data:
+                        st.warning(f"No successful fits for {model_labels[model]}")
+                        continue
+
+                    combined_df = pd.concat(model_group_data, ignore_index=True)
+                    st.dataframe(combined_df.head(25), width="stretch")
         
         model_tabs = st.tabs([f"📊 {model_labels[m]}" for m in all_models])
         
@@ -2349,9 +2641,10 @@ elif page == "6. Global Fitting":
                     params = [
                         ('mobile_fraction', 'Mobile Fraction (%)', 'kinetic'),
                         ('k_diff', 'Diffusion Rate (s⁻¹)', 'kinetic'),
-                        ('k_bind', 'Exchange Rate (s⁻¹)', 'kinetic'),
-                        ('t_half_diff', 'Diffusion t½ (s)', 'kinetic'),
-                        ('t_half_bind', 'Binding t½ (s)', 'kinetic'),
+                        ('k_off', 'Exchange Rate k_off (s⁻¹)', 'kinetic'),
+                        ('diffusion_coefficient_um2_s', 'Diffusion Coefficient D (µm²/s)', 'kinetic'),
+                        ('t_half_diffusion_s', 'Diffusion t½ (s)', 'kinetic'),
+                        ('t_half_binding_s', 'Binding/Exchange t½ (s)', 'kinetic'),
                     ]
                     pop_params = [
                         ('pop_diffusion', 'Diffusion Population (%)', 'population'),
@@ -2361,11 +2654,12 @@ elif page == "6. Global Fitting":
                     params = [
                         ('mobile_fraction', 'Mobile Fraction (%)', 'kinetic'),
                         ('k_diff', 'Diffusion Rate (s⁻¹)', 'kinetic'),
-                        ('k_bind1', 'Binding Rate 1 (s⁻¹)', 'kinetic'),
-                        ('k_bind2', 'Binding Rate 2 (s⁻¹)', 'kinetic'),
-                        ('t_half_diff', 'Diffusion t½ (s)', 'kinetic'),
-                        ('t_half_bind1', 'Binding t½ 1 (s)', 'kinetic'),
-                        ('t_half_bind2', 'Binding t½ 2 (s)', 'kinetic'),
+                        ('k_off1', 'Exchange Rate 1 k_off1 (s⁻¹)', 'kinetic'),
+                        ('k_off2', 'Exchange Rate 2 k_off2 (s⁻¹)', 'kinetic'),
+                        ('diffusion_coefficient_um2_s', 'Diffusion Coefficient D (µm²/s)', 'kinetic'),
+                        ('t_half_diffusion_s', 'Diffusion t½ (s)', 'kinetic'),
+                        ('t_half_binding1_s', 'Binding/Exchange t½ 1 (s)', 'kinetic'),
+                        ('t_half_binding2_s', 'Binding/Exchange t½ 2 (s)', 'kinetic'),
                     ]
                     pop_params = [
                         ('pop_diffusion', 'Diffusion Population (%)', 'population'),
@@ -2583,8 +2877,8 @@ elif page == "6. Global Fitting":
             return img_str
 
         # Define reaction-diffusion model function for plotting
-        def reaction_diffusion_model(t, A_diff, k_diff, A_bind, k_bind, C):
-            return A_diff * (1 - np.exp(-k_diff * t)) + A_bind * (1 - np.exp(-k_bind * t)) + C
+        def reaction_diffusion_model(t, A_diff, k_diff, A_bind, k_exchange, C):
+            return A_diff * (1 - np.exp(-k_diff * t)) + A_bind * (1 - np.exp(-k_exchange * t)) + C
         
         # Create tabs for different views
         curve_tabs = st.tabs(["📊 By Group", "🔬 By Subpopulation (if detected)"])
@@ -2650,7 +2944,10 @@ elif page == "6. Global Fitting":
                         A_diff_med = rd_df['pop_diffusion'].median() / 100 * rd_df['mobile_fraction'].median() / 100
                         k_diff_med = rd_df['k_diff'].median()
                         A_bind_med = rd_df['pop_binding'].median() / 100 * rd_df['mobile_fraction'].median() / 100
-                        k_bind_med = rd_df['k_bind'].median()
+                        if 'k_off' in rd_df.columns:
+                            k_exch_med = rd_df['k_off'].median()
+                        else:
+                            k_exch_med = rd_df.get('k_bind', pd.Series(dtype=float)).median() if 'k_bind' in rd_df.columns else np.nan
                         
                         # Estimate C from mobile fraction
                         mf_med = rd_df['mobile_fraction'].median() / 100
@@ -2659,7 +2956,7 @@ elif page == "6. Global Fitting":
                         # Generate fit curve
                         t_fit = np.linspace(time.min(), time.max(), 200)
                         try:
-                            fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                            fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_exch_med, C_med)
                             ax.plot(t_fit, fit_curve, '--', color='darkred', linewidth=2, label='R-D Fit')
                         except Exception:
                             pass
@@ -2707,36 +3004,37 @@ elif page == "6. Global Fitting":
             if not run_subpopulations:
                 st.warning("⚠️ Subpopulation detection was not enabled. Enable it in the sidebar and re-run analysis.")
             else:
-                # Check if subpopulations were detected
-                has_subpops = False
-                for group_name in selected_groups:
-                    rd_df = st.session_state.global_model_results.get(group_name, {}).get('reaction_diffusion', pd.DataFrame())
-                    if not rd_df.empty and 'subpopulation' in rd_df.columns:
-                        has_subpops = True
-                        break
-                
-                if not has_subpops:
-                    st.info("No subpopulations were detected in the data (BIC selected 1 component).")
+                best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                if best_df is None or best_df.empty or 'kinetic_subpopulation' not in best_df.columns:
+                    st.info("No kinetic subpopulations available. Re-run analysis with subpopulation detection enabled.")
                 else:
                     # Plot subpopulation curves for each group
                     for group_name in selected_groups:
-                        rd_df = st.session_state.global_model_results.get(group_name, {}).get('reaction_diffusion', pd.DataFrame())
+                        rd_best = best_df[(best_df['Group'] == group_name) & (best_df['best_model'] == 'reaction_diffusion')].copy()
                         raw_curves = st.session_state.global_raw_curves.get(group_name, [])
                         
-                        if rd_df.empty or 'subpopulation' not in rd_df.columns or not raw_curves:
+                        if rd_best.empty or not raw_curves:
                             continue
-                        
-                        n_subpops = int(rd_df['n_subpopulations'].mode().iloc[0]) if 'n_subpopulations' in rd_df.columns else 1
+
+                        rd_best = rd_best.dropna(subset=['kinetic_subpopulation'])
+                        if rd_best.empty:
+                            continue
+
+                        # Determine number of subpopulations
+                        if 'kinetic_n_subpopulations' in rd_best.columns and not rd_best['kinetic_n_subpopulations'].isna().all():
+                            n_subpops = int(rd_best['kinetic_n_subpopulations'].mode().iloc[0])
+                        else:
+                            n_subpops = int(rd_best['kinetic_subpopulation'].nunique())
                         
                         if n_subpops <= 1:
                             continue
                         
-                        total_curves = len(rd_df)
+                        total_curves = len(rd_best)
                         st.markdown(f"### 🔬 {group_name} - {n_subpops} Subpopulations Detected")
                         st.markdown(f"*Total curves analyzed: {total_curves}*")
                         
                         # Map curve indices to subpopulation labels
-                        curve_to_subpop = dict(zip(rd_df['curve_idx'], rd_df['subpopulation']))
+                        curve_to_subpop = dict(zip(rd_best['curve_idx'], rd_best['kinetic_subpopulation'].astype(int)))
                         
                         # Group curves by subpopulation
                         subpop_curves = {i: [] for i in range(n_subpops)}
@@ -2835,19 +3133,22 @@ elif page == "6. Global Fitting":
                                        label=f'Mean ± SD (n={stats["n"]})')
                                 
                                 # Get kinetic parameters for this subpopulation
-                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                subpop_df = rd_best[rd_best['kinetic_subpopulation'].astype(int) == int(subpop)]
                                 
                                 # Add R-D fit
                                 if len(subpop_df) >= 1:
                                     A_diff_med = subpop_df['pop_diffusion'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
                                     k_diff_med = subpop_df['k_diff'].median()
                                     A_bind_med = subpop_df['pop_binding'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
-                                    k_bind_med = subpop_df['k_bind'].median()
+                                    if 'k_off' in subpop_df.columns:
+                                        k_exch_med = subpop_df['k_off'].median()
+                                    else:
+                                        k_exch_med = subpop_df.get('k_bind', pd.Series(dtype=float)).median() if 'k_bind' in subpop_df.columns else np.nan
                                     C_med = mean[0]
                                     
                                     t_fit = np.linspace(time.min(), time.max(), 200)
                                     try:
-                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_exch_med, C_med)
                                         ax.plot(t_fit, fit_curve, '--', color='darkred', linewidth=2, label='R-D Model Fit')
                                         
                                         # Calculate half-time from fit
@@ -2903,17 +3204,20 @@ elif page == "6. Global Fitting":
                                                label=f'Subpop {subpop+1} ({stats["proportion"]:.1f}%, n={stats["n"]})')
                                 
                                 # Add R-D fit
-                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                subpop_df = rd_best[rd_best['kinetic_subpopulation'].astype(int) == int(subpop)]
                                 if len(subpop_df) >= 1:
                                     A_diff_med = subpop_df['pop_diffusion'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
                                     k_diff_med = subpop_df['k_diff'].median()
                                     A_bind_med = subpop_df['pop_binding'].median() / 100 * subpop_df['mobile_fraction'].median() / 100
-                                    k_bind_med = subpop_df['k_bind'].median()
+                                    if 'k_off' in subpop_df.columns:
+                                        k_exch_med = subpop_df['k_off'].median()
+                                    else:
+                                        k_exch_med = subpop_df.get('k_bind', pd.Series(dtype=float)).median() if 'k_bind' in subpop_df.columns else np.nan
                                     C_med = mean[0]
                                     
                                     t_fit = np.linspace(time.min(), time.max(), 200)
                                     try:
-                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_bind_med, C_med)
+                                        fit_curve = reaction_diffusion_model(t_fit, A_diff_med, k_diff_med, A_bind_med, k_exch_med, C_med)
                                         ax_overlay.plot(t_fit, fit_curve, '--', color=subpop_colors[subpop], linewidth=1.5, alpha=0.7)
                                     except Exception:
                                         pass
@@ -2937,17 +3241,23 @@ elif page == "6. Global Fitting":
                             
                             subpop_param_summary = []
                             for subpop in sorted(subpop_stats.keys()):
-                                subpop_df = rd_df[rd_df['subpopulation'] == subpop]
+                                subpop_df = rd_best[rd_best['kinetic_subpopulation'].astype(int) == int(subpop)]
                                 if len(subpop_df) >= 1:
                                     # Calculate half-times from rate constants
                                     k_diff_mean = subpop_df['k_diff'].mean()
-                                    k_bind_mean = subpop_df['k_bind'].mean()
+                                    if 'k_off' in subpop_df.columns:
+                                        k_exch_mean = subpop_df['k_off'].mean()
+                                    else:
+                                        k_exch_mean = subpop_df.get('k_bind', pd.Series(dtype=float)).mean() if 'k_bind' in subpop_df.columns else np.nan
                                     t_half_diff = np.log(2) / k_diff_mean if k_diff_mean > 0 else np.nan
-                                    t_half_bind = np.log(2) / k_bind_mean if k_bind_mean > 0 else np.nan
+                                    t_half_exch = np.log(2) / k_exch_mean if np.isfinite(k_exch_mean) and k_exch_mean > 0 else np.nan
                                     
                                     # Residence times (1/k)
                                     tau_diff = 1 / k_diff_mean if k_diff_mean > 0 else np.nan
-                                    tau_bind = 1 / k_bind_mean if k_bind_mean > 0 else np.nan
+                                    tau_exch = 1 / k_exch_mean if np.isfinite(k_exch_mean) and k_exch_mean > 0 else np.nan
+
+                                    # Diffusion coefficient summary (if present)
+                                    d_mean = subpop_df['diffusion_coefficient_um2_s'].mean() if 'diffusion_coefficient_um2_s' in subpop_df.columns else np.nan
                                     
                                     n_curves = len(subpop_df)
                                     proportion = n_curves / total_curves * 100
@@ -2957,12 +3267,13 @@ elif page == "6. Global Fitting":
                                         'N (curves)': n_curves,
                                         'Proportion (%)': f'{proportion:.1f}',
                                         'Mobile Fraction (%)': f"{subpop_df['mobile_fraction'].mean():.1f} ± {subpop_df['mobile_fraction'].std():.1f}" if n_curves > 1 else f"{subpop_df['mobile_fraction'].mean():.1f}",
+                                        'D (µm²/s)': f"{d_mean:.4g}" if np.isfinite(d_mean) else "N/A",
                                         'k_diff (s⁻¹)': f"{k_diff_mean:.4f} ± {subpop_df['k_diff'].std():.4f}" if n_curves > 1 else f"{k_diff_mean:.4f}",
                                         't½_diff (s)': f"{t_half_diff:.2f}",
                                         'τ_diff (s)': f"{tau_diff:.2f}",
-                                        'k_bind (s⁻¹)': f"{k_bind_mean:.4f} ± {subpop_df['k_bind'].std():.4f}" if n_curves > 1 else f"{k_bind_mean:.4f}",
-                                        't½_bind (s)': f"{t_half_bind:.2f}",
-                                        'τ_bind (s)': f"{tau_bind:.2f}",
+                                        'k_off (s⁻¹)': f"{k_exch_mean:.4f} ± {subpop_df['k_off'].std():.4f}" if (n_curves > 1 and 'k_off' in subpop_df.columns) else f"{k_exch_mean:.4f}",
+                                        't½_off (s)': f"{t_half_exch:.2f}" if np.isfinite(t_half_exch) else "N/A",
+                                        'τ_off (s)': f"{tau_exch:.2f}" if np.isfinite(tau_exch) else "N/A",
                                         'Diffusion Pop (%)': f"{subpop_df['pop_diffusion'].mean():.1f} ± {subpop_df['pop_diffusion'].std():.1f}" if n_curves > 1 else f"{subpop_df['pop_diffusion'].mean():.1f}",
                                         'Binding Pop (%)': f"{subpop_df['pop_binding'].mean():.1f} ± {subpop_df['pop_binding'].std():.1f}" if n_curves > 1 else f"{subpop_df['pop_binding'].mean():.1f}",
                                     })
@@ -2988,9 +3299,9 @@ elif page == "6. Global Fitting":
                                     | **k_diff (s⁻¹)** | Diffusion rate constant |
                                     | **t½_diff (s)** | Diffusion half-time = ln(2)/k_diff |
                                     | **τ_diff (s)** | Diffusion residence time = 1/k_diff |
-                                    | **k_bind (s⁻¹)** | Binding/unbinding rate constant |
-                                    | **t½_bind (s)** | Binding half-time = ln(2)/k_bind |
-                                    | **τ_bind (s)** | Binding residence time = 1/k_bind |
+                                    | **k_off (s⁻¹)** | Binding/unbinding exchange rate constant |
+                                    | **t½_off (s)** | Exchange half-time = ln(2)/k_off |
+                                    | **τ_off (s)** | Exchange residence time = 1/k_off |
                                     | **Diffusion Pop (%)** | Proportion of mobile fraction due to pure diffusion |
                                     | **Binding Pop (%)** | Proportion of mobile fraction due to binding kinetics |
                                     """)
@@ -3258,6 +3569,28 @@ elif page == "6. Global Fitting":
                         html_parts.append(f'<img src="data:image/png;base64,{imgs[pop_key]}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
                 except Exception:
                     pass
+
+        # Best-fit (primary) section
+        try:
+            best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+            comp_df = st.session_state.get('global_bestfit_model_composition_df', pd.DataFrame())
+            stats_df = st.session_state.get('global_bestfit_group_stats_df', pd.DataFrame())
+            if best_df is not None and not best_df.empty:
+                html_parts.append("<h2>🔬 Best-Fit Comparisons (Primary)</h2>")
+
+                if comp_df is not None and not comp_df.empty:
+                    html_parts.append("<h3>Best-Model Composition</h3>")
+                    try:
+                        comp_pivot = comp_df.pivot(index='Group', columns='best_model', values='Proportion').fillna(0.0)
+                        html_parts.append((comp_pivot * 100).round(1).to_html(classes='stats-table'))
+                    except Exception:
+                        html_parts.append(comp_df.to_html(index=False, classes='stats-table'))
+
+                if stats_df is not None and not stats_df.empty:
+                    html_parts.append("<h3>Best-Fit Kinetic Comparisons</h3>")
+                    html_parts.append(stats_df.to_html(index=False, classes='stats-table'))
+        except Exception:
+            pass
                 
                 # Statistical comparisons between groups
                 if len(stored_groups) >= 2:
@@ -3355,12 +3688,17 @@ elif page == "6. Global Fitting":
         if subpop_enabled:
             html_parts.append("<h2>🔍 Subpopulation Analysis Summary</h2>")
             subpop_html = []
-            for group_name in stored_groups:
-                for model in all_models:
-                    df = st.session_state.global_model_results.get(group_name, {}).get(model, pd.DataFrame())
-                    if not df.empty and 'n_subpopulations' in df.columns:
-                        n_subpops = int(df['n_subpopulations'].mode().iloc[0]) if not df['n_subpopulations'].isna().all() else 1
-                        subpop_html.append(f"<tr><td>{group_name}</td><td>{model_labels[model]}</td><td>{n_subpops}</td></tr>")
+            try:
+                best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                if best_df is not None and not best_df.empty and 'kinetic_n_subpopulations' in best_df.columns:
+                    for group_name in stored_groups:
+                        g = best_df[(best_df['Group'] == group_name) & (best_df['best_model'] == 'reaction_diffusion')].copy()
+                        if g.empty:
+                            continue
+                        n_subpops = int(g['kinetic_n_subpopulations'].mode().iloc[0]) if not g['kinetic_n_subpopulations'].isna().all() else int(g['kinetic_subpopulation'].nunique())
+                        subpop_html.append(f"<tr><td>{group_name}</td><td>Reaction-Diffusion (best-fit)</td><td>{n_subpops}</td></tr>")
+            except Exception:
+                subpop_html = []
             
             if subpop_html:
                 html_parts.append("""
@@ -3520,47 +3858,39 @@ elif page == "6. Global Fitting":
                 story.append(rec_tbl)
                 story.append(Spacer(1, 0.25 * inch))
 
-                # Per-model summary tables (avoid dumping huge detail tables into PDF)
-                story.append(Paragraph("Per-Model Summary Statistics", styles['Heading2']))
-                for model in all_models:
-                    model_name = model_labels[model]
-                    model_all_data = []
-                    for group_name in stored_groups:
-                        df = st.session_state.global_model_results.get(group_name, {}).get(model, pd.DataFrame())
-                        if not df.empty:
-                            df_copy = df.copy()
-                            df_copy['Group'] = group_name
-                            model_all_data.append(df_copy)
-                    if not model_all_data:
-                        continue
+                # Best-fit summaries (primary)
+                try:
+                    best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                    comp_df = st.session_state.get('global_bestfit_model_composition_df', pd.DataFrame())
+                    stats_df = st.session_state.get('global_bestfit_group_stats_df', pd.DataFrame())
 
-                    model_combined = pd.concat(model_all_data, ignore_index=True)
-                    numeric_cols = model_combined.select_dtypes(include=[np.number]).columns.tolist()
-                    exclude_cols = ['curve_idx', 'success', 'subpopulation', 'n_subpopulations']
-                    summary_cols = [c for c in numeric_cols if c not in exclude_cols]
+                    if best_df is not None and not best_df.empty:
+                        story.append(Paragraph("Best-Fit Model Composition", styles['Heading2']))
+                        if comp_df is not None and not comp_df.empty:
+                            comp_pivot = comp_df.pivot(index='Group', columns='best_model', values='Proportion').fillna(0.0)
+                            comp_pivot = (comp_pivot * 100).round(1).reset_index()
+                            tbl = _df_to_rl_table(comp_pivot, max_rows=50)
+                            if tbl is not None:
+                                story.append(tbl)
+                                story.append(Spacer(1, 0.2 * inch))
 
-                    story.append(Paragraph(f"{model_name}", styles['Heading3']))
-                    story.append(Paragraph(f"Curves: {len(model_combined)}", styles['Normal']))
-                    if summary_cols:
-                        summary_stats = model_combined.groupby('Group')[summary_cols].agg(['mean', 'sem']).round(4)
-                        summary_stats.columns = [f"{col[0]} ({col[1]})" for col in summary_stats.columns]
-                        tbl = _df_to_rl_table(summary_stats.reset_index(), max_rows=25)
-                        if tbl is not None:
-                            story.append(tbl)
-                    story.append(Spacer(1, 0.2 * inch))
+                        story.append(Paragraph("Best-Fit Kinetic Comparisons", styles['Heading2']))
+                        if stats_df is not None and not stats_df.empty:
+                            df_out = stats_df.copy()
+                            df_out['p_value'] = df_out['p_value'].map(lambda v: f"{v:.3g}")
+                            if 'q_value_fdr_bh' in df_out.columns:
+                                df_out['q_value_fdr_bh'] = df_out['q_value_fdr_bh'].map(lambda v: f"{float(v):.3g}" if v is not None and np.isfinite(v) else "")
+                            tbl = _df_to_rl_table(df_out, max_rows=60)
+                            if tbl is not None:
+                                story.append(tbl)
+                                story.append(Spacer(1, 0.2 * inch))
 
-                    # Captured plots for this model (if available)
-                    try:
+                        # Include key plots if captured
                         imgs = st.session_state.get('global_plot_images', {})
-                        if isinstance(imgs, dict):
-                            kin_key = f'kinetic_distributions_{model}'
-                            pop_key = f'population_fractions_{model}'
-                            if imgs.get(kin_key):
-                                _add_b64_image(story, imgs.get(kin_key), f"{model_name}: Kinetic Distributions")
-                            if imgs.get(pop_key):
-                                _add_b64_image(story, imgs.get(pop_key), f"{model_name}: Population Fractions")
-                    except Exception:
-                        pass
+                        if isinstance(imgs, dict) and imgs.get('fit_quality_comparison'):
+                            _add_b64_image(story, imgs.get('fit_quality_comparison'), "Model Fit Quality Comparison")
+                except Exception:
+                    pass
 
                 # Plots (if available)
                 if 'global_plot_images' in st.session_state and st.session_state.global_plot_images:
