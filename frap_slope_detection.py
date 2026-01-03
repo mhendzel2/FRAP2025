@@ -456,7 +456,7 @@ def create_slope_detection_interface(group_data: Dict, data_manager, group_name:
             display_df['Slope (per min)'] = display_df['Slope (per min)'].round(4)
             display_df['Confidence'] = display_df['Confidence'].round(3)
             
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width="stretch")
             
             # Apply automatic exclusion button
             if st.button("🚫 Auto-Exclude Slope Problems", type="secondary", 
@@ -498,7 +498,7 @@ def create_slope_detection_interface(group_data: Dict, data_manager, group_name:
                 
                 # Create visualization
                 fig = detector.create_slope_visualization(file_data, result)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
                 # Show detailed results
                 col1, col2 = st.columns(2)

@@ -1183,9 +1183,9 @@ class FRAPAnalysisCore:
             # Two Component Fit.
             try:
                 A1_0 = A0 / 2
-                k1_0 = k0 * 2
+                k1_0 = min(max(k0 * 2, 1e-6), 10.0)
                 A2_0 = A0 / 2
-                k2_0 = k0 / 2
+                k2_0 = min(max(k0 / 2, 1e-6), 10.0)
                 p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
                 # BIOLOGICAL CONSTRAINTS: A1 + A2 + C must be ≤ 1.05 for normalized data
                 max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
@@ -1218,11 +1218,11 @@ class FRAPAnalysisCore:
             # Three Component Fit.
             try:
                 A1_0 = A0 / 3
-                k1_0 = k0 * 3
+                k1_0 = min(max(k0 * 3, 1e-6), 10.0)
                 A2_0 = A0 / 3
-                k2_0 = k0
+                k2_0 = min(max(k0, 1e-6), 10.0)
                 A3_0 = A0 / 3
-                k3_0 = k0 / 3
+                k3_0 = min(max(k0 / 3, 1e-6), 10.0)
                 p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
                 # BIOLOGICAL CONSTRAINTS for normalized data (pre-bleach = 1.0):
                 # A1 + A2 + A3 + C must be ≤ 1.05 (mobile fraction ≤ 105%)
@@ -1382,9 +1382,9 @@ class FRAPAnalysisCore:
             
             # Double exponential fit: [A1, k1, A2, k2, C]
             A1_0 = A0 / 2
-            k1_0 = k0 * 2
+            k1_0 = min(max(k0 * 2, 1e-6), 10.0)
             A2_0 = A0 / 2
-            k2_0 = k0 / 2
+            k2_0 = min(max(k0 / 2, 1e-6), 10.0)
             p0_double = [A1_0, k1_0, A2_0, k2_0, C0]
             
             max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)
@@ -1488,11 +1488,11 @@ class FRAPAnalysisCore:
             
             # Triple exponential fit: [A1, k1, A2, k2, A3, k3, C]
             A1_0 = A0 / 3
-            k1_0 = k0 * 3
+            k1_0 = min(max(k0 * 3, 1e-6), 10.0)
             A2_0 = A0 / 3
-            k2_0 = k0
+            k2_0 = min(max(k0, 1e-6), 10.0)
             A3_0 = A0 / 3
-            k3_0 = k0 / 3
+            k3_0 = min(max(k0 / 3, 1e-6), 10.0)
             p0_triple = [A1_0, k1_0, A2_0, k2_0, A3_0, k3_0, C0]
             
             max_amplitude = min(1.05, np.max(intensity_fit) * 1.1)

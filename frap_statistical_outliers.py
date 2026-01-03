@@ -687,7 +687,7 @@ def create_statistical_outlier_interface(group_data: Dict, data_manager, group_n
                     fig = detector.create_statistical_outlier_plot(
                         param_values, result, param, file_names
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                     
                     # Show outliers for this parameter
                     if result['n_outliers'] > 0:
@@ -712,7 +712,7 @@ def create_statistical_outlier_interface(group_data: Dict, data_manager, group_n
             return ''
         
         styled_df = summary_df.style.applymap(highlight_outliers)
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(styled_df, width="stretch")
         
         # Apply outliers button
         if overall_outliers:

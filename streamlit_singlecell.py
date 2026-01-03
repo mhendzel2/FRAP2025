@@ -4,6 +4,10 @@ Advanced interactive interface with linked views, cohort management, and live ga
 """
 
 import streamlit as st
+
+from streamlit_compat import patch_streamlit_width
+
+patch_streamlit_width(st)
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -174,7 +178,7 @@ def render_left_rail():
         for section in sections:
             if st.button(f"{'▶' if section else '▷'} {section}", 
                         key=f"nav_{section}",
-                        use_container_width=True):
+                        width="stretch"):
                 st.session_state.current_section = section
         
         st.divider()
@@ -182,7 +186,7 @@ def render_left_rail():
         # Quick actions
         st.markdown("### ⚡ Quick Actions")
         
-        if st.button("📂 Load Data", use_container_width=True):
+        if st.button("📂 Load Data", width="stretch"):
             st.session_state.show_data_loader = True
         
         # Show data loader modal
@@ -193,10 +197,10 @@ def render_left_rail():
                     st.session_state.show_data_loader = False
                     st.rerun()
         
-        if st.button("💾 Save Cohort", use_container_width=True):
+        if st.button("💾 Save Cohort", width="stretch"):
             st.session_state.show_save_cohort = True
         
-        if st.button("📋 Copy Recipe", use_container_width=True):
+        if st.button("📋 Copy Recipe", width="stretch"):
             recipe_json = json.dumps(st.session_state.recipe, indent=2)
             st.code(recipe_json, language='json')
             st.success("Recipe copied to clipboard!")
@@ -217,7 +221,7 @@ def render_left_rail():
                 with col1:
                     if st.button(f"{name} ({info['n_cells']})", 
                                key=f"load_{name}",
-                               use_container_width=True):
+                               width="stretch"):
                         load_cohort(name)
                 with col2:
                     if st.button("🗑", key=f"del_{name}"):
@@ -464,7 +468,7 @@ def render_single_cell_inspector():
             yaxis=dict(scaleanchor="x", scaleratio=1)
         )
         
-        st.plotly_chart(fig_traj, use_container_width=True)
+        st.plotly_chart(fig_traj, width="stretch")
         
         # QC badges
         st.markdown("#### QC Metrics")
@@ -533,7 +537,7 @@ def render_single_cell_inspector():
             height=300
         )
         
-        st.plotly_chart(fig_recovery, use_container_width=True)
+        st.plotly_chart(fig_recovery, width="stretch")
         
         # Residuals
         st.markdown("#### Residuals")
@@ -556,7 +560,7 @@ def render_single_cell_inspector():
                 margin=dict(t=10, b=30)
             )
             
-            st.plotly_chart(fig_resid, use_container_width=True)
+            st.plotly_chart(fig_resid, width="stretch")
     
     # Parameters table
     st.markdown("#### Fitted Parameters")
@@ -618,7 +622,7 @@ def render_group_workspace():
     ]
     
     fig_spaghetti = create_interactive_spaghetti(condition_traces, condition_data, normalize)
-    st.plotly_chart(fig_spaghetti, use_container_width=True)
+    st.plotly_chart(fig_spaghetti, width="stretch")
     
     # Small multiples by experiment
     st.markdown("### By Experiment (Batch Effect Check)")
@@ -635,7 +639,7 @@ def render_group_workspace():
                 exp_traces = condition_traces[condition_traces['cell_id'].isin(exp_data['cell_id'])]
                 
                 fig_exp = create_mini_spaghetti(exp_traces, exp)
-                st.plotly_chart(fig_exp, use_container_width=True)
+                st.plotly_chart(fig_exp, width="stretch")
     
     # Parameter distributions
     st.markdown("### Parameter Distributions")
@@ -644,7 +648,7 @@ def render_group_workspace():
     
     for param in params:
         fig_dist = create_distribution_strip(condition_data, param, selected_condition)
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(fig_dist, width="stretch")
 
 
 def create_interactive_spaghetti(traces, features, normalize=False):
@@ -815,7 +819,7 @@ def render_multigroup_workspace():
         
         # Create heatmap of effect sizes
         fig_heatmap = create_effect_size_heatmap(results_df, params, comparisons)
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        st.plotly_chart(fig_heatmap, width="stretch")
         
         # Detailed results table
         st.markdown("### Detailed Results")
@@ -832,13 +836,13 @@ def render_multigroup_workspace():
         display_df['q'] = display_df['q'].apply(lambda x: f"{x:.4f}")
         display_df['significant'] = display_df['significant'].apply(lambda x: "✓" if x else "")
         
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.dataframe(display_df, width="stretch", hide_index=True)
         
         # Volcano-style plot if many parameters
         if len(params) >= 4:
             st.markdown("### Volcano Plot")
             fig_volcano = create_volcano_plot(results_df)
-            st.plotly_chart(fig_volcano, use_container_width=True)
+            st.plotly_chart(fig_volcano, width="stretch")
 
 
 def create_effect_size_heatmap(results_df, params, comparisons):
@@ -952,14 +956,14 @@ def render_qc_dashboard():
             df_cohort, 'drift_px', 'Drift (pixels)', 
             threshold=10, threshold_label="High drift"
         )
-        st.plotly_chart(fig_drift, use_container_width=True)
+        st.plotly_chart(fig_drift, width="stretch")
     
     with metric_col2:
         fig_r2 = create_interactive_histogram(
             df_cohort, 'r2', 'R²',
             threshold=0.8, threshold_label="Good fit", invert=True
         )
-        st.plotly_chart(fig_r2, use_container_width=True)
+        st.plotly_chart(fig_r2, width="stretch")
     
     # Tracking method usage
     st.markdown("### Tracking Method Usage")
@@ -980,7 +984,7 @@ def render_qc_dashboard():
             height=300
         )
         
-        st.plotly_chart(fig_methods, use_container_width=True)
+        st.plotly_chart(fig_methods, width="stretch")
 
 
 def create_interactive_histogram(data, column, title, threshold=None, 
@@ -1023,7 +1027,7 @@ def render_export_panel():
     with col1:
         st.markdown("### Quick Exports")
         
-        if st.button("📊 Export Current Cohort (CSV)", use_container_width=True):
+        if st.button("📊 Export Current Cohort (CSV)", width="stretch"):
             try:
                 data, filename = export_current_cohort(format='csv')
                 st.download_button(
@@ -1032,12 +1036,12 @@ def render_export_panel():
                     filename,
                     "text/csv",
                     key="download_cohort_csv",
-                    use_container_width=True
+                    width="stretch"
                 )
             except Exception as e:
                 st.error(f"Export failed: {e}")
         
-        if st.button("📈 Export All Traces (CSV)", use_container_width=True):
+        if st.button("📈 Export All Traces (CSV)", width="stretch"):
             try:
                 cohort_cells = build_cohort_query()['cell_id'].unique()
                 data, filename = export_traces(cohort_cells, format='csv')
@@ -1047,7 +1051,7 @@ def render_export_panel():
                     filename,
                     "text/csv",
                     key="download_traces_csv",
-                    use_container_width=True
+                    width="stretch"
                 )
             except Exception as e:
                 st.error(f"Export failed: {e}")
@@ -1058,7 +1062,7 @@ def render_export_panel():
         report_format = st.radio("Format", ["PDF", "HTML"], horizontal=True)
         report_name = st.text_input("Report filename", value=f"frap_report_{datetime.now().strftime('%Y%m%d')}")
         
-        if st.button(f"📄 Generate {report_format} Report", use_container_width=True):
+        if st.button(f"📄 Generate {report_format} Report", width="stretch"):
             cohort_df = build_cohort_query()
             
             if cohort_df.empty:
@@ -1099,7 +1103,7 @@ def render_export_panel():
                                     file_data,
                                     output_file,
                                     mime='application/pdf' if report_format == 'PDF' else 'text/html',
-                                    use_container_width=True
+                                    width="stretch"
                                 )
                         else:
                             st.error("Report generation failed. Check console for errors.")

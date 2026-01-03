@@ -62,7 +62,7 @@ def render_file_upload():
         )
     
     if traces_file and features_file:
-        if st.button("🔄 Load Data", type="primary", use_container_width=True):
+        if st.button("🔄 Load Data", type="primary", width="stretch"):
             with st.spinner("Loading data..."):
                 success = load_from_uploads(traces_file, features_file)
                 
@@ -104,7 +104,7 @@ def render_example_data():
         format_func=lambda x: f"{x} ({examples[x]['n_cells']} cells, {examples[x]['n_conditions']} conditions)"
     )
     
-    if selected_example and st.button("📊 Load Example", type="primary", use_container_width=True):
+    if selected_example and st.button("📊 Load Example", type="primary", width="stretch"):
         example_info = examples[selected_example]
         
         with st.spinner(f"Loading {selected_example}..."):

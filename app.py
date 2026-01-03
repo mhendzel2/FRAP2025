@@ -1,4 +1,8 @@
 import streamlit as st
+
+from streamlit_compat import patch_streamlit_width
+
+patch_streamlit_width(st)
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -437,7 +441,7 @@ if page == "1. Import & Preprocess":
             
             col_btn1, col_btn2 = st.columns([1, 1])
             with col_btn1:
-                if st.button("🚀 Process ZIP Archive", type="primary", use_container_width=True):
+                if st.button("🚀 Process ZIP Archive", type="primary", width="stretch"):
                     if zip_file_id in st.session_state.processed_zip_files:
                         st.warning("⚠️ This ZIP file has already been processed.")
                     else:
@@ -474,7 +478,7 @@ if page == "1. Import & Preprocess":
                                 st.info("🎯 **Next step:** Go to '2. Model Fitting' to analyze your data!")
             
             with col_btn2:
-                if st.button("🔄 Upload Different File", use_container_width=True):
+                if st.button("🔄 Upload Different File", width="stretch"):
                     st.rerun()
     
     else:  # Individual Files mode
@@ -520,7 +524,7 @@ if page == "1. Import & Preprocess":
             if st.session_state.data_groups:
                 # Quick action button
                 st.markdown("---")
-                if st.button("⚡ Go to Batch Processing →", type="primary", use_container_width=True, key="goto_batch"):
+                if st.button("⚡ Go to Batch Processing →", type="primary", width="stretch", key="goto_batch"):
                     st.session_state.page = "2. Batch Process All Groups"
                     st.rerun()
                 st.markdown("---")
@@ -653,7 +657,7 @@ elif page == "2. Batch Process All Groups":
         st.info(f"✅ Will process **{len(selected_groups)}** group(s)")
         
         # Process button
-        if st.button("🚀 Run Batch Processing", type="primary", use_container_width=True):
+        if st.button("🚀 Run Batch Processing", type="primary", width="stretch"):
             if not selected_groups:
                 st.error("Please select at least one group to process")
             else:
@@ -995,7 +999,7 @@ elif page == "2. Batch Process All Groups":
                 
                 col_summary1, col_summary2 = st.columns([2, 1])
                 with col_summary1:
-                    st.dataframe(summary_df, use_container_width=True)
+                    st.dataframe(summary_df, width="stretch")
                 with col_summary2:
                     st.metric("Total Groups", len(selected_groups))
                     st.metric("Total Curves", summary_df['n_curves'].sum())
@@ -1026,7 +1030,7 @@ elif page == "2. Batch Process All Groups":
                     
                     if best_model_data:
                         best_model_df = pd.DataFrame(best_model_data)
-                        st.dataframe(best_model_df, use_container_width=True)
+                        st.dataframe(best_model_df, width="stretch")
                         
                         # Plot best model distribution
                         fig_best, ax_best = plt.subplots(figsize=(10, 5))
@@ -1101,7 +1105,7 @@ elif page == "2. Batch Process All Groups":
                         st.pyplot(fig_r2)
                         plt.close(fig_r2)
                         
-                        st.dataframe(r2_df.pivot(index='Group', columns='Model', values='Mean R²').round(4), use_container_width=True)
+                        st.dataframe(r2_df.pivot(index='Group', columns='Model', values='Mean R²').round(4), width="stretch")
                     
                     # --- Section 3: Per-Model Group Comparisons ---
                     st.markdown("---")
@@ -1193,7 +1197,7 @@ elif page == "2. Batch Process All Groups":
                                             if len(values) > 0:
                                                 row[label] = f"{values.mean():.3f} ± {values.sem():.3f}"
                                         summary_rows.append(row)
-                                    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+                                    st.dataframe(pd.DataFrame(summary_rows), width="stretch")
                                     
                                     # Parameter distribution plots
                                     st.markdown("#### 📈 Parameter Distributions")
@@ -1270,7 +1274,7 @@ elif page == "2. Batch Process All Groups":
                                                 })
                                         
                                         if stat_results:
-                                            st.dataframe(pd.DataFrame(stat_results), use_container_width=True)
+                                            st.dataframe(pd.DataFrame(stat_results), width="stretch")
                                             st.caption("*** p<0.001, ** p<0.01, * p<0.05, ns = not significant")
                                             
                                             sig_params = [r['Parameter'] for r in stat_results if r['Sig'] != 'ns']
@@ -1330,9 +1334,9 @@ elif page == "3. Model Fitting":
         
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            fit_button = st.button("🔬 Fit Models", type="primary", use_container_width=True)
+            fit_button = st.button("🔬 Fit Models", type="primary", width="stretch")
         with col_btn2:
-            if st.button("🔄 Clear Results", use_container_width=True):
+            if st.button("🔄 Clear Results", width="stretch"):
                 analyzer.features = None
                 st.rerun()
         
@@ -1523,7 +1527,7 @@ elif page == "3. Model Fitting":
                 
                 st.dataframe(
                     display_df.style.format(format_dict),
-                    use_container_width=True,
+                    width="stretch",
                     height=400
                 )
                 
@@ -1538,7 +1542,7 @@ elif page == "3. Model Fitting":
             
             # Detailed statistical summary
             st.markdown("### 📈 Statistical Summary")
-            st.dataframe(analyzer.features.describe(), use_container_width=True)
+            st.dataframe(analyzer.features.describe(), width="stretch")
             
             # Visualizations
             st.markdown("### 📊 Fit Quality Visualizations")
@@ -1685,7 +1689,7 @@ elif page == "4. Subpopulations":
             
             # Show current features
             with st.expander("📋 View Fitted Parameters", expanded=False):
-                st.dataframe(analyzer.features, use_container_width=True)
+                st.dataframe(analyzer.features, width="stretch")
             
             col1, col2 = st.columns([1, 3])
             with col1:
@@ -1892,7 +1896,7 @@ elif page == "6. Global Fitting":
             'Status': '✅' if n_curves > 0 else '❌'
         })
     
-    st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+    st.dataframe(pd.DataFrame(summary_data), width="stretch")
     
     st.markdown("---")
     
@@ -1907,7 +1911,7 @@ elif page == "6. Global Fitting":
     }
     
     # Run analysis button
-    if st.button("🚀 Run Comprehensive Analysis", type="primary", use_container_width=True):
+    if st.button("🚀 Run Comprehensive Analysis", type="primary", width="stretch"):
         
         from frap_core import FRAPAnalysisCore
         from scipy import stats as scipy_stats
@@ -2216,12 +2220,12 @@ elif page == "6. Global Fitting":
         # Pivot table: Groups vs Models
         r2_pivot = summary_df.pivot(index='Group', columns='Model', values='Mean_R2')
         st.markdown("**Mean R² by Group and Model:**")
-        st.dataframe(r2_pivot.style.format("{:.4f}").background_gradient(cmap='RdYlGn', vmin=0.7, vmax=1.0), use_container_width=True)
+        st.dataframe(r2_pivot.style.format("{:.4f}").background_gradient(cmap='RdYlGn', vmin=0.7, vmax=1.0), width="stretch")
         
         # Best model distribution
         st.markdown("**Best Model Selection (by AICc):**")
         best_pivot = summary_df.pivot(index='Group', columns='Model', values='Best_model_count')
-        st.dataframe(best_pivot, use_container_width=True)
+        st.dataframe(best_pivot, width="stretch")
         
         # Plot R² comparison
         fig_r2, ax_r2 = plt.subplots(figsize=(12, 5))
@@ -2356,7 +2360,7 @@ elif page == "6. Global Fitting":
                         if len(values) > 0:
                             row[label] = f"{values.mean():.3f} ± {values.sem():.3f}"
                     summary_rows.append(row)
-                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+                st.dataframe(pd.DataFrame(summary_rows), width="stretch")
                 
                 # Kinetic Parameters Plots
                 kinetic_params = [(c, l) for c, l, t in available_params if t == 'kinetic']
@@ -2473,7 +2477,7 @@ elif page == "6. Global Fitting":
                     
                     if stat_results:
                         stat_df = pd.DataFrame(stat_results)
-                        st.dataframe(stat_df, use_container_width=True)
+                        st.dataframe(stat_df, width="stretch")
                         st.caption(f"Significance: *** p<0.001, ** p<0.01, * p<{alpha_level}, ns = not significant")
                         
                         sig_params = [r['Parameter'] for r in stat_results if r['Significance'] != 'ns']
@@ -2499,7 +2503,7 @@ elif page == "6. Global Fitting":
                             })
                     
                     if subpop_summary:
-                        st.dataframe(pd.DataFrame(subpop_summary), use_container_width=True)
+                        st.dataframe(pd.DataFrame(subpop_summary), width="stretch")
         
         # --- Section 3: Cross-Model Summary ---
         st.markdown("---")
@@ -2934,7 +2938,7 @@ elif page == "6. Global Fitting":
                             
                             if subpop_param_summary:
                                 df_params = pd.DataFrame(subpop_param_summary)
-                                st.dataframe(df_params, use_container_width=True, hide_index=True)
+                                st.dataframe(df_params, width="stretch", hide_index=True)
                                 
                                 # Store stats for report
                                 st.session_state.global_subpop_stats.append({
@@ -3380,7 +3384,7 @@ elif page == "6. Global Fitting":
                 file_name=f"FRAP_Global_Fitting_Report_{timestamp}.html",
                 mime="text/html",
                 type="secondary",
-                use_container_width=True,
+                width="stretch",
                 key="download_html_report"
             )
 
@@ -3550,7 +3554,7 @@ elif page == "6. Global Fitting":
                     file_name=f"FRAP_Global_Fitting_Report_{timestamp}.pdf",
                     mime="application/pdf",
                     type="secondary",
-                    use_container_width=True,
+                    width="stretch",
                     key="download_pdf_report_global"
                 )
             else:
@@ -3619,12 +3623,12 @@ elif page == "7. Report":
                         else:
                             st.metric("Subpopulations", "N/A")
                     
-                    st.dataframe(analyzer.features.head(), use_container_width=True)
+                    st.dataframe(analyzer.features.head(), width="stretch")
                 else:
                     st.warning(f"⚠️ No fitted data available for {name}. Please run fitting first.")
         
         # Generate report button
-        if st.button("🎨 Generate Report", type="primary", use_container_width=True):
+        if st.button("🎨 Generate Report", type="primary", width="stretch"):
             if not selected_report_groups:
                 st.error("Please select at least one group for the report")
             else:
@@ -3783,7 +3787,7 @@ elif page == "7. Report":
                                         f, 
                                         file_name=display_report_name,
                                         mime=mime_type,
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                             
                             # Summary statistics

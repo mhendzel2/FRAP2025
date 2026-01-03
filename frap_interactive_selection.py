@@ -279,7 +279,7 @@ def handle_curve_click_selection(group_data: Dict, data_manager, group_name: str
     # Display the plot with click handling
     clicked_data = st.plotly_chart(
         interactive_fig, 
-        use_container_width=True,
+        width="stretch",
         key=f"interactive_plot_{group_name}",
         on_select="rerun",
         selection_mode="points"
@@ -359,7 +359,7 @@ def handle_curve_click_selection(group_data: Dict, data_manager, group_name: str
         # Summary plot
         if n_total > 0:
             summary_fig = create_selection_summary_plot(group_data, data_manager, excluded_files)
-            st.plotly_chart(summary_fig, use_container_width=True)
+            st.plotly_chart(summary_fig, width="stretch")
     
     # Show excluded files list if any
     if excluded_files:

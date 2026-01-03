@@ -706,7 +706,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
                     height=400
                 )
                 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
                 # Apply outliers button
                 if st.button("💾 Apply ML Outlier Detection", help="Update group analysis with detected outliers"):
@@ -784,7 +784,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
                                 title="Confusion Matrix"
                             )
                             
-                            st.plotly_chart(fig_cm, use_container_width=True)
+                            st.plotly_chart(fig_cm, width="stretch")
                         
                         # Feature importance
                         importance_results = detector.analyze_feature_importance(f'supervised_{supervised_method}')
@@ -803,7 +803,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
                             )
                             fig_importance.update_layout(height=400)
                             
-                            st.plotly_chart(fig_importance, use_container_width=True)
+                            st.plotly_chart(fig_importance, width="stretch")
                         
                         # Probability visualization
                         st.markdown("**📈 Outlier Probabilities**")
@@ -847,7 +847,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
                             height=400
                         )
                         
-                        st.plotly_chart(fig_prob, use_container_width=True)
+                        st.plotly_chart(fig_prob, width="stretch")
             
             else:
                 st.warning("⚠️ Need both normal and outlier examples for supervised learning. Please select some curves as outliers first.")
@@ -877,7 +877,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
         )
         fig_corr.update_layout(height=500)
         
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width="stretch")
         
         # Principal Component Analysis
         st.markdown("**🎯 Principal Component Analysis (PCA)**")
@@ -916,7 +916,7 @@ def create_ml_outlier_interface(group_data: Dict, data_manager, group_name: str)
                     height=500
                 )
                 
-                st.plotly_chart(fig_pca, use_container_width=True)
+                st.plotly_chart(fig_pca, width="stretch")
                 
                 st.info(f"📊 First 2 components explain {pca.explained_variance_ratio_[:2].sum():.1%} of the variance")
 

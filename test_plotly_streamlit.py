@@ -29,7 +29,7 @@ try:
         yaxis_title='Y²'
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.success("✅ Chart displayed successfully!")
     
 except Exception as e:
@@ -47,7 +47,7 @@ try:
     })
     
     fig2 = px.scatter(df, x='x', y='y', title='Express Test')
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
     st.success("✅ Plotly Express chart displayed!")
     
 except Exception as e:

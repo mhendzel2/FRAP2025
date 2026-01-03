@@ -8,6 +8,10 @@ A comprehensive analysis application for laser microirradiation experiments incl
 """
 
 import streamlit as st
+
+from streamlit_compat import patch_streamlit_width
+
+patch_streamlit_width(st)
 import pandas as pd
 import numpy as np
 import os
@@ -305,7 +309,7 @@ def analyze_data_file(df, file_info):
             intensity_data[damage_frame:],
             recruitment_results
         )
-        st.plotly_chart(fig_recruitment, use_container_width=True)
+        st.plotly_chart(fig_recruitment, width="stretch")
         
         if expansion_results:
             fig_expansion = create_expansion_plot(
@@ -313,7 +317,7 @@ def analyze_data_file(df, file_info):
                 area_data[damage_frame:],
                 expansion_results
             )
-            st.plotly_chart(fig_expansion, use_container_width=True)
+            st.plotly_chart(fig_expansion, width="stretch")
         
         return {
             'recruitment': recruitment_results,
@@ -430,7 +434,7 @@ def create_comparison_plots(analysis_results):
                         xaxis_tickangle=-45,
                         height=400
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 else:
                     st.write(f"No data for {metric_label}")
     
@@ -465,7 +469,7 @@ def create_comparison_plots(analysis_results):
                     nbins=min(10, len(values)),
                     title=f"Distribution of {stat_metric}"
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
     
     # Export comparison results
     if st.button("💾 Export Comparison Results"):

@@ -6,6 +6,10 @@ and all original settings functionality restored.
 """
 
 import streamlit as st
+
+from streamlit_compat import patch_streamlit_width
+
+patch_streamlit_width(st)
 import pandas as pd
 import numpy as np
 import os
@@ -1288,7 +1292,7 @@ with tab1:
                     )
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Add explanation text
                 st.markdown("""
@@ -1318,7 +1322,7 @@ with tab1:
                         )
                         
                         if comprehensive_fig:
-                            st.plotly_chart(comprehensive_fig, use_container_width=True)
+                            st.plotly_chart(comprehensive_fig, width="stretch")
                             st.success("✅ Comprehensive analysis plot generated successfully!")
                             
                             st.markdown("""
@@ -1407,7 +1411,7 @@ with tab1:
                         height=400,
                         yaxis=dict(range=[0, np.max(intensity_fit) * 1.05])
                     )
-                    st.plotly_chart(comp_fig, use_container_width=True)
+                    st.plotly_chart(comp_fig, width="stretch")
 
                 # Residuals analysis
                 st.markdown("### Residuals Analysis")
@@ -1435,7 +1439,7 @@ with tab1:
                                          text=f"Mean: {residual_mean:.4f}<br>Std: {residual_std:.4f}",
                                          showarrow=False,bgcolor="white",bordercolor="gray",borderwidth=1)]
                     )
-                    st.plotly_chart(res_fig,use_container_width=True)
+                    st.plotly_chart(res_fig, width="stretch")
 
                 # Biophysical parameters
                 st.markdown("### Biophysical Interpretation")
@@ -1646,7 +1650,7 @@ with tab1:
                                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                                     )
                                     
-                                    st.plotly_chart(fig_adv, use_container_width=True)
+                                    st.plotly_chart(fig_adv, width="stretch")
                                     
                                     # Residuals
                                     st.markdown("#### Residuals Analysis")
@@ -1666,7 +1670,7 @@ with tab1:
                                         yaxis_title='Residual',
                                         height=250
                                     )
-                                    st.plotly_chart(fig_res, use_container_width=True)
+                                    st.plotly_chart(fig_res, width="stretch")
                                     
                                     # Parameter details
                                     with st.expander("📊 View All Parameters & Errors"):
@@ -1679,7 +1683,7 @@ with tab1:
                                                 'Value': f"{param_value:.6f}",
                                                 'Std Error': f"{error:.6f}" if error is not None else "Fixed"
                                             })
-                                        st.dataframe(pd.DataFrame(params_df_data), use_container_width=True)
+                                        st.dataframe(pd.DataFrame(params_df_data), width="stretch")
                         
                         else:
                             st.warning("❌ Could not fit advanced models. This may be due to:")
@@ -2021,7 +2025,7 @@ with tab2:
                     
                     excluded_files = st.session_state.interactive_excluded_files
                     hover_fig = create_hover_selection_plot(group, dm, excluded_files)
-                    st.plotly_chart(hover_fig, use_container_width=True)
+                    st.plotly_chart(hover_fig, width="stretch")
                     
                     # Interactive selection interface
                     handle_curve_click_selection(group, dm, selected_group_name)
@@ -2148,7 +2152,7 @@ with tab2:
                     )
                 )
                 
-                st.plotly_chart(fig_indiv, use_container_width=True)
+                st.plotly_chart(fig_indiv, width="stretch")
 
                 # Detailed table of individual kinetics
                 st.markdown("#### Kinetic Parameters for Each File")
@@ -2214,7 +2218,7 @@ with tab2:
                                 'App. MW (kDa)': '{:.1f}',
                                 'R²': '{:.3f}'
                             }, na_rep="-"),
-                            use_container_width=True
+                            width="stretch"
                         )
 
                         # Summary statistics for included files only
@@ -2345,7 +2349,7 @@ with tab2:
                         )
                         
                         # Display scatter plot
-                        selected_points = st.plotly_chart(fig_scatter, use_container_width=True, key="scatter_dashboard", on_select="rerun")
+                        selected_points = st.plotly_chart(fig_scatter, width="stretch", key="scatter_dashboard", on_select="rerun")
                         
                         # Show recovery curves for selected points
                         if selected_points and 'selection' in selected_points and 'points' in selected_points['selection']:
@@ -2395,7 +2399,7 @@ with tab2:
                                     )
                                 )
                                 
-                                st.plotly_chart(fig_selected, use_container_width=True)
+                                st.plotly_chart(fig_selected, width="stretch")
                         else:
                             st.info("💡 Click on points in the scatter plot above to view their recovery curves")
                 
@@ -2471,7 +2475,7 @@ with tab2:
                                 showlegend=False
                             )
 
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
 
                             # Parameter statistics table
                             stats_data = {
@@ -2488,7 +2492,7 @@ with tab2:
                             }
 
                             stats_df = pd.DataFrame(stats_data)
-                            st.dataframe(stats_df, use_container_width=True)
+                            st.dataframe(stats_df, width="stretch")
                         else:
                             st.warning("No valid data for selected parameter")
 
@@ -2632,7 +2636,7 @@ with tab2:
                                                 pop_summary.append(summary)
                                             
                                             summary_df = pd.DataFrame(pop_summary)
-                                            st.dataframe(summary_df, use_container_width=True)
+                                            st.dataframe(summary_df, width="stretch")
                                             
                                             # Visualization
                                             st.markdown("#### 📈 Population Visualization")
@@ -2687,7 +2691,7 @@ with tab2:
                                                     hovermode='closest'
                                                 )
                                                 
-                                                st.plotly_chart(fig_pop, use_container_width=True)
+                                                st.plotly_chart(fig_pop, width="stretch")
                                             
                                             # Biological interpretation
                                             st.markdown("#### 🧬 Biological Interpretation")
@@ -2868,7 +2872,7 @@ with tab2:
                                         individual_df = pd.DataFrame(individual_data)
                                         st.dataframe(individual_df.style.format({
                                             col: '{:.4f}' for col in individual_df.columns if col not in ['File']
-                                        }), use_container_width=True)
+                                        }), width="stretch")
 
                                         # Global fit visualization
                                         st.markdown("#### Global Fit Visualization")
@@ -2918,7 +2922,7 @@ with tab2:
                                             yaxis_title="Normalized Intensity",
                                             height=500
                                         )
-                                        st.plotly_chart(fig_global, use_container_width=True)
+                                        st.plotly_chart(fig_global, width="stretch")
 
                                         # Comparison with individual fits
                                         st.markdown("#### Comparison with Individual Fits")
@@ -2953,7 +2957,7 @@ with tab2:
                                                 'Individual R²': '{:.4f}',
                                                 'Global R²': '{:.4f}',
                                                 'Δ R²': '{:.4f}'
-                                            }), use_container_width=True)
+                                            }), width="stretch")
 
                                             avg_improvement = comparison_df['Δ R²'].mean()
                                             if avg_improvement > 0:
@@ -2972,7 +2976,7 @@ with tab2:
                 plot_data={path:dm.files[path] for path in filtered_df['file_path'].tolist()}
                 st.markdown("##### Average Recovery Curve")
                 avg_fig = plot_average_curve(plot_data)
-                st.plotly_chart(avg_fig, use_container_width=True)
+                st.plotly_chart(avg_fig, width="stretch")
                 
                 # Step 8: Time-Aligned Curves
                 st.markdown("---")
@@ -3016,7 +3020,7 @@ with tab2:
                                     if aligned_results['interpolated_curves']:
                                         # Create and display the plot
                                         aligned_fig = FRAPPlots.plot_aligned_curves(aligned_results)
-                                        st.plotly_chart(aligned_fig, use_container_width=True)
+                                        st.plotly_chart(aligned_fig, width="stretch")
                                         
                                         # Show summary statistics
                                         st.success(f"✓ Successfully aligned {len(aligned_results['interpolated_curves'])} curves")
@@ -3186,7 +3190,7 @@ with tab2:
                             )
                         )
                         
-                        st.plotly_chart(fig_profiles, use_container_width=True)
+                        st.plotly_chart(fig_profiles, width="stretch")
                         
                         # Quantitative profile comparison for 2 groups
                         if len(selected_groups_holistic) == 2:
@@ -3348,7 +3352,7 @@ with tab2:
                                                         })
                                                     
                                                     param_df = pd.DataFrame(comparison_data)
-                                                    st.dataframe(param_df, use_container_width=True)
+                                                    st.dataframe(param_df, width="stretch")
                                                 else:
                                                     st.info("No parameter comparisons available.")
                                                 
@@ -3362,13 +3366,13 @@ with tab2:
                                                 
                                                 try:
                                                     fig_fit = plot_advanced_group_comparison(fit_results)
-                                                    st.plotly_chart(fig_fit, use_container_width=True)
+                                                    st.plotly_chart(fig_fit, width="stretch")
                                                 except Exception as plot_error:
                                                     st.warning(f"Could not generate fitted curves plot: {plot_error}")
                                                 
                                                 try:
                                                     fig_params = plot_parameter_comparison(fit_results)
-                                                    st.plotly_chart(fig_params, use_container_width=True)
+                                                    st.plotly_chart(fig_params, width="stretch")
                                                 except Exception as plot_error:
                                                     st.warning(f"Could not generate parameter comparison plot: {plot_error}")
                                             else:
@@ -3431,7 +3435,7 @@ with tab2:
                                 'population_intermediate': '{:.1f}%',
                                 'population_binding': '{:.1f}%'
                             }),
-                            use_container_width=True
+                            width="stretch"
                         )
                         
                         # Visualize population distributions
@@ -3480,7 +3484,7 @@ with tab2:
                             )
                         )
                         
-                        st.plotly_chart(fig_pop, use_container_width=True)
+                        st.plotly_chart(fig_pop, width="stretch")
                         
                     except Exception as e:
                         st.error(f"Error computing population comparison: {e}")
@@ -3631,7 +3635,7 @@ with tab3:
                 )
                 
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                     
                     st.markdown("""
                     **How to Read This Plot:**
@@ -3657,7 +3661,7 @@ with tab3:
                 fig.update_xaxes(title="Experimental Group")
                 fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
                 fig.update_layout(showlegend=False, height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
             elif plot_type == "Violin Plot":
                 fig = px.violin(
@@ -3668,7 +3672,7 @@ with tab3:
                 fig.update_xaxes(title="Experimental Group")
                 fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
                 fig.update_layout(showlegend=False, height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 
             else:  # Bar Plot
                 group_stats = combined_df.groupby('group')[param_to_plot].agg(['mean', 'sem']).reset_index()
@@ -3680,7 +3684,7 @@ with tab3:
                 fig.update_xaxes(title="Experimental Group")
                 fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
                 fig.update_layout(showlegend=False, height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             st.markdown("### Statistical Testing")
 

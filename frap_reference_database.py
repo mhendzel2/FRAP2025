@@ -912,7 +912,7 @@ def display_reference_database_ui():
         
         # Overview plot
         fig_overview = frap_reference_db.plot_reference_overview()
-        st.plotly_chart(fig_overview, use_container_width=True)
+        st.plotly_chart(fig_overview, width="stretch")
         
         # Class comparison
         st.subheader("Compare by Protein Class")
@@ -927,7 +927,7 @@ def display_reference_database_ui():
         )
         
         fig_class = frap_reference_db.plot_class_comparison(comparison_param)
-        st.plotly_chart(fig_class, use_container_width=True)
+        st.plotly_chart(fig_class, width="stretch")
         
         # Statistics summary
         st.subheader("Database Statistics")
@@ -1058,7 +1058,7 @@ def display_reference_database_ui():
         
         # Display filtered data
         if show_columns:
-            st.dataframe(filtered_df[show_columns], use_container_width=True)
+            st.dataframe(filtered_df[show_columns], width="stretch")
         
         # Export option
         if st.button("📥 Download Database as CSV"):
