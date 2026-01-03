@@ -3226,6 +3226,7 @@ elif page == "6. Global Fitting":
             pdf_bytes = None
             pdf_error = None
             try:
+                import io
                 import base64
                 from reportlab.lib import colors
                 from reportlab.lib.pagesizes import letter
