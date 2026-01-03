@@ -2893,6 +2893,7 @@ elif page == "6. Global Fitting":
         ci_df = st.session_state.get('global_consensus_param_ci_df', pd.DataFrame())
         global_df = st.session_state.get('global_consensus_global_stats_df', pd.DataFrame())
         pair_df = st.session_state.get('global_consensus_pairwise_stats_df', pd.DataFrame())
+        boot_df = st.session_state.get('global_consensus_bootstrap_df', pd.DataFrame())
 
         if consensus_model and isinstance(meanfit_df, pd.DataFrame) and not meanfit_df.empty:
             st.markdown(f"**Consensus model:** {model_labels.get(consensus_model, str(consensus_model))} (min summed ΔAICc across curves)")
@@ -2916,6 +2917,87 @@ elif page == "6. Global Fitting":
                     st.dataframe(pair_df, width="stretch")
                 else:
                     st.caption("No pairwise results available.")
+
+            with st.expander("Violin plots (bootstrap mean-curve distributions)", expanded=False):
+                try:
+                    if isinstance(boot_df, pd.DataFrame) and not boot_df.empty and 'Group' in boot_df.columns:
+                        # Choose a small set of key parameters to visualize.
+                        if consensus_model == 'reaction_diffusion':
+                            plot_specs = [
+                                ('diffusion_coefficient_um2_s', 'log10(D) (µm²/s)', True),
+                                ('k_off', 'log10(k_off) (1/s)', True),
+                                ('pop_binding', 'Bound fraction (%)', False),
+                            ]
+                        elif consensus_model == 'reaction_diffusion_two_binding':
+                            plot_specs = [
+                                ('diffusion_coefficient_um2_s', 'log10(D) (µm²/s)', True),
+                                ('k_off1', 'log10(k_off1) (1/s)', True),
+                                ('k_off2', 'log10(k_off2) (1/s)', True),
+                                ('pop_binding1', 'Bound1 fraction (%)', False),
+                                ('pop_binding2', 'Bound2 fraction (%)', False),
+                                ('pop_diffusion', 'Diffusing fraction (%)', False),
+                            ]
+                        elif consensus_model == 'single':
+                            plot_specs = [
+                                ('k1', 'log10(k) (1/s)', True),
+                                ('mobile_fraction', 'Mobile fraction (%)', False),
+                            ]
+                        elif consensus_model == 'double':
+                            plot_specs = [
+                                ('k1', 'log10(k1) (1/s)', True),
+                                ('k2', 'log10(k2) (1/s)', True),
+                                ('pop1_fraction', 'Pop1 fraction (%)', False),
+                                ('pop2_fraction', 'Pop2 fraction (%)', False),
+                            ]
+                        else:
+                            plot_specs = [
+                                ('k1', 'log10(k1) (1/s)', True),
+                                ('k2', 'log10(k2) (1/s)', True),
+                                ('k3', 'log10(k3) (1/s)', True),
+                                ('pop1_fraction', 'Pop1 fraction (%)', False),
+                                ('pop2_fraction', 'Pop2 fraction (%)', False),
+                                ('pop3_fraction', 'Pop3 fraction (%)', False),
+                            ]
+
+                        plot_specs = [(c, label, logf) for (c, label, logf) in plot_specs if c in boot_df.columns]
+                        groups_present = [g for g in selected_groups if (boot_df['Group'] == g).any()]
+                        if plot_specs and len(groups_present) >= 2:
+                            nrows = len(plot_specs)
+                            fig, axes = plt.subplots(nrows=nrows, ncols=1, figsize=(10, 2.4 * nrows), sharex=True)
+                            if nrows == 1:
+                                axes = [axes]
+
+                            for ax, (col, ylabel, use_log10) in zip(axes, plot_specs):
+                                data = []
+                                for g in groups_present:
+                                    vals = boot_df.loc[boot_df['Group'] == g, col].dropna().astype(float).values
+                                    if use_log10:
+                                        vals = np.log10(np.clip(vals, 1e-12, np.inf))
+                                    data.append(vals)
+
+                                parts = ax.violinplot(data, showmeans=False, showmedians=True, showextrema=False)
+                                for body in parts.get('bodies', []):
+                                    body.set_alpha(0.6)
+                                ax.set_ylabel(ylabel)
+                                ax.grid(True, alpha=0.2)
+
+                            axes[-1].set_xticks(range(1, len(groups_present) + 1))
+                            axes[-1].set_xticklabels(groups_present, rotation=30, ha='right')
+                            fig.suptitle('Consensus mean-curve bootstrap distributions', y=0.995)
+                            fig.tight_layout(rect=[0, 0, 1, 0.98])
+
+                            st.pyplot(fig)
+                            try:
+                                st.session_state.global_plot_images['consensus_violin_summary'] = _fig_to_b64(fig)
+                            except Exception:
+                                pass
+                            plt.close(fig)
+                        else:
+                            st.caption("Not enough bootstrap results to plot (need ≥2 groups and at least one parameter).")
+                    else:
+                        st.caption("Bootstrap distributions unavailable (need ≥5 curves per group to bootstrap).")
+                except Exception:
+                    st.caption("Could not generate violin plots for consensus comparisons.")
         else:
             st.warning("Consensus mean-curve comparison unavailable (consensus model could not be selected or too few curves per group after QC).")
         
@@ -2997,6 +3079,83 @@ elif page == "6. Global Fitting":
                                 row[p] = f"{vals.median():.4g} (IQR {vals.quantile(0.25):.4g}-{vals.quantile(0.75):.4g})"
                         sum_rows.append(row)
                     st.dataframe(pd.DataFrame(sum_rows), width="stretch")
+
+                    # Violin plots for the per-curve distributions under the dominant model
+                    with st.expander("Violin plots (per-curve fitted distributions)", expanded=False):
+                        try:
+                            # Select key rate-like parameters to plot with log10 scaling
+                            if dominant_model == 'reaction_diffusion':
+                                plot_specs = [
+                                    ('diffusion_coefficient_um2_s', 'log10(D) (µm²/s)', True),
+                                    ('k_off', 'log10(k_off) (1/s)', True),
+                                    ('pop_binding', 'Bound fraction (%)', False),
+                                ]
+                            elif dominant_model == 'reaction_diffusion_two_binding':
+                                plot_specs = [
+                                    ('diffusion_coefficient_um2_s', 'log10(D) (µm²/s)', True),
+                                    ('k_off1', 'log10(k_off1) (1/s)', True),
+                                    ('k_off2', 'log10(k_off2) (1/s)', True),
+                                    ('pop_binding1', 'Bound1 fraction (%)', False),
+                                    ('pop_binding2', 'Bound2 fraction (%)', False),
+                                    ('pop_diffusion', 'Diffusing fraction (%)', False),
+                                ]
+                            elif dominant_model == 'single':
+                                plot_specs = [
+                                    ('k1', 'log10(k) (1/s)', True),
+                                    ('mobile_fraction', 'Mobile fraction (%)', False),
+                                ]
+                            elif dominant_model == 'double':
+                                plot_specs = [
+                                    ('k1', 'log10(k1) (1/s)', True),
+                                    ('k2', 'log10(k2) (1/s)', True),
+                                    ('pop1_fraction', 'Pop1 fraction (%)', False),
+                                    ('pop2_fraction', 'Pop2 fraction (%)', False),
+                                ]
+                            else:  # triple
+                                plot_specs = [
+                                    ('k1', 'log10(k1) (1/s)', True),
+                                    ('k2', 'log10(k2) (1/s)', True),
+                                    ('k3', 'log10(k3) (1/s)', True),
+                                    ('pop1_fraction', 'Pop1 fraction (%)', False),
+                                    ('pop2_fraction', 'Pop2 fraction (%)', False),
+                                    ('pop3_fraction', 'Pop3 fraction (%)', False),
+                                ]
+
+                            plot_specs = [(c, label, logf) for (c, label, logf) in plot_specs if c in dom.columns]
+                            if not plot_specs or len(groups_present) < 2:
+                                st.caption("Not enough data to plot (need ≥2 groups and at least one parameter).")
+                            else:
+                                nrows = len(plot_specs)
+                                fig, axes = plt.subplots(nrows=nrows, ncols=1, figsize=(10, 2.4 * nrows), sharex=True)
+                                if nrows == 1:
+                                    axes = [axes]
+
+                                for ax, (col, ylabel, use_log10) in zip(axes, plot_specs):
+                                    data = []
+                                    for gname in groups_present:
+                                        vals = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
+                                        if use_log10:
+                                            vals = np.log10(np.clip(vals, 1e-12, np.inf))
+                                        data.append(vals)
+
+                                    parts = ax.violinplot(data, showmeans=False, showmedians=True, showextrema=False)
+                                    for body in parts.get('bodies', []):
+                                        body.set_alpha(0.6)
+                                    ax.set_ylabel(ylabel)
+                                    ax.grid(True, alpha=0.2)
+
+                                axes[-1].set_xticks(range(1, len(groups_present) + 1))
+                                axes[-1].set_xticklabels(groups_present, rotation=30, ha='right')
+                                fig.suptitle(f"Per-curve distributions under dominant model: {model_labels.get(dominant_model, dominant_model)}", y=0.995)
+                                fig.tight_layout(rect=[0, 0, 1, 0.98])
+                                st.pyplot(fig)
+                                try:
+                                    st.session_state.global_plot_images['bestfit_dominant_violin'] = _fig_to_b64(fig)
+                                except Exception:
+                                    pass
+                                plt.close(fig)
+                        except Exception:
+                            st.caption("Could not generate violin plots for best-fit dominant model distributions.")
 
                     # Stats (pairwise for 2 groups, KW for >2) + FDR
                     stat_rows = []
@@ -4011,6 +4170,16 @@ elif page == "6. Global Fitting":
                 if isinstance(pair_df, pd.DataFrame) and not pair_df.empty:
                     html_parts.append("<h3>Pairwise Group Comparisons (Bootstrap Mean-Curve Parameters)</h3>")
                     html_parts.append(pair_df.to_html(index=False, classes='stats-table'))
+
+                # Violin plots (bootstrap distributions)
+                try:
+                    imgs = st.session_state.get('global_plot_images', {})
+                    if isinstance(imgs, dict) and imgs.get('consensus_violin_summary'):
+                        html_parts.append("<h3>Bootstrap Distributions (Violin Plots)</h3>")
+                        img = imgs.get('consensus_violin_summary')
+                        html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                except Exception:
+                    pass
             else:
                 html_parts.append("<h2>🧪 Consensus Model: Mean-Curve Fits (Single Model Across Groups)</h2>")
                 html_parts.append("<p><i>Consensus mean-curve comparison is not available for this run (insufficient curves per group after QC, or consensus model could not be selected).</i></p>")
@@ -4037,6 +4206,16 @@ elif page == "6. Global Fitting":
                 if stats_df is not None and not stats_df.empty:
                     html_parts.append("<h3>Best-Fit Kinetic Comparisons</h3>")
                     html_parts.append(stats_df.to_html(index=False, classes='stats-table'))
+
+                # Best-fit dominant-model violin plots (per-curve distributions)
+                try:
+                    imgs = st.session_state.get('global_plot_images', {})
+                    if isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
+                        html_parts.append("<h3>Best-Fit Distributions (Dominant Model Violin Plots)</h3>")
+                        img = imgs.get('bestfit_dominant_violin')
+                        html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -4351,6 +4530,14 @@ elif page == "6. Global Fitting":
                                 story.append(tbl)
                                 story.append(Spacer(1, 0.2 * inch))
 
+                        # Best-fit dominant-model violin plots (per-curve distributions)
+                        try:
+                            imgs = st.session_state.get('global_plot_images', {})
+                            if isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
+                                _add_b64_image(story, imgs.get('bestfit_dominant_violin'), "Best-Fit Distributions (Dominant Model Violin Plots)")
+                        except Exception:
+                            pass
+
                         # Include key plots if captured
                         imgs = st.session_state.get('global_plot_images', {})
                         if isinstance(imgs, dict) and imgs.get('fit_quality_comparison'):
@@ -4525,6 +4712,14 @@ elif page == "6. Global Fitting":
                             if tbl is not None:
                                 story.append(tbl)
                                 story.append(Spacer(1, 0.2 * inch))
+
+                        # Violin plots (bootstrap distributions)
+                        try:
+                            imgs = st.session_state.get('global_plot_images', {})
+                            if isinstance(imgs, dict) and imgs.get('consensus_violin_summary'):
+                                _add_b64_image(story, imgs.get('consensus_violin_summary'), "Bootstrap Distributions (Violin Plots)")
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
