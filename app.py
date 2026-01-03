@@ -2268,26 +2268,34 @@ elif page == "6. Global Fitting":
         st.session_state.global_best_fits_df = pd.DataFrame(best_fit_rows)
 
         # ============================================================
-        # STEP 2b: Consensus-model fits on group mean curves (single model across all groups)
+        # STEP 2b: Consensus-model comparisons (single model across all groups)
         # ============================================================
         # Motivation: for mechanistic comparisons (e.g., diffusion + binding) we often want a single
         # model that is a best compromise across conditions, then compare fitted parameters between groups.
         try:
             all_df = st.session_state.global_all_fits_df
-            if isinstance(all_df, pd.DataFrame) and not all_df.empty and 'model' in all_df.columns and 'aicc' in all_df.columns:
-                # Choose a single consensus model by median AICc across all curves (QC-filtered)
-                aicc_summary = (
-                    all_df[['model', 'aicc']]
-                    .dropna()
-                    .groupby('model')['aicc']
-                    .median()
-                    .sort_values()
-                )
-                consensus_model = aicc_summary.index[0] if len(aicc_summary) else None
-            else:
-                consensus_model = None
+            consensus_model = None
+            if isinstance(all_df, pd.DataFrame) and not all_df.empty and {'Group', 'curve_idx', 'model', 'aicc'}.issubset(set(all_df.columns)):
+                # Choose a single consensus model that is a best compromise across conditions.
+                # We minimize the summed ΔAICc relative to each curve's best model.
+                tmp = all_df[['Group', 'curve_idx', 'model', 'aicc']].copy()
+                tmp = tmp[np.isfinite(tmp['aicc'].astype(float))]
+                if not tmp.empty:
+                    per_curve_min = tmp.groupby(['Group', 'curve_idx'])['aicc'].min().rename('min_aicc')
+                    tmp = tmp.join(per_curve_min, on=['Group', 'curve_idx'])
+                    tmp['delta_aicc'] = tmp['aicc'] - tmp['min_aicc']
+                    summed = tmp.groupby('model')['delta_aicc'].sum().sort_values()
+                    consensus_model = summed.index[0] if len(summed) else None
 
             st.session_state.global_consensus_model = consensus_model
+
+            # Per-curve consensus dataset: all curves fit with the SAME model, compared across groups.
+            consensus_percurve_df = (
+                all_df[all_df['model'] == consensus_model].copy()
+                if (consensus_model is not None and isinstance(all_df, pd.DataFrame) and not all_df.empty)
+                else pd.DataFrame()
+            )
+            st.session_state.global_consensus_percurve_df = consensus_percurve_df
 
             def _fit_model_to_curve(t: np.ndarray, y: np.ndarray, model_key: str) -> dict | None:
                 try:
@@ -2400,11 +2408,10 @@ elif page == "6. Global Fitting":
                     return None
                 return None
 
-            # Fit consensus model to each group's mean curve (and bootstrap for statistical comparisons)
+            # (Optional) Fit consensus model to each group's mean curve for a human-readable reference row.
             mean_fit_rows: list[dict] = []
             boot_rows: list[dict] = []
-            n_boot = 200
-
+            n_boot = 300
             if consensus_model is not None:
                 for group_name in selected_groups:
                     raw_curves = st.session_state.global_raw_curves.get(group_name, [])
@@ -2427,7 +2434,9 @@ elif page == "6. Global Fitting":
                         fit_row['n_curves_mean'] = int(len(curves))
                         mean_fit_rows.append(fit_row)
 
-                    # Bootstrap mean-curve fits for a testable distribution
+                    # Bootstrap: resample curves within the group, recompute mean curve, refit.
+                    # This yields a distribution of mean-curve-derived parameters (incl. population proportions)
+                    # suitable for between-group statistical comparisons.
                     if len(curves) >= 5:
                         rng = np.random.default_rng(42)
                         for b in range(n_boot):
@@ -2443,51 +2452,81 @@ elif page == "6. Global Fitting":
             st.session_state.global_consensus_meanfit_df = pd.DataFrame(mean_fit_rows)
             st.session_state.global_consensus_bootstrap_df = pd.DataFrame(boot_rows)
 
-            # Bootstrap-based between-group comparisons (same model across groups)
-            stats_rows: list[dict] = []
+            # Between-group comparisons on mean-curve-derived parameters (via bootstrap over curves)
+            ci_rows: list[dict] = []
+            global_test_rows: list[dict] = []
+            pairwise_rows: list[dict] = []
+
             boot_df = st.session_state.global_consensus_bootstrap_df
             if isinstance(boot_df, pd.DataFrame) and not boot_df.empty and 'Group' in boot_df.columns:
                 if consensus_model in ['reaction_diffusion', 'reaction_diffusion_two_binding']:
                     candidate_params = [
                         'diffusion_coefficient_um2_s',
+                        'k_diff',
                         't_half_diffusion_s',
+                        'k_off',
                         't_half_binding_s',
                         'residence_time_s',
                         'pop_binding',
+                        'pop_diffusion',
                         'mobile_fraction',
                     ]
                     if consensus_model == 'reaction_diffusion_two_binding':
                         candidate_params = [
                             'diffusion_coefficient_um2_s',
+                            'k_diff',
                             't_half_diffusion_s',
+                            'k_off1',
+                            'k_off2',
                             't_half_binding1_s',
                             't_half_binding2_s',
                             'residence_time1_s',
                             'residence_time2_s',
+                            'pop_binding1',
+                            'pop_binding2',
+                            'pop_diffusion',
                             'mobile_fraction',
                         ]
                 elif consensus_model == 'single':
                     candidate_params = ['k1', 't_half', 'mobile_fraction']
                 elif consensus_model == 'double':
-                    candidate_params = ['k1', 'k2', 't_half_fast', 't_half_slow', 'mobile_fraction']
+                    candidate_params = ['k1', 'k2', 't_half_fast', 't_half_slow', 'pop1_fraction', 'pop2_fraction', 'mobile_fraction']
                 else:
-                    candidate_params = ['k1', 'k2', 'k3', 'mobile_fraction']
+                    candidate_params = ['k1', 'k2', 'k3', 'pop1_fraction', 'pop2_fraction', 'pop3_fraction', 'mobile_fraction']
 
                 candidate_params = [p for p in candidate_params if p in boot_df.columns]
                 groups_present = [g for g in selected_groups if (boot_df['Group'] == g).any()]
 
+                # Per-group bootstrap CI
+                for group_name in groups_present:
+                    gdf = boot_df[boot_df['Group'] == group_name]
+                    for p in candidate_params:
+                        vals = gdf[p].dropna().astype(float).values
+                        if len(vals) < 30:
+                            continue
+                        ci_rows.append({
+                            'Group': group_name,
+                            'consensus_model': consensus_model,
+                            'parameter': p,
+                            'median': float(np.nanmedian(vals)),
+                            'ci95_low': float(np.nanquantile(vals, 0.025)),
+                            'ci95_high': float(np.nanquantile(vals, 0.975)),
+                            'n_boot': int(len(vals)),
+                        })
+
+                # Global test across groups
                 for p in candidate_params:
                     arrays = [boot_df.loc[boot_df['Group'] == g, p].dropna().astype(float).values for g in groups_present]
-                    if len(groups_present) < 2 or not all(len(a) >= 20 for a in arrays[:2]):
+                    if len(groups_present) < 2 or not all(len(a) >= 30 for a in arrays[:2]):
                         continue
                     try:
                         if len(groups_present) == 2:
                             stat, pval = scipy_stats.mannwhitneyu(arrays[0], arrays[1], alternative='two-sided')
-                            test = 'Mann-Whitney U (bootstrap)'
+                            test = 'Mann-Whitney U (bootstrap mean-curve)'
                         else:
                             stat, pval = scipy_stats.kruskal(*arrays)
-                            test = 'Kruskal-Wallis (bootstrap)'
-                        stats_rows.append({
+                            test = 'Kruskal-Wallis (bootstrap mean-curve)'
+                        global_test_rows.append({
                             'consensus_model': consensus_model,
                             'parameter': p,
                             'test': test,
@@ -2497,16 +2536,150 @@ elif page == "6. Global Fitting":
                     except Exception:
                         continue
 
-            # FDR correction on the bootstrap-based stats
-            stats_df = pd.DataFrame(stats_rows)
-            if not stats_df.empty and 'p_value' in stats_df.columns:
-                stats_df['q_value_fdr_bh'] = _bh_fdr(stats_df['p_value'].values)
-            st.session_state.global_consensus_bootstrap_stats_df = stats_df
+                # Pairwise comparisons (useful for Control vs Drug)
+                max_pairs = 80
+                pairs_done = 0
+                rng = np.random.default_rng(123)
+                for i in range(len(groups_present)):
+                    for j in range(i + 1, len(groups_present)):
+                        if pairs_done >= max_pairs:
+                            break
+                        g1 = groups_present[i]
+                        g2 = groups_present[j]
+                        for p in candidate_params:
+                            v1 = boot_df.loc[boot_df['Group'] == g1, p].dropna().astype(float).values
+                            v2 = boot_df.loc[boot_df['Group'] == g2, p].dropna().astype(float).values
+                            if len(v1) < 30 or len(v2) < 30:
+                                continue
+                            try:
+                                stat, pval = scipy_stats.mannwhitneyu(v1, v2, alternative='two-sided')
+
+                                # Median shift and a simple CI on the shift (via random pairing)
+                                n = int(min(len(v1), len(v2), 500))
+                                s1 = rng.choice(v1, size=n, replace=True)
+                                s2 = rng.choice(v2, size=n, replace=True)
+                                d = s2 - s1
+                                pairwise_rows.append({
+                                    'consensus_model': consensus_model,
+                                    'group_a': g1,
+                                    'group_b': g2,
+                                    'parameter': p,
+                                    'test': 'Mann-Whitney U (bootstrap mean-curve)',
+                                    'statistic': float(stat),
+                                    'p_value': float(pval),
+                                    'delta_median_b_minus_a': float(np.nanmedian(v2) - np.nanmedian(v1)),
+                                    'delta_ci95_low': float(np.nanquantile(d, 0.025)),
+                                    'delta_ci95_high': float(np.nanquantile(d, 0.975)),
+                                })
+                            except Exception:
+                                continue
+                        pairs_done += 1
+                    if pairs_done >= max_pairs:
+                        break
+
+            ci_df = pd.DataFrame(ci_rows)
+            global_df = pd.DataFrame(global_test_rows)
+            pair_df = pd.DataFrame(pairwise_rows)
+            if not global_df.empty and 'p_value' in global_df.columns:
+                global_df['q_value_fdr_bh'] = _bh_fdr(global_df['p_value'].values)
+            if not pair_df.empty and 'p_value' in pair_df.columns:
+                pair_df['q_value_fdr_bh'] = _bh_fdr(pair_df['p_value'].values)
+
+            st.session_state.global_consensus_param_ci_df = ci_df
+            st.session_state.global_consensus_global_stats_df = global_df
+            st.session_state.global_consensus_pairwise_stats_df = pair_df
+
+            # Retain an empty placeholder for backward compatibility in report wiring.
+            st.session_state.global_consensus_group_stats_df = pd.DataFrame()
+
+            # Kinetic subpopulations under the consensus model (RD only), plus across-group proportion comparison
+            st.session_state.global_consensus_subpop_composition_df = pd.DataFrame()
+            st.session_state.global_consensus_subpop_chi2 = None
+            if run_subpopulations and consensus_model == 'reaction_diffusion' and isinstance(dfc, pd.DataFrame) and not dfc.empty:
+                dfc2 = dfc.copy()
+                pop_rows: list[dict] = []
+                for group_name in selected_groups:
+                    g = dfc2[dfc2['Group'] == group_name].copy()
+                    if len(g) < 8:
+                        continue
+                    cluster_cols = [c for c in ['diffusion_coefficient_um2_s', 'residence_time_s', 'pop_binding'] if c in g.columns]
+                    if len(cluster_cols) < 2:
+                        continue
+                    X = g[cluster_cols].copy()
+                    for c in ['diffusion_coefficient_um2_s', 'residence_time_s']:
+                        if c in X.columns:
+                            X[c] = np.log10(np.clip(X[c].astype(float), 1e-12, np.inf))
+                    X = X.dropna()
+                    if len(X) < 8:
+                        continue
+
+                    from sklearn.preprocessing import StandardScaler
+
+                    scaler = StandardScaler()
+                    Xs = scaler.fit_transform(X.values)
+                    max_k = int(min(max_subpops, 3, len(X)))
+                    best_n = 1
+                    best_bic = np.inf
+                    for n in range(1, max_k + 1):
+                        gmm = GaussianMixture(n_components=n, random_state=42, n_init=5)
+                        gmm.fit(Xs)
+                        bic = gmm.bic(Xs)
+                        if bic < best_bic:
+                            best_bic = bic
+                            best_n = n
+                    gmm = GaussianMixture(n_components=best_n, random_state=42, n_init=5)
+                    labels = gmm.fit_predict(Xs)
+
+                    # Relabel by median diffusion coefficient so labels are comparable (0 = fastest diffusion)
+                    relabel = None
+                    if 'diffusion_coefficient_um2_s' in g.columns:
+                        tmp = g.loc[X.index, ['diffusion_coefficient_um2_s']].copy()
+                        tmp['label'] = labels
+                        med_by = tmp.groupby('label')['diffusion_coefficient_um2_s'].median().sort_values(ascending=False)
+                        relabel = {int(old): int(new) for new, old in enumerate(med_by.index.tolist())}
+                    if relabel:
+                        labels = np.array([relabel.get(int(l), int(l)) for l in labels], dtype=int)
+
+                    dfc2.loc[X.index, 'consensus_kinetic_subpopulation'] = labels
+                    dfc2.loc[X.index, 'consensus_kinetic_n_subpopulations'] = best_n
+
+                    counts = pd.Series(labels).value_counts().sort_index()
+                    for pop_id, n_curves in counts.items():
+                        pop_rows.append({
+                            'Group': group_name,
+                            'Kinetic subpopulation': int(pop_id),
+                            'N': int(n_curves),
+                            'Proportion': float(n_curves) / float(len(labels)),
+                        })
+
+                st.session_state.global_consensus_percurve_df = dfc2
+                comp_df = pd.DataFrame(pop_rows)
+                st.session_state.global_consensus_subpop_composition_df = comp_df
+
+                # Chi-square test on subpopulation proportions across groups (when feasible)
+                try:
+                    if comp_df is not None and not comp_df.empty:
+                        cont = comp_df.pivot(index='Group', columns='Kinetic subpopulation', values='N').fillna(0).astype(int)
+                        if cont.shape[0] >= 2 and cont.values.sum() > 0:
+                            chi2, pval, dof, _ = scipy_stats.chi2_contingency(cont.values)
+                            st.session_state.global_consensus_subpop_chi2 = {
+                                'chi2': float(chi2),
+                                'p_value': float(pval),
+                                'dof': int(dof),
+                            }
+                except Exception:
+                    st.session_state.global_consensus_subpop_chi2 = None
         except Exception:
             st.session_state.global_consensus_model = None
             st.session_state.global_consensus_meanfit_df = pd.DataFrame()
+            st.session_state.global_consensus_percurve_df = pd.DataFrame()
             st.session_state.global_consensus_bootstrap_df = pd.DataFrame()
-            st.session_state.global_consensus_bootstrap_stats_df = pd.DataFrame()
+            st.session_state.global_consensus_param_ci_df = pd.DataFrame()
+            st.session_state.global_consensus_global_stats_df = pd.DataFrame()
+            st.session_state.global_consensus_pairwise_stats_df = pd.DataFrame()
+            st.session_state.global_consensus_group_stats_df = pd.DataFrame()
+            st.session_state.global_consensus_subpop_composition_df = pd.DataFrame()
+            st.session_state.global_consensus_subpop_chi2 = None
         
         # ============================================================
         # STEP 2: Subpopulation Analysis (if enabled)
@@ -2706,11 +2879,50 @@ elif page == "6. Global Fitting":
         except Exception:
             pass
         plt.close(fig_r2)
-        
-        # --- Section 2: Best-fit composition + best-fit kinetics comparisons ---
+
+        # --- Section 2: Consensus-model mean-curve comparisons (primary) ---
         st.markdown("---")
-        st.header("🔬 Best-Fit Comparisons (Primary)")
-        st.info("Group comparisons below use ONLY the best-fit model for each curve (AICc).")
+        st.header("🧪 Consensus Model: Mean-Curve Comparisons (Primary)")
+        st.info(
+            "Group comparisons below use a single consensus model fit to each group's mean recovery curve. "
+            "Uncertainty and between-group tests are computed by bootstrap resampling curves within each group."
+        )
+
+        consensus_model = st.session_state.get('global_consensus_model')
+        meanfit_df = st.session_state.get('global_consensus_meanfit_df', pd.DataFrame())
+        ci_df = st.session_state.get('global_consensus_param_ci_df', pd.DataFrame())
+        global_df = st.session_state.get('global_consensus_global_stats_df', pd.DataFrame())
+        pair_df = st.session_state.get('global_consensus_pairwise_stats_df', pd.DataFrame())
+
+        if consensus_model and isinstance(meanfit_df, pd.DataFrame) and not meanfit_df.empty:
+            st.markdown(f"**Consensus model:** {model_labels.get(consensus_model, str(consensus_model))} (min summed ΔAICc across curves)")
+            st.markdown("#### Mean-Curve Fit (one row per group)")
+            st.dataframe(meanfit_df, width="stretch")
+
+            with st.expander("Bootstrap 95% CIs (parameters + population proportions)", expanded=False):
+                if isinstance(ci_df, pd.DataFrame) and not ci_df.empty:
+                    st.dataframe(ci_df, width="stretch")
+                else:
+                    st.caption("Bootstrap CI table unavailable (insufficient curves per group).")
+
+            with st.expander("Between-group tests (bootstrap mean-curve)", expanded=False):
+                if isinstance(global_df, pd.DataFrame) and not global_df.empty:
+                    st.dataframe(global_df, width="stretch")
+                else:
+                    st.caption("No global test results available.")
+
+                if isinstance(pair_df, pd.DataFrame) and not pair_df.empty:
+                    st.markdown("**Pairwise comparisons** (includes median shift and CI)")
+                    st.dataframe(pair_df, width="stretch")
+                else:
+                    st.caption("No pairwise results available.")
+        else:
+            st.warning("Consensus mean-curve comparison unavailable (consensus model could not be selected or too few curves per group after QC).")
+        
+        # --- Section 3: Best-fit composition + best-fit kinetics comparisons ---
+        st.markdown("---")
+        st.header("🔬 Best-Fit Comparisons (Secondary)")
+        st.caption("These summaries describe per-curve best-fit outcomes (AICc). Primary group comparisons are shown above using the mean-curve consensus model.")
 
         best_df = st.session_state.get('global_best_fits_df', pd.DataFrame()).copy()
         if best_df.empty:
@@ -3751,33 +3963,54 @@ elif page == "6. Global Fitting":
         # Intentionally omit the bulky per-model fit-quality tables/plots from the HTML report.
         # These are available via CSV exports in the app; the report focuses on best-fit + consensus-model comparisons.
         
-        html_parts.append("<p><i>Per-model detailed outputs are available separately via the CSV download buttons in the app. This report focuses on (1) a single consensus model for mean-curve comparisons and (2) best-fit (AICc) per-curve summaries.</i></p>")
+        html_parts.append("<p><i>Per-model detailed outputs are available via CSV downloads in the app. This report compares groups using a single consensus model fit to each group's mean curve, with uncertainty estimated by bootstrap resampling across curves within each group.</i></p>")
 
         # Consensus-model mean-curve fits (single model across all groups)
         try:
             consensus_model = st.session_state.get('global_consensus_model')
             meanfit_df = st.session_state.get('global_consensus_meanfit_df', pd.DataFrame())
-            boot_stats_df = st.session_state.get('global_consensus_bootstrap_stats_df', pd.DataFrame())
+            ci_df = st.session_state.get('global_consensus_param_ci_df', pd.DataFrame())
+            global_df = st.session_state.get('global_consensus_global_stats_df', pd.DataFrame())
+            pair_df = st.session_state.get('global_consensus_pairwise_stats_df', pd.DataFrame())
             if consensus_model and isinstance(meanfit_df, pd.DataFrame) and not meanfit_df.empty:
                 html_parts.append("<h2>🧪 Consensus Model: Mean-Curve Fits (Single Model Across Groups)</h2>")
                 html_parts.append(
                     f"<p><b>Consensus model used for group comparisons:</b> {model_labels.get(consensus_model, str(consensus_model))} "
-                    "(selected by median AICc across all QC-passing curves)</p>"
+                    "(selected by minimizing the summed ΔAICc across all QC-passing curves)</p>"
                 )
 
                 keep_cols = ['Group', 'model', 'r2', 'aicc', 'n_curves_mean']
-                for c in [
-                    'diffusion_coefficient_um2_s', 't_half_diffusion_s', 't_half_binding_s', 'residence_time_s',
-                    'k_diff', 'k_off', 'pop_binding', 'mobile_fraction'
-                ]:
+                extra_cols = [
+                    # RD / RD-2binding
+                    'diffusion_coefficient_um2_s', 'k_diff', 't_half_diffusion_s',
+                    'k_off', 't_half_binding_s', 'residence_time_s',
+                    'k_off1', 'k_off2', 't_half_binding1_s', 't_half_binding2_s',
+                    'residence_time1_s', 'residence_time2_s',
+                    'pop_binding', 'pop_binding1', 'pop_binding2', 'pop_diffusion',
+                    # Exponential models
+                    'k1', 'k2', 'k3',
+                    't_half', 't_half_fast', 't_half_medium', 't_half_slow',
+                    'pop1_fraction', 'pop2_fraction', 'pop3_fraction',
+                    # General
+                    'mobile_fraction',
+                ]
+                for c in extra_cols:
                     if c in meanfit_df.columns:
                         keep_cols.append(c)
                 keep_cols = [c for c in keep_cols if c in meanfit_df.columns]
                 html_parts.append(meanfit_df[keep_cols].to_html(index=False, classes='stats-table'))
 
-                if isinstance(boot_stats_df, pd.DataFrame) and not boot_stats_df.empty:
-                    html_parts.append("<h3>Bootstrap Statistical Comparisons (Mean-Curve Fits)</h3>")
-                    html_parts.append(boot_stats_df.to_html(index=False, classes='stats-table'))
+                if isinstance(ci_df, pd.DataFrame) and not ci_df.empty:
+                    html_parts.append("<h3>Bootstrap Parameter Uncertainty (95% CI)</h3>")
+                    html_parts.append(ci_df.to_html(index=False, classes='stats-table'))
+
+                if isinstance(global_df, pd.DataFrame) and not global_df.empty:
+                    html_parts.append("<h3>Between-Group Statistical Tests (Bootstrap Mean-Curve Parameters)</h3>")
+                    html_parts.append(global_df.to_html(index=False, classes='stats-table'))
+
+                if isinstance(pair_df, pd.DataFrame) and not pair_df.empty:
+                    html_parts.append("<h3>Pairwise Group Comparisons (Bootstrap Mean-Curve Parameters)</h3>")
+                    html_parts.append(pair_df.to_html(index=False, classes='stats-table'))
             else:
                 html_parts.append("<h2>🧪 Consensus Model: Mean-Curve Fits (Single Model Across Groups)</h2>")
                 html_parts.append("<p><i>Consensus mean-curve comparison is not available for this run (insufficient curves per group after QC, or consensus model could not be selected).</i></p>")
@@ -4237,20 +4470,33 @@ elif page == "6. Global Fitting":
                 try:
                     consensus_model = st.session_state.get('global_consensus_model')
                     meanfit_df = st.session_state.get('global_consensus_meanfit_df', pd.DataFrame())
-                    boot_stats_df = st.session_state.get('global_consensus_bootstrap_stats_df', pd.DataFrame())
+                    ci_df = st.session_state.get('global_consensus_param_ci_df', pd.DataFrame())
+                    global_df = st.session_state.get('global_consensus_global_stats_df', pd.DataFrame())
+                    pair_df = st.session_state.get('global_consensus_pairwise_stats_df', pd.DataFrame())
 
                     if consensus_model and isinstance(meanfit_df, pd.DataFrame) and not meanfit_df.empty:
                         story.append(PageBreak())
                         story.append(Paragraph("Consensus Model: Mean-Curve Fits", styles['Heading2']))
                         story.append(Paragraph(
-                            f"Consensus model: {model_labels.get(consensus_model, str(consensus_model))} (median AICc across all curves)",
+                            f"Consensus model: {model_labels.get(consensus_model, str(consensus_model))} (min summed ΔAICc across all curves)",
                             styles['Normal'],
                         ))
                         keep_cols = ['Group', 'model', 'r2', 'aicc', 'n_curves_mean']
-                        for c in [
-                            'diffusion_coefficient_um2_s', 't_half_diffusion_s', 't_half_binding_s', 'residence_time_s',
-                            'k_diff', 'k_off', 'pop_binding', 'mobile_fraction'
-                        ]:
+                        extra_cols = [
+                            # RD / RD-2binding
+                            'diffusion_coefficient_um2_s', 'k_diff', 't_half_diffusion_s',
+                            'k_off', 't_half_binding_s', 'residence_time_s',
+                            'k_off1', 'k_off2', 't_half_binding1_s', 't_half_binding2_s',
+                            'residence_time1_s', 'residence_time2_s',
+                            'pop_binding', 'pop_binding1', 'pop_binding2', 'pop_diffusion',
+                            # Exponential models
+                            'k1', 'k2', 'k3',
+                            't_half', 't_half_fast', 't_half_medium', 't_half_slow',
+                            'pop1_fraction', 'pop2_fraction', 'pop3_fraction',
+                            # General
+                            'mobile_fraction',
+                        ]
+                        for c in extra_cols:
                             if c in meanfit_df.columns:
                                 keep_cols.append(c)
                         keep_cols = [c for c in keep_cols if c in meanfit_df.columns]
@@ -4259,9 +4505,23 @@ elif page == "6. Global Fitting":
                             story.append(tbl)
                             story.append(Spacer(1, 0.2 * inch))
 
-                        if isinstance(boot_stats_df, pd.DataFrame) and not boot_stats_df.empty:
-                            story.append(Paragraph("Bootstrap Statistical Comparisons", styles['Heading3']))
-                            tbl = _df_to_rl_table(boot_stats_df, max_rows=60)
+                        if isinstance(ci_df, pd.DataFrame) and not ci_df.empty:
+                            story.append(Paragraph("Bootstrap Parameter Uncertainty (95% CI)", styles['Heading3']))
+                            tbl = _df_to_rl_table(ci_df, max_rows=80)
+                            if tbl is not None:
+                                story.append(tbl)
+                                story.append(Spacer(1, 0.2 * inch))
+
+                        if isinstance(global_df, pd.DataFrame) and not global_df.empty:
+                            story.append(Paragraph("Between-Group Statistical Tests (Bootstrap Mean-Curve)", styles['Heading3']))
+                            tbl = _df_to_rl_table(global_df, max_rows=80)
+                            if tbl is not None:
+                                story.append(tbl)
+                                story.append(Spacer(1, 0.2 * inch))
+
+                        if isinstance(pair_df, pd.DataFrame) and not pair_df.empty:
+                            story.append(Paragraph("Pairwise Group Comparisons (Bootstrap Mean-Curve)", styles['Heading3']))
+                            tbl = _df_to_rl_table(pair_df, max_rows=120)
                             if tbl is not None:
                                 story.append(tbl)
                                 story.append(Spacer(1, 0.2 * inch))
