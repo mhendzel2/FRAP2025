@@ -3523,58 +3523,15 @@ elif page == "6. Global Fitting":
             <tr style='background-color:#d4edda;font-weight:bold;'><td>Recommended</td><td colspan='2'>{recommendation}</td></tr>
         </table>
         """)
-        
-        # Per-Model Detailed Results
-        for model in all_models:
-            model_name = model_labels[model]
-            html_parts.append(f"<h2>📈 {model_name} Results</h2>")
-            
-            # Collect all groups for this model
-            model_all_data = []
-            for group_name in stored_groups:
-                df = st.session_state.global_model_results.get(group_name, {}).get(model, pd.DataFrame())
-                if not df.empty:
-                    df_copy = df.copy()
-                    df_copy['Group'] = group_name
-                    model_all_data.append(df_copy)
-            
-            if model_all_data:
-                model_combined = pd.concat(model_all_data, ignore_index=True)
-                
-                # Summary statistics per group
-                html_parts.append(f"<h3>Summary Statistics (Mean ± SEM)</h3>")
-                
-                # Get numeric columns for summary
-                numeric_cols = model_combined.select_dtypes(include=[np.number]).columns.tolist()
-                exclude_cols = ['curve_idx', 'success', 'subpopulation', 'n_subpopulations']
-                summary_cols = [c for c in numeric_cols if c not in exclude_cols]
-                
-                if summary_cols:
-                    summary_stats = model_combined.groupby('Group')[summary_cols].agg(['mean', 'sem']).round(4)
-                    summary_stats.columns = [f"{col[0]} ({col[1]})" for col in summary_stats.columns]
-                    html_parts.append(summary_stats.to_html(classes='stats-table'))
 
-                # Graphs (captured from analysis run)
-                try:
-                    imgs = st.session_state.get('global_plot_images', {})
-                    kin_key = f'kinetic_distributions_{model}'
-                    pop_key = f'population_fractions_{model}'
-
-                    if imgs.get(kin_key):
-                        html_parts.append("<h3>Kinetic Parameter Distributions</h3>")
-                        html_parts.append(f'<img src="data:image/png;base64,{imgs[kin_key]}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
-
-                    if imgs.get(pop_key):
-                        html_parts.append("<h3>Population Fractions by Group</h3>")
-                        html_parts.append(f'<img src="data:image/png;base64,{imgs[pop_key]}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
-                except Exception:
-                    pass
+        html_parts.append("<p><i>Per-model detailed outputs are available separately via the CSV download buttons in the app (recommended model table and per-model tables). The report below focuses on best-fit (AICc) comparisons.</i></p>")
 
         # Best-fit (primary) section
         try:
             best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
             comp_df = st.session_state.get('global_bestfit_model_composition_df', pd.DataFrame())
             stats_df = st.session_state.get('global_bestfit_group_stats_df', pd.DataFrame())
+
             if best_df is not None and not best_df.empty:
                 html_parts.append("<h2>🔬 Best-Fit Comparisons (Primary)</h2>")
 
@@ -3591,45 +3548,6 @@ elif page == "6. Global Fitting":
                     html_parts.append(stats_df.to_html(index=False, classes='stats-table'))
         except Exception:
             pass
-                
-                # Statistical comparisons between groups
-                if len(stored_groups) >= 2:
-                    html_parts.append(f"<h3>Statistical Comparisons</h3>")
-                    stat_rows = []
-                    for col in summary_cols:
-                        if col in ['r2', 'adj_r2', 'aicc', 'aic']:
-                            continue  # Skip fit quality metrics
-                        group_data = [model_combined[model_combined['Group'] == g][col].dropna().values 
-                                     for g in stored_groups]
-                        if all(len(d) >= 2 for d in group_data):
-                            try:
-                                if len(stored_groups) > 2:
-                                    stat, pval = scipy_stats.kruskal(*group_data)
-                                    test = "Kruskal-Wallis"
-                                else:
-                                    stat, pval = scipy_stats.mannwhitneyu(group_data[0], group_data[1], alternative='two-sided')
-                                    test = "Mann-Whitney U"
-                                sig = "Yes" if pval < alpha else "No"
-                                sig_color = '#d4edda' if sig == 'Yes' else '#f8d7da'
-                                stat_rows.append(f"<tr style='background:{sig_color}'><td>{col}</td><td>{test}</td><td>{stat:.3f}</td><td>{pval:.4e}</td><td>{sig}</td></tr>")
-                            except Exception:
-                                pass
-                    
-                    if stat_rows:
-                        html_parts.append("""
-                        <table class='stat-table'>
-                            <thead><tr><th>Parameter</th><th>Test</th><th>Statistic</th><th>p-value</th><th>Significant</th></tr></thead>
-                            <tbody>
-                        """)
-                        html_parts.extend(stat_rows)
-                        html_parts.append("</tbody></table>")
-
-                    # NOTE: Per-curve (individual file) tables are intentionally not embedded in the HTML report.
-                    # Use the CSV export buttons to download raw per-curve results.
-            else:
-                html_parts.append("<p><i>No successful fits for this model.</i></p>")
-            
-            html_parts.append("<hr/>")
         
         # Recovery Curves Section
         if 'global_plot_images' in st.session_state and st.session_state.global_plot_images:
