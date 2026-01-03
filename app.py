@@ -3224,6 +3224,7 @@ elif page == "6. Global Fitting":
 
         with col_pdf:
             pdf_bytes = None
+            pdf_error = None
             try:
                 import base64
                 from reportlab.lib import colors
@@ -3354,8 +3355,9 @@ elif page == "6. Global Fitting":
 
                 doc.build(story)
                 pdf_bytes = buf.getvalue()
-            except Exception:
+            except Exception as e:
                 pdf_bytes = None
+                pdf_error = e
 
             if pdf_bytes:
                 st.download_button(
@@ -3368,7 +3370,12 @@ elif page == "6. Global Fitting":
                     key="download_pdf_report_global"
                 )
             else:
-                st.caption("PDF report unavailable (missing dependency or generation error).")
+                if isinstance(pdf_error, ModuleNotFoundError):
+                    st.caption(f"PDF export missing module: {pdf_error}")
+                elif pdf_error is not None:
+                    st.caption(f"PDF export error: {pdf_error}")
+                else:
+                    st.caption("PDF report unavailable (missing dependency or generation error).")
 
 # --- Page 7: Report ---
 elif page == "7. Report":
@@ -3534,7 +3541,7 @@ elif page == "7. Report":
                                     from frap_pdf_reports import generate_pdf_report
                                 except Exception as import_err:
                                     raise RuntimeError(
-                                        "PDF report generation is unavailable. Ensure 'reportlab' is installed and frap_pdf_reports imports cleanly."
+                                        f"PDF report generation is unavailable (import failed): {import_err}"
                                     ) from import_err
 
                                 class _PDFDataManager:
