@@ -2056,6 +2056,8 @@ elif page == "6. Global Fitting":
                                 'curve_idx': curve_idx, 'success': True, 'model': 'single',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'A': A,
+                                'C': C,
                                 'mobile_fraction': endpoint * 100,
                                 'k1': k, 't_half': np.log(2) / k if k > 0 else np.nan,
                                 'pop1_fraction': 100.0,  # Single component = 100%
@@ -2083,6 +2085,9 @@ elif page == "6. Global Fitting":
                                 'curve_idx': curve_idx, 'success': True, 'model': 'double',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'A1': A1,
+                                'A2': A2,
+                                'C': C,
                                 'mobile_fraction': endpoint * 100,
                                 'k1': k1, 'k2': k2,
                                 't_half_fast': np.log(2) / k1 if k1 > 0 else np.nan,
@@ -2113,6 +2118,10 @@ elif page == "6. Global Fitting":
                                 'curve_idx': curve_idx, 'success': True, 'model': 'triple',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'A1': A1,
+                                'A2': A2,
+                                'A3': A3,
+                                'C': C,
                                 'mobile_fraction': endpoint * 100,
                                 'k1': k1, 'k2': k2, 'k3': k3,
                                 't_half_fast': np.log(2) / k1 if k1 > 0 else np.nan,
@@ -2149,6 +2158,9 @@ elif page == "6. Global Fitting":
                                 'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'A_diff': A_diff,
+                                'A_bind': A_bind,
+                                'C': C,
                                 'mobile_fraction': endpoint * 100,
                                 'k_diff': k_diff,
                                 'k_off': k_off,
@@ -2187,6 +2199,10 @@ elif page == "6. Global Fitting":
                                 'curve_idx': curve_idx, 'success': True, 'model': 'reaction_diffusion_two_binding',
                                 'r2': fit.get('r2', np.nan), 'adj_r2': fit.get('adj_r2', np.nan),
                                 'aicc': fit.get('aicc', np.nan), 'aic': fit.get('aic', np.nan),
+                                'A_diff': A_diff,
+                                'A_bind1': A_bind1,
+                                'A_bind2': A_bind2,
+                                'C': C,
                                 'mobile_fraction': endpoint * 100,
                                 'k_diff': k_diff,
                                 'k_off1': k_off1,
@@ -3717,6 +3733,61 @@ elif page == "6. Global Fitting":
                     except Exception:
                         return
 
+                def _mpl_fig_to_b64(fig) -> str:
+                    tmp = io.BytesIO()
+                    fig.savefig(tmp, format='png', bbox_inches='tight', dpi=140)
+                    tmp.seek(0)
+                    return base64.b64encode(tmp.read()).decode('utf-8')
+
+                def _curve_fit_y(t: np.ndarray, row: dict) -> np.ndarray | None:
+                    try:
+                        model = row.get('best_model') or row.get('model')
+                        if model == 'single':
+                            A = float(row.get('A'))
+                            k = float(row.get('k1'))
+                            C0 = float(row.get('C'))
+                            return A * (1 - np.exp(-k * t)) + C0
+                        if model == 'double':
+                            A1 = float(row.get('A1'))
+                            k1 = float(row.get('k1'))
+                            A2 = float(row.get('A2'))
+                            k2 = float(row.get('k2'))
+                            C0 = float(row.get('C'))
+                            return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + C0
+                        if model == 'triple':
+                            A1 = float(row.get('A1'))
+                            k1 = float(row.get('k1'))
+                            A2 = float(row.get('A2'))
+                            k2 = float(row.get('k2'))
+                            A3 = float(row.get('A3'))
+                            k3 = float(row.get('k3'))
+                            C0 = float(row.get('C'))
+                            return A1 * (1 - np.exp(-k1 * t)) + A2 * (1 - np.exp(-k2 * t)) + A3 * (1 - np.exp(-k3 * t)) + C0
+                        if model == 'reaction_diffusion':
+                            A_diff = float(row.get('A_diff'))
+                            k_diff = float(row.get('k_diff'))
+                            A_bind = float(row.get('A_bind'))
+                            k_off = float(row.get('k_off'))
+                            C0 = float(row.get('C'))
+                            return A_diff * (1 - np.exp(-k_diff * t)) + A_bind * (1 - np.exp(-k_off * t)) + C0
+                        if model == 'reaction_diffusion_two_binding':
+                            A_diff = float(row.get('A_diff'))
+                            k_diff = float(row.get('k_diff'))
+                            A_b1 = float(row.get('A_bind1'))
+                            k1off = float(row.get('k_off1'))
+                            A_b2 = float(row.get('A_bind2'))
+                            k2off = float(row.get('k_off2'))
+                            C0 = float(row.get('C'))
+                            return (
+                                A_diff * (1 - np.exp(-k_diff * t))
+                                + A_b1 * (1 - np.exp(-k1off * t))
+                                + A_b2 * (1 - np.exp(-k2off * t))
+                                + C0
+                            )
+                        return None
+                    except Exception:
+                        return None
+
                 styles = getSampleStyleSheet()
                 if 'GFTitle' not in styles:
                     styles.add(ParagraphStyle(name='GFTitle', parent=styles['Heading1'], alignment=TA_CENTER, fontSize=16))
@@ -3807,6 +3878,114 @@ elif page == "6. Global Fitting":
                         imgs = st.session_state.get('global_plot_images', {})
                         if isinstance(imgs, dict) and imgs.get('fit_quality_comparison'):
                             _add_b64_image(story, imgs.get('fit_quality_comparison'), "Model Fit Quality Comparison")
+
+                        # Best-fit table preview (kept bounded for PDF size)
+                        story.append(Paragraph("Best-Fit Results (Preview)", styles['Heading2']))
+                        try:
+                            keep_cols = [
+                                'Group', 'curve_idx', 'best_model', 'r2', 'aicc', 'akaike_weight', 'ambiguous_best',
+                                'diffusion_coefficient_um2_s', 't_half_diffusion_s', 't_half_binding_s',
+                                'residence_time_s', 'pop_binding', 'mobile_fraction',
+                            ]
+                            keep_cols = [c for c in keep_cols if c in best_df.columns]
+                            tbl = _df_to_rl_table(best_df[keep_cols], max_rows=50)
+                            if tbl is not None:
+                                story.append(tbl)
+                                story.append(Spacer(1, 0.2 * inch))
+                        except Exception:
+                            pass
+
+                        # Example best-fit curves (observed vs fitted) per group/model
+                        story.append(PageBreak())
+                        story.append(Paragraph("Example Best-Fit Curves", styles['Heading2']))
+                        try:
+                            raw_by_group = st.session_state.get('global_raw_curves', {})
+                            if isinstance(raw_by_group, dict) and raw_by_group:
+                                # Choose representative curve per (Group, best_model): highest R²
+                                ex = best_df.copy()
+                                if 'best_model' not in ex.columns and 'model' in ex.columns:
+                                    ex['best_model'] = ex['model']
+                                if 'r2' in ex.columns:
+                                    ex = ex.sort_values('r2', ascending=False)
+
+                                selected_rows = []
+                                for group_name in stored_groups:
+                                    g = ex[ex.get('Group') == group_name] if 'Group' in ex.columns else pd.DataFrame()
+                                    if g.empty:
+                                        continue
+                                    for bm in g['best_model'].dropna().unique().tolist():
+                                        r = g[g['best_model'] == bm].head(1)
+                                        if not r.empty:
+                                            selected_rows.append(r.iloc[0].to_dict())
+
+                                # Bound the number of examples
+                                selected_rows = selected_rows[:8]
+
+                                for row in selected_rows:
+                                    group_name = row.get('Group')
+                                    curve_idx = row.get('curve_idx')
+                                    if group_name not in raw_by_group:
+                                        continue
+                                    curve = next((c for c in raw_by_group[group_name] if c.get('curve_idx') == curve_idx), None)
+                                    if curve is None:
+                                        continue
+                                    t = np.asarray(curve.get('time'), dtype=float)
+                                    y = np.asarray(curve.get('intensity'), dtype=float)
+                                    yhat = _curve_fit_y(t, row)
+                                    if yhat is None:
+                                        continue
+
+                                    fig, ax = plt.subplots(figsize=(7.2, 4.0))
+                                    ax.plot(t, y, 'o', ms=3, alpha=0.7, label='Observed')
+                                    ax.plot(t, yhat, '-', lw=2, label='Best-fit')
+                                    ax.set_xlabel('Time (s)')
+                                    ax.set_ylabel('Normalized Intensity')
+                                    bm = str(row.get('best_model'))
+                                    title = f"{group_name} | curve {curve_idx} | {bm}"
+                                    ax.set_title(title)
+                                    ax.set_ylim(0, 1.15)
+                                    ax.grid(True, alpha=0.25)
+                                    ax.legend(loc='lower right')
+                                    b64 = _mpl_fig_to_b64(fig)
+                                    plt.close(fig)
+                                    _add_b64_image(story, b64, title)
+                        except Exception:
+                            pass
+
+                        # Best-fit kinetic subpopulation analysis
+                        story.append(PageBreak())
+                        story.append(Paragraph("Kinetic Subpopulation Analysis (Best-Fit)", styles['Heading2']))
+                        try:
+                            imgs = st.session_state.get('global_plot_images', {})
+                            if isinstance(imgs, dict):
+                                for group_name in stored_groups:
+                                    dist_key = f'subpop_dist_{group_name}'
+                                    overlay_key = f'subpop_overlay_{group_name}'
+                                    indiv_key = f'subpop_indiv_{group_name}'
+                                    if imgs.get(dist_key) or imgs.get(overlay_key) or imgs.get(indiv_key):
+                                        story.append(Paragraph(str(group_name), styles['Heading3']))
+                                        if imgs.get(dist_key):
+                                            _add_b64_image(story, imgs.get(dist_key), f"{group_name}: Subpopulation Distribution")
+                                        if imgs.get(overlay_key):
+                                            _add_b64_image(story, imgs.get(overlay_key), f"{group_name}: Subpopulation Overlay")
+                                        if imgs.get(indiv_key):
+                                            _add_b64_image(story, imgs.get(indiv_key), f"{group_name}: Subpopulation Curves")
+
+                            # Add kinetic subpopulation properties tables if available
+                            sub_stats = st.session_state.get('global_subpop_stats', [])
+                            if isinstance(sub_stats, list) and sub_stats:
+                                for item in sub_stats:
+                                    gname = item.get('group')
+                                    stats_list = item.get('stats')
+                                    if gname and stats_list:
+                                        story.append(Paragraph(f"{gname}: Subpopulation Kinetic Properties", styles['Heading3']))
+                                        df_stats = pd.DataFrame(stats_list)
+                                        tbl = _df_to_rl_table(df_stats, max_rows=30)
+                                        if tbl is not None:
+                                            story.append(tbl)
+                                            story.append(Spacer(1, 0.2 * inch))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
