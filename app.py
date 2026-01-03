@@ -98,6 +98,18 @@ if 'physical_param_presets' not in st.session_state:
 
 if 'physical_preset_name' not in st.session_state:
     st.session_state.physical_preset_name = 'Default'
+
+# UI-only key used by the preset selectbox. We keep it separate from the
+# canonical value to avoid Streamlit's restriction on setting widget keys
+# after widget instantiation.
+if 'physical_preset_selector' not in st.session_state:
+    st.session_state.physical_preset_selector = st.session_state.physical_preset_name
+
+# Deferred selection update (set on save, applied on next rerun)
+if 'physical_preset_pending_select' not in st.session_state:
+    st.session_state.physical_preset_pending_select = None
+if 'physical_preset_saved_message' not in st.session_state:
+    st.session_state.physical_preset_saved_message = None
 # Multi-model comparison results
 if 'model_comparison_results' not in st.session_state:
     st.session_state.model_comparison_results = {}  # {group_name: {'double': df, 'triple': df}}
@@ -131,16 +143,35 @@ with st.sidebar.expander("🔬 Physical Parameters", expanded=False):
         st.session_state['bleach_radius_input'] = float(preset.get('bleach_radius_um', st.session_state.bleach_radius))
         st.session_state['pixel_size_input'] = float(preset.get('pixel_size_um_per_px', st.session_state.pixel_size))
 
+    def _on_physical_preset_changed():
+        st.session_state.physical_preset_name = st.session_state.get('physical_preset_selector')
+        _apply_selected_physical_preset()
+
     preset_names = [p.get('name') for p in (st.session_state.get('physical_param_presets') or []) if p.get('name')]
     options = preset_names + ['Custom']
     if st.session_state.physical_preset_name not in options:
         st.session_state.physical_preset_name = options[0] if options else 'Custom'
 
+    # Apply deferred selection updates (e.g., after saving a preset)
+    pending = st.session_state.get('physical_preset_pending_select')
+    if pending and pending in options:
+        st.session_state.physical_preset_name = pending
+        st.session_state.physical_preset_selector = pending
+        st.session_state.physical_preset_pending_select = None
+        _apply_selected_physical_preset()
+
+    if st.session_state.physical_preset_selector not in options:
+        st.session_state.physical_preset_selector = st.session_state.physical_preset_name
+
+    if st.session_state.get('physical_preset_saved_message'):
+        st.success(st.session_state.physical_preset_saved_message)
+        st.session_state.physical_preset_saved_message = None
+
     st.selectbox(
         "Parameter preset",
         options=options,
-        key='physical_preset_name',
-        on_change=_apply_selected_physical_preset,
+        key='physical_preset_selector',
+        on_change=_on_physical_preset_changed,
         help="Select a saved physical-parameter preset, or choose Custom to enter new values."
     )
 
@@ -203,9 +234,9 @@ with st.sidebar.expander("🔬 Physical Parameters", expanded=False):
 
                 st.session_state.physical_param_presets = presets
                 _save_physical_presets(presets)
-                st.session_state.physical_preset_name = name
-                _apply_selected_physical_preset()
-                st.success("Preset saved.")
+                st.session_state.physical_preset_pending_select = name
+                st.session_state.physical_preset_saved_message = f"Preset saved: {name}"
+                st.rerun()
         st.caption(f"Presets are stored in: {_physical_presets_path()}")
     
     # Calculate bleach radius in pixels

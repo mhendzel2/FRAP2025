@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Default",
+    "bleach_radius_um": 1.0,
+    "pixel_size_um_per_px": 0.065
+  },
+  {
+    "name": "265",
+    "bleach_radius_um": 0.72,
+    "pixel_size_um_per_px": 0.12
+  },
+  {
+    "name": "laser",
+    "bleach_radius_um": 1.44,
+    "pixel_size_um_per_px": 0.12
+  }
+]
