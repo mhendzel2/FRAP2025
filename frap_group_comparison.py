@@ -257,6 +257,28 @@ class HolisticGroupComparator:
         comparison_df = comparison_df[[c for c in col_order if c in comparison_df.columns]]
         
         return comparison_df
+
+
+def pool_controls_features(group_features: Dict[str, pd.DataFrame], control_group_names: List[str],
+                           pooled_name: str = 'Pooled Control') -> Dict[str, pd.DataFrame]:
+    """Pool multiple control groups by concatenating their feature dataframes."""
+    pooled_frames = [group_features[g] for g in control_group_names if g in group_features]
+    pooled_df = pd.concat(pooled_frames, ignore_index=True) if pooled_frames else pd.DataFrame()
+
+    out = dict(group_features)
+    for g in control_group_names:
+        out.pop(g, None)
+    out[pooled_name] = pooled_df
+    return out
+
+
+def enforce_reference_model(features_df: pd.DataFrame, reference_model: Optional[str]) -> pd.DataFrame:
+    """Return a copy of features_df with a forced 'model' label for consistent parsing."""
+    if not reference_model:
+        return features_df
+    df2 = features_df.copy()
+    df2['model'] = reference_model
+    return df2
     
     def statistical_comparison(self, 
                                group1_features: pd.DataFrame, 

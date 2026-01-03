@@ -12,8 +12,37 @@ import matplotlib.pyplot as plt
 import io
 import base64
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def plot_publication_violin(df: pd.DataFrame, x_col: str, y_col: str, color_col: Optional[str] = None,
+                            title: Optional[str] = None, y_label: Optional[str] = None, x_label: Optional[str] = None):
+    """Generate a publication-oriented violin plot with box overlay and points."""
+    if color_col is None:
+        color_col = x_col
+
+    fig = px.violin(
+        df,
+        x=x_col,
+        y=y_col,
+        color=color_col,
+        box=True,
+        points='all',
+        hover_data=list(df.columns),
+        title=title,
+    )
+
+    fig.update_layout(
+        template="simple_white",
+        yaxis_title=y_label if y_label else y_col,
+        xaxis_title=x_label if x_label else "",
+        showlegend=False,
+        height=500,
+    )
+    fig.update_traces(marker=dict(size=4, opacity=0.6))
+    return fig
 
 class FRAPPlots:
     @staticmethod

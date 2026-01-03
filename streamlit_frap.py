@@ -24,6 +24,18 @@ from frap_pdf_reports import generate_pdf_report
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 from calibration import Calibration
+
+# Optional v2 comparative analysis modules
+try:
+    from frap_populations_v2 import detect_heterogeneity_v2
+    from frap_plots_v2 import plot_publication_violin
+    from frap_comparison_v2 import UnifiedGroupComparator
+    COMPARATIVE_ANALYSIS_V2_AVAILABLE = True
+except Exception:
+    COMPARATIVE_ANALYSIS_V2_AVAILABLE = False
+    detect_heterogeneity_v2 = None
+    plot_publication_violin = None
+    UnifiedGroupComparator = None
 import zipfile
 import tempfile
 import shutil
@@ -1227,7 +1239,15 @@ with st.sidebar:
                     st.success(f"Removed {len(files_to_remove)} files from {selected_group_name}")
                     st.rerun()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📊 Single File Analysis",
+    "📈 Group Analysis",
+    "📊 Multi-Group Comparison",
+    "⚖️ Comparative Analysis",
+    "🖼️ Image Analysis",
+    "💾 Session Management",
+    "⚙️ Settings",
+])
 
 with tab1:
     st.header("Single File Analysis")
@@ -2515,10 +2535,192 @@ with tab3:
                         st.warning("Select at least 2 groups for statistical comparison")
 
 with tab4:
+    st.header("⚖️ Comparative Group Analysis")
+
+    if not COMPARATIVE_ANALYSIS_V2_AVAILABLE:
+        st.error(
+            "Comparative Analysis modules (v2) are not available. "
+            "Please ensure frap_comparison_v2.py, frap_plots_v2.py, and frap_populations_v2.py are present."
+        )
+    elif not dm.groups:
+        st.warning("Please upload data first (create groups).")
+    else:
+        all_groups = list(dm.groups.keys())
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            st.subheader("1. Configuration")
+            controls = st.multiselect(
+                "Select Control Group(s) (Pooled)",
+                all_groups,
+                help="Selected controls are pooled to determine the reference model.",
+            )
+            samples = st.multiselect(
+                "Select Sample Groups",
+                [g for g in all_groups if g not in controls],
+                help="These groups are fit using the control's best model.",
+            )
+
+            st.subheader("Heterogeneity Settings")
+            sens_mode = st.select_slider(
+                "Sub-population Sensitivity",
+                options=["low", "normal", "high"],
+                value="normal",
+                help="Low = requires strong evidence to split populations.",
+            )
+
+            st.subheader("Report Configuration")
+            metric_options = [
+                ("D", "Diffusion (D)"),
+                ("mobile_fraction", "Mobile Fraction"),
+                ("k", "Rate Constant (k)"),
+                ("F_fast", "Fast Fraction (F_fast)"),
+            ]
+            selected_metrics = []
+            for key, label in metric_options:
+                if st.checkbox(label, value=(key in ["D", "mobile_fraction"]), key=f"cmp_metric_{key}"):
+                    selected_metrics.append(key)
+
+            run_btn = st.button("Run Comparative Analysis", type="primary")
+
+        with col2:
+            if run_btn:
+                if not controls or not samples:
+                    st.warning("Select at least one control group and one sample group.")
+                else:
+                    if UnifiedGroupComparator is None:
+                        st.error("Comparator unavailable; cannot run comparative analysis.")
+                        comparator = None
+                    else:
+                        comparator = UnifiedGroupComparator(dm)
+
+                    with st.spinner("Pooling controls and determining best model..."):
+                        if comparator is None:
+                            pooled_ctrl_data = {}
+                            best_model = 'single'
+                        else:
+                            pooled_ctrl_data = comparator.pool_controls(controls)
+                            best_model = comparator.determine_best_model(pooled_ctrl_data)
+                            st.success(f"Reference Model Determined: **{best_model.capitalize()} Exponential**")
+
+                    with st.spinner(f"Fitting all groups using '{best_model}' model..."):
+                        if comparator is None:
+                            df_ctrl = pd.DataFrame()
+                        else:
+                            df_ctrl = comparator.fit_group_with_model("Pooled Control", pooled_ctrl_data, best_model)
+
+                        dfs = [df_ctrl]
+                        for s_name in samples:
+                            if comparator is None:
+                                continue
+                            s_data = comparator.get_group_curve_data(s_name)
+                            df_s = comparator.fit_group_with_model(s_name, s_data, best_model)
+                            dfs.append(df_s)
+
+                        full_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+                        st.session_state['comparison_results_v2'] = {
+                            'df': full_df,
+                            'control_name': 'Pooled Control',
+                            'best_model': best_model,
+                            'selected_metrics': selected_metrics,
+                            'sens_mode': sens_mode,
+                        }
+
+            if 'comparison_results_v2' in st.session_state:
+                payload = st.session_state['comparison_results_v2']
+                res_df = payload.get('df')
+                control_name = payload.get('control_name', 'Pooled Control')
+                selected_metrics = payload.get('selected_metrics', [])
+                sens_mode = payload.get('sens_mode', 'normal')
+
+                comparator = UnifiedGroupComparator(dm) if UnifiedGroupComparator is not None else None
+
+                if res_df is None or res_df.empty:
+                    st.warning("No results to display (no curves were fit).")
+                else:
+                    res_t1, res_t2, res_t3 = st.tabs(["🎻 Graphics", "🔢 Statistics", "💾 Data"])
+
+                    with res_t1:
+                        st.subheader("Kinetic Parameter Distributions")
+                        group_options = [g for g in res_df['Group'].dropna().unique().tolist()]
+                        group_options.sort()
+                        groups_to_plot = st.multiselect(
+                            "Groups to plot",
+                            options=group_options,
+                            default=group_options,
+                            help="Choose which fitted groups appear in the violin plots.",
+                            key="comparison_v2_groups_to_plot",
+                        )
+
+                        plot_df = res_df[res_df['Group'].isin(groups_to_plot)].copy() if groups_to_plot else pd.DataFrame()
+                        if plot_df.empty:
+                            st.warning("No groups selected for plotting.")
+                        for metric in selected_metrics:
+                            if metric in plot_df.columns:
+                                if plot_publication_violin is None:
+                                    st.warning("Violin plot helper unavailable; cannot render plots.")
+                                    break
+                                fig = plot_publication_violin(
+                                    plot_df,
+                                    x_col='Group',
+                                    y_col=metric,
+                                    color_col='Group',
+                                    title=f"{metric} by Group",
+                                )
+                                st.plotly_chart(fig, width="stretch")
+
+                    with res_t2:
+                        st.subheader("Pairwise Statistical Comparison (vs Control)")
+                        metrics_for_stats = [m for m in selected_metrics if m in res_df.columns]
+                        if comparator is None:
+                            st.warning("Comparator unavailable; cannot compute statistics.")
+                        else:
+                            stats_df = comparator.calculate_pairwise_stats(res_df, control_name, metrics=metrics_for_stats)
+                            st.dataframe(stats_df)
+
+                        st.subheader("Heterogeneity Analysis (Sensitivity Applied)")
+                        for grp in res_df['Group'].unique():
+                            grp_data = res_df[res_df['Group'] == grp]
+
+                            feature_cols = []
+                            if 'k' in grp_data.columns:
+                                feature_cols.append('k')
+                            elif 'k_fast' in grp_data.columns:
+                                feature_cols.append('k_fast')
+                            if 'mobile_fraction' in grp_data.columns:
+                                feature_cols.append('mobile_fraction')
+
+                            if len(feature_cols) < 2:
+                                st.write(f"**{grp}**: Not enough features for clustering.")
+                                continue
+
+                            if detect_heterogeneity_v2 is None:
+                                st.write(f"**{grp}**: Heterogeneity detector unavailable.")
+                            else:
+                                _, k_found, _ = detect_heterogeneity_v2(
+                                    grp_data,
+                                    feature_cols=feature_cols,
+                                    sensitivity=sens_mode,
+                                )
+                                st.write(f"**{grp}**: Identified **{k_found}** distinct recovery profile(s).")
+
+                    with res_t3:
+                        st.subheader("Export Data")
+                        csv = res_df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            "Download Full Comparison Data (CSV)",
+                            csv,
+                            "frap_comparison_results.csv",
+                            "text/csv",
+                            key='download-csv-comparison-v2'
+                        )
+                        st.dataframe(res_df)
+
+with tab5:
     # Use the comprehensive image analysis interface
     create_image_analysis_interface()
 
-with tab5:
+with tab6:
     st.header("💾 Session Management & Data Export")
     st.markdown("Save your analysis session and export results to various formats")
 
@@ -2828,7 +3030,7 @@ with tab5:
     #             st.error(f"Error creating debug package: {e}")
     #             st.error("Please contact support for assistance")
 
-with tab6:
+with tab7:
     st.subheader("Application Settings")
     st.markdown("### Molecular Weight Calibration")
     st.markdown("Define standards to calibrate diffusion coefficients to apparent molecular weight.")

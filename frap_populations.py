@@ -141,10 +141,13 @@ def gmm_clusters(
     X: np.ndarray, 
     max_k: int = 6,
     random_state: int = 0,
-    min_k: int = 1
+    min_k: int = 1,
+    sensitivity: str = 'normal',
+    bic_threshold: Optional[float] = None,
+    min_cluster_size: int = 3
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """
-    Cluster using Gaussian Mixture Model with BIC selection
+    Cluster using Gaussian Mixture Model with BIC selection and sensitivity control.
     
     Parameters
     ----------
@@ -156,6 +159,14 @@ def gmm_clusters(
         Random seed
     min_k : int
         Minimum number of clusters
+    sensitivity : str
+        'low', 'normal', 'high' controls how hard it is to add clusters.
+        Lower sensitivity requires larger BIC improvement to accept more components.
+    bic_threshold : float, optional
+        Override delta-BIC threshold required to accept an additional cluster.
+        If None, uses a default based on sensitivity.
+    min_cluster_size : int
+        Reject solutions where any cluster has fewer than this many samples.
         
     Returns
     -------
@@ -170,38 +181,61 @@ def gmm_clusters(
     max_k = min(max_k, X.shape[0] // 2)
     max_k = max(max_k, min_k)
     
-    # Try different numbers of components
-    bic_scores = []
-    models = []
-    
-    for k in range(min_k, max_k + 1):
+    # Sensitivity thresholds (delta-BIC required to accept a new cluster)
+    thresholds = {
+        'low': 25.0,
+        'normal': 10.0,
+        'high': 2.0,
+    }
+    delta_bic = bic_threshold if bic_threshold is not None else thresholds.get(sensitivity, 10.0)
+
+    # Fit baseline model
+    try:
+        best_model = GaussianMixture(
+            n_components=min_k,
+            covariance_type='full',
+            random_state=random_state,
+            n_init=10,
+            max_iter=200,
+        )
+        best_model.fit(X)
+        best_bic = best_model.bic(X)
+        best_k = min_k
+    except Exception as e:
+        logger.warning(f"Baseline GMM fit failed: {e}")
+        return np.zeros(X.shape[0], dtype=int), np.ones(X.shape[0]), 1
+
+    # Try adding clusters until improvement is not significant
+    for k in range(min_k + 1, max_k + 1):
         try:
-            gmm = GaussianMixture(
+            model = GaussianMixture(
                 n_components=k,
                 covariance_type='full',
                 random_state=random_state,
                 n_init=10,
-                max_iter=200
+                max_iter=200,
             )
-            gmm.fit(X)
-            bic = gmm.bic(X)
-            bic_scores.append(bic)
-            models.append(gmm)
+            model.fit(X)
+            bic = model.bic(X)
+
+            # Require meaningful BIC improvement
+            if (best_bic - bic) <= delta_bic:
+                break
+
+            # Reject if any cluster is too small
+            labels_tmp = model.predict(X)
+            counts = np.bincount(labels_tmp, minlength=k)
+            if counts.min(initial=0) < max(1, int(min_cluster_size)):
+                break
+
+            best_model = model
+            best_bic = bic
+            best_k = k
         except Exception as e:
             logger.debug(f"GMM with k={k} failed: {e}")
-            bic_scores.append(np.inf)
-            models.append(None)
-    
-    # Select best k
-    best_idx = np.argmin(bic_scores)
-    best_k = min_k + best_idx
-    best_model = models[best_idx]
-    
-    if best_model is None:
-        logger.warning("All GMM fits failed")
-        return np.zeros(X.shape[0], dtype=int), np.ones(X.shape[0]), 1
-    
-    logger.info(f"Selected k={best_k} clusters (BIC={bic_scores[best_idx]:.2f})")
+            continue
+
+    logger.info(f"Selected k={best_k} clusters (BIC={best_bic:.2f}, ΔBIC threshold={delta_bic})")
     
     # Get labels and probabilities
     labels = best_model.predict(X)
