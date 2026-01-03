@@ -14,6 +14,64 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 from sklearn.cluster import AgglomerativeClustering
 from calibration import Calibration
+
+
+def _select_bleach_index_from_trace(
+    time: np.ndarray,
+    intensity: np.ndarray,
+    *,
+    min_pre_frames: int = 1,
+    min_post_frames: int = 2,
+) -> int:
+    """Pick a bleach index that yields valid pre/post segmentation.
+
+    Historically the code used `argmin(intensity)` which can misidentify bleach if:
+    - the trace starts at the minimum (no true pre-bleach points),
+    - the minimum occurs near the end due to drift/outliers.
+
+    This selector considers a small set of candidates and chooses the best valid
+    candidate based on the standardized drop from pre-bleach.
+    """
+
+    n = int(len(intensity))
+    if n == 0:
+        raise ValueError("Empty intensity trace")
+
+    candidates: set[int] = {int(np.argmin(intensity))}
+    if n >= 2:
+        # Largest negative jump -> bleach is typically the frame AFTER the jump
+        candidates.add(int(np.argmin(np.diff(intensity))) + 1)
+
+    valid: list[tuple[float, float, int]] = []  # (score, drop, idx)
+    for idx in candidates:
+        if idx < min_pre_frames:
+            continue
+        if idx > n - min_post_frames - 1:
+            continue
+
+        pre_start = max(0, idx - 5)
+        pre = intensity[pre_start:idx]
+        if len(pre) < 1:
+            continue
+
+        pre_mean = float(np.mean(pre))
+        pre_std = float(np.std(pre)) + 1e-8
+        drop = pre_mean - float(intensity[idx])
+        score = drop / pre_std
+
+        # Require an actual drop; otherwise this is probably not bleach.
+        if drop <= 0:
+            continue
+        valid.append((score, drop, idx))
+
+    if valid:
+        # Prefer the largest standardized drop; tie-breaker on absolute drop.
+        valid.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return int(valid[0][2])
+
+    # Fall back to argmin (the legacy behavior) so callers get a consistent
+    # error message if segmentation is impossible.
+    return int(np.argmin(intensity))
 # ---------------------------------------------------------------------- #
 #  PUBLIC HELPER – post‑bleach extraction with recovery extrapolation    #
 # ---------------------------------------------------------------------- #
@@ -35,13 +93,18 @@ def get_post_bleach_data(time: np.ndarray,
     extrapolation_points : int – number of early recovery points to use for extrapolation
 
     """
-    # locate bleach – minimum intensity
-    i_min = int(np.argmin(intensity))
+    # locate bleach (robust selection)
+    i_min = _select_bleach_index_from_trace(
+        time,
+        intensity,
+        min_pre_frames=1,
+        min_post_frames=max(2, extrapolation_points + 1),
+    )
     if i_min == 0:                           # guard pathological files
-        raise ValueError("Bleach frame at index 0 – cannot segment pre/post.")
+        raise ValueError("Bleach frame at index 0 – cannot segment pre/post (bleach may be misidentified).")
     
     if i_min >= len(time) - 2:  # guard end-of-data bleach
-        raise ValueError("Bleach frame too close to end of data – insufficient recovery data.")
+        raise ValueError("Bleach frame too close to end of data – insufficient recovery data (bleach may be misidentified).")
 
     # Get the bleach time point (time of minimum intensity)
     t_bleach = time[i_min]
@@ -278,14 +341,19 @@ class FRAPAnalysisCore:
         if len(time) != len(intensity):
             raise ValueError("Time and intensity arrays must have the same length")
             
-        # Find the bleach point (minimum intensity)
-        i_min = np.argmin(intensity)
+        # Find the bleach point (robust selection)
+        i_min = _select_bleach_index_from_trace(
+            np.asarray(time),
+            np.asarray(intensity),
+            min_pre_frames=1,
+            min_post_frames=3,
+        )
         
         if i_min == 0:
-            raise ValueError("Bleach frame found at first index – cannot extrapolate.")
+            raise ValueError("Bleach frame found at first index – cannot extrapolate (bleach may be misidentified).")
         
         if i_min >= len(time) - 3:
-            raise ValueError("Bleach frame too close to end – insufficient recovery data.")
+            raise ValueError("Bleach frame too close to end – insufficient recovery data (bleach may be misidentified).")
         
         # Get bleach time
         t_bleach = time[i_min]
