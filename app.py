@@ -3044,6 +3044,8 @@ elif page == "6. Global Fitting":
             if dom.empty or dom['Group'].nunique() < 2:
                 st.info("Not enough best-fit curves across ≥2 groups for dominant-model comparisons.")
             else:
+                groups_present = [g for g in selected_groups if len(dom[dom['Group'] == g]) > 0]
+
                 # Choose key parameters to emphasize
                 key_params = []
                 if dominant_model in ['reaction_diffusion', 'reaction_diffusion_two_binding']:
@@ -3125,33 +3127,28 @@ elif page == "6. Global Fitting":
                             if not plot_specs or len(groups_present) < 2:
                                 st.caption("Not enough data to plot (need ≥2 groups and at least one parameter).")
                             else:
-                                # Pairwise selector for multi-condition experiments
-                                pair_groups = groups_present
-                                if len(groups_present) > 2:
-                                    c1, c2 = st.columns(2)
-                                    default_a = groups_present[0]
-                                    default_b = groups_present[1] if len(groups_present) > 1 else groups_present[0]
-                                    with c1:
-                                        gA = st.selectbox(
-                                            "Group A",
-                                            options=groups_present,
-                                            index=0,
-                                            key="bestfit_violin_group_a",
-                                        )
-                                    with c2:
-                                        gB_options = [g for g in groups_present if g != gA]
-                                        if not gB_options:
-                                            gB_options = groups_present
-                                        idx_b = 0
-                                        if default_b in gB_options:
-                                            idx_b = gB_options.index(default_b)
-                                        gB = st.selectbox(
-                                            "Group B",
-                                            options=gB_options,
-                                            index=idx_b,
-                                            key="bestfit_violin_group_b",
-                                        )
-                                    pair_groups = [gA, gB]
+                                st.markdown("**Choose a control group and comparison subset.**")
+                                c1, c2 = st.columns(2)
+                                with c1:
+                                    control_group = st.selectbox(
+                                        "Control group",
+                                        options=groups_present,
+                                        index=0,
+                                        key="bestfit_violin_control",
+                                    )
+                                with c2:
+                                    compare_options = [g for g in groups_present if g != control_group]
+                                    compare_groups = st.multiselect(
+                                        "Comparison groups",
+                                        options=compare_options,
+                                        default=compare_options,
+                                        key="bestfit_violin_compare_groups",
+                                    )
+
+                                plot_groups = [control_group] + [g for g in compare_groups if g in groups_present]
+                                if len(plot_groups) < 2:
+                                    st.caption("Select at least one comparison group.")
+                                    plot_groups = [control_group]
 
                                 nrows = len(plot_specs)
                                 fig, axes = plt.subplots(nrows=nrows, ncols=1, figsize=(10, 2.4 * nrows), sharex=True)
@@ -3160,7 +3157,7 @@ elif page == "6. Global Fitting":
 
                                 for ax, (col, ylabel, use_log10) in zip(axes, plot_specs):
                                     data = []
-                                    for gname in pair_groups:
+                                    for gname in plot_groups:
                                         vals = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
                                         if use_log10:
                                             vals = np.log10(np.clip(vals, 1e-12, np.inf))
@@ -3172,21 +3169,67 @@ elif page == "6. Global Fitting":
                                     ax.set_ylabel(ylabel)
                                     ax.grid(True, alpha=0.2)
 
-                                axes[-1].set_xticks(range(1, len(pair_groups) + 1))
-                                axes[-1].set_xticklabels(pair_groups, rotation=30, ha='right')
+                                axes[-1].set_xticks(range(1, len(plot_groups) + 1))
+                                axes[-1].set_xticklabels(plot_groups, rotation=30, ha='right')
                                 fig.suptitle(
                                     f"Per-curve distributions under dominant model: {model_labels.get(dominant_model, dominant_model)}",
                                     y=0.995,
                                 )
                                 fig.tight_layout(rect=[0, 0, 1, 0.98])
                                 st.pyplot(fig)
+
+                                # Pairwise stats vs control for the plotted parameters
+                                try:
+                                    rng = np.random.default_rng(123)
+                                    vs_rows = []
+                                    pvals = []
+                                    for (col, _, use_log10) in plot_specs:
+                                        v0 = dom.loc[dom['Group'] == control_group, col].dropna().astype(float).values
+                                        if use_log10:
+                                            v0 = np.log10(np.clip(v0, 1e-12, np.inf))
+                                        if len(v0) < 3:
+                                            continue
+                                        for gname in plot_groups[1:]:
+                                            v1 = dom.loc[dom['Group'] == gname, col].dropna().astype(float).values
+                                            if use_log10:
+                                                v1 = np.log10(np.clip(v1, 1e-12, np.inf))
+                                            if len(v1) < 3:
+                                                continue
+                                            stat, pval = scipy_stats.mannwhitneyu(v0, v1, alternative='two-sided')
+                                            delta = _cliffs_delta(v0, v1)
+                                            n = int(min(len(v0), len(v1), 800))
+                                            s0 = rng.choice(v0, size=n, replace=True)
+                                            s1 = rng.choice(v1, size=n, replace=True)
+                                            d = s1 - s0
+                                            vs_rows.append({
+                                                'dominant_model': dominant_model,
+                                                'parameter': col,
+                                                'control': control_group,
+                                                'comparison': gname,
+                                                'test': 'Mann-Whitney U',
+                                                'statistic': float(stat),
+                                                'p_value': float(pval),
+                                                'effect_cliffs_delta': float(delta) if np.isfinite(delta) else np.nan,
+                                                'delta_median_comparison_minus_control': float(np.nanmedian(v1) - np.nanmedian(v0)),
+                                                'delta_ci95_low': float(np.nanquantile(d, 0.025)),
+                                                'delta_ci95_high': float(np.nanquantile(d, 0.975)),
+                                            })
+                                            pvals.append(float(pval))
+
+                                    vs_df = pd.DataFrame(vs_rows)
+                                    if not vs_df.empty and pvals:
+                                        vs_df['q_value_fdr_bh'] = _bh_fdr(np.asarray(pvals, dtype=float))
+                                    st.session_state.global_bestfit_vs_control_stats_df = vs_df
+                                    if not vs_df.empty:
+                                        st.markdown("**Pairwise statistics vs control (for plotted parameters)**")
+                                        st.dataframe(vs_df, width="stretch")
+                                except Exception:
+                                    st.caption("Could not compute pairwise statistics vs control for the violin plots.")
+
                                 try:
                                     st.session_state.global_plot_images['bestfit_dominant_violin'] = _fig_to_b64(fig)
-                                    # Store a dedicated key for the currently selected pair, for report embedding.
-                                    if len(pair_groups) == 2:
-                                        pair_key = f"bestfit_dominant_violin_pair__{pair_groups[0]}__vs__{pair_groups[1]}"
-                                        st.session_state.global_plot_images['bestfit_dominant_violin_pair'] = st.session_state.global_plot_images['bestfit_dominant_violin']
-                                        st.session_state.global_plot_images[pair_key] = st.session_state.global_plot_images['bestfit_dominant_violin']
+                                    st.session_state.global_plot_images['bestfit_dominant_violin_control'] = str(control_group)
+                                    st.session_state.global_plot_images['bestfit_dominant_violin_groups'] = ','.join(plot_groups)
                                 except Exception:
                                     pass
                                 plt.close(fig)
@@ -3195,7 +3238,7 @@ elif page == "6. Global Fitting":
 
                     # Stats (pairwise for 2 groups, KW for >2) + FDR
                     stat_rows = []
-                    groups_present = [g for g in selected_groups if len(dom[dom['Group'] == g]) > 0]
+                    # (global test across all groups still reported below)
                     for p in key_params:
                         arrays = [dom[dom['Group'] == g][p].dropna().astype(float).values for g in groups_present]
                         if len(groups_present) < 2 or not all(len(a) >= 3 for a in arrays[:2]):
@@ -4243,12 +4286,21 @@ elif page == "6. Global Fitting":
                     html_parts.append("<h3>Best-Fit Kinetic Comparisons</h3>")
                     html_parts.append(stats_df.to_html(index=False, classes='stats-table'))
 
+                # Pairwise stats vs control (for plotted dominant-model parameters)
+                try:
+                    vs_df = st.session_state.get('global_bestfit_vs_control_stats_df', pd.DataFrame())
+                    if isinstance(vs_df, pd.DataFrame) and not vs_df.empty:
+                        html_parts.append("<h3>Best-Fit Pairwise Comparisons vs Control</h3>")
+                        html_parts.append(vs_df.to_html(index=False, classes='stats-table'))
+                except Exception:
+                    pass
+
                 # Best-fit dominant-model violin plots (per-curve distributions)
                 try:
                     imgs = st.session_state.get('global_plot_images', {})
                     if isinstance(imgs, dict) and (imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')):
                         html_parts.append("<h3>Best-Fit Distributions (Dominant Model Violin Plots)</h3>")
-                        img = imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')
+                        img = imgs.get('bestfit_dominant_violin')
                         html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
                 except Exception:
                     pass
@@ -4566,13 +4618,25 @@ elif page == "6. Global Fitting":
                                 story.append(tbl)
                                 story.append(Spacer(1, 0.2 * inch))
 
+                        # Pairwise stats vs control (for plotted dominant-model parameters)
+                        try:
+                            vs_df = st.session_state.get('global_bestfit_vs_control_stats_df', pd.DataFrame())
+                            if isinstance(vs_df, pd.DataFrame) and not vs_df.empty:
+                                story.append(Paragraph("Best-Fit Pairwise Comparisons vs Control", styles['Heading3']))
+                                tbl = _df_to_rl_table(vs_df, max_rows=120)
+                                if tbl is not None:
+                                    story.append(tbl)
+                                    story.append(Spacer(1, 0.2 * inch))
+                        except Exception:
+                            pass
+
                         # Best-fit dominant-model violin plots (per-curve distributions)
                         try:
                             imgs = st.session_state.get('global_plot_images', {})
-                            if isinstance(imgs, dict) and (imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin')):
+                            if isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
                                 _add_b64_image(
                                     story,
-                                    imgs.get('bestfit_dominant_violin_pair') or imgs.get('bestfit_dominant_violin'),
+                                    imgs.get('bestfit_dominant_violin'),
                                     "Best-Fit Distributions (Dominant Model Violin Plots)",
                                 )
                         except Exception:
