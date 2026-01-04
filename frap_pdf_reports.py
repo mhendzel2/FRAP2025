@@ -21,6 +21,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER
 
+from frap_core import get_post_bleach_data
+
 try:  # SciPy optional
     from scipy import stats  # type: ignore
 except Exception:  # pragma: no cover
@@ -164,6 +166,185 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                 ]))
                 elements.append(tbl)
                 elements.append(Spacer(1, 0.2 * inch))
+
+        # Global fitting results (if present)
+        report_global_model = None
+        report_controls: List[str] = []
+        report_order: List[str] = []
+        if settings:
+            report_global_model = settings.get('report_global_fit_model')
+            report_controls = list(settings.get('report_controls') or [])
+            report_order = list(settings.get('report_group_order') or [])
+
+        def _extract_total_amplitudes(global_fit_result: dict) -> list[float]:
+            vals: list[float] = []
+            for params in (global_fit_result.get('individual_params') or []):
+                if not isinstance(params, dict):
+                    continue
+                if report_global_model == 'single':
+                    v = params.get('A')
+                    if v is not None:
+                        vals.append(float(v))
+                elif report_global_model == 'double':
+                    a1 = params.get('A1')
+                    a2 = params.get('A2')
+                    if a1 is not None and a2 is not None:
+                        vals.append(float(a1) + float(a2))
+                elif report_global_model == 'triple':
+                    a1 = params.get('A1')
+                    a2 = params.get('A2')
+                    a3 = params.get('A3')
+                    if a1 is not None and a2 is not None and a3 is not None:
+                        vals.append(float(a1) + float(a2) + float(a3))
+            return vals
+
+        any_global = False
+        if report_global_model in {'single', 'double', 'triple'}:
+            for gname in groups_to_compare:
+                g = data_manager.groups.get(gname)
+                if g and isinstance(g.get('global_fit'), dict) and report_global_model in g['global_fit']:
+                    if g['global_fit'][report_global_model].get('success', False):
+                        any_global = True
+                        break
+
+        if any_global:
+            elements.append(Paragraph("Global Fitting Results", styles['FRAPSubtitle']))
+            elements.append(Spacer(1, 0.15 * inch))
+
+            if report_order:
+                group_iter = [g for g in report_order if g in groups_to_compare]
+            else:
+                group_iter = list(groups_to_compare)
+
+            pooled_ctrl_vals: list[float] = []
+            if report_controls:
+                for gname in report_controls:
+                    if gname not in group_iter:
+                        continue
+                    g = data_manager.groups.get(gname) or {}
+                    r = (g.get('global_fit') or {}).get(report_global_model)
+                    if r and r.get('success', False):
+                        pooled_ctrl_vals.extend(_extract_total_amplitudes(r))
+
+            for gname in group_iter:
+                g = data_manager.groups.get(gname) or {}
+                r = (g.get('global_fit') or {}).get(report_global_model)
+                if not r or not r.get('success', False):
+                    continue
+
+                elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
+                sp = r.get('shared_params') or {}
+
+                meta_rows = [
+                    ["Field", "Value"],
+                    ["Model", str(report_global_model)],
+                    ["N traces", str(len(r.get('file_names') or []))],
+                    ["Mean R²", f"{float(r.get('mean_r2')):.4f}" if isinstance(r.get('mean_r2'), (int, float)) else "n/a"],
+                    ["AIC", f"{float(r.get('aic')):.2f}" if isinstance(r.get('aic'), (int, float)) else "n/a"],
+                ]
+                if report_global_model == 'single':
+                    meta_rows.append(["k", f"{float(sp.get('k', float('nan'))):.6g}"])
+                elif report_global_model == 'double':
+                    meta_rows.append(["k1", f"{float(sp.get('k1', float('nan'))):.6g}"])
+                    meta_rows.append(["k2", f"{float(sp.get('k2', float('nan'))):.6g}"])
+                elif report_global_model == 'triple':
+                    meta_rows.append(["k1", f"{float(sp.get('k1', float('nan'))):.6g}"])
+                    meta_rows.append(["k2", f"{float(sp.get('k2', float('nan'))):.6g}"])
+                    meta_rows.append(["k3", f"{float(sp.get('k3', float('nan'))):.6g}"])
+
+                meta_tbl = Table(meta_rows, colWidths=[1.6 * inch, 3.4 * inch])
+                meta_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                ]))
+                elements.append(meta_tbl)
+                elements.append(Spacer(1, 0.12 * inch))
+
+                amp_rows = [["File", "R²", "Total Amplitude"]]
+                for fname, params, r2v in zip(r.get('file_names') or [], r.get('individual_params') or [], r.get('r2_values') or []):
+                    total_amp = None
+                    if isinstance(params, dict):
+                        if report_global_model == 'single':
+                            total_amp = params.get('A')
+                        elif report_global_model == 'double':
+                            a1 = params.get('A1')
+                            a2 = params.get('A2')
+                            if a1 is not None and a2 is not None:
+                                total_amp = float(a1) + float(a2)
+                        elif report_global_model == 'triple':
+                            a1 = params.get('A1')
+                            a2 = params.get('A2')
+                            a3 = params.get('A3')
+                            if a1 is not None and a2 is not None and a3 is not None:
+                                total_amp = float(a1) + float(a2) + float(a3)
+
+                    amp_rows.append([
+                        str(fname),
+                        f"{float(r2v):.4f}" if isinstance(r2v, (int, float)) else "n/a",
+                        f"{float(total_amp):.6g}" if isinstance(total_amp, (int, float)) else "n/a",
+                    ])
+
+                amp_tbl = Table(amp_rows, colWidths=[3.0 * inch, 1.0 * inch, 1.0 * inch])
+                amp_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                ]))
+                elements.append(Paragraph("Per-file Amplitudes (Global Fit)", styles['FRAPBody']))
+                elements.append(amp_tbl)
+                elements.append(Spacer(1, 0.12 * inch))
+
+                # Best-effort plot
+                try:
+                    common_time = r.get('common_time')
+                    fitted_curves = r.get('fitted_curves') or []
+                    if common_time is not None and fitted_curves:
+                        fig, ax = plt.subplots(figsize=(6.5, 3.5))
+                        group_obj = data_manager.groups.get(gname) or {}
+                        excluded = set(r.get('excluded_files') or [])
+
+                        for fname, fitted in zip(r.get('file_names') or [], fitted_curves):
+                            file_path = None
+                            for fp in (group_obj.get('files') or []):
+                                if fp in excluded:
+                                    continue
+                                if fp in data_manager.files and data_manager.files[fp].get('name') == fname:
+                                    file_path = fp
+                                    break
+                            if file_path is None:
+                                continue
+                            fd = data_manager.files[file_path]
+                            t_post, y_post, _ = get_post_bleach_data(fd['time'], fd['intensity'])
+                            ax.plot(t_post, y_post, '.', alpha=0.25, markersize=2)
+                            ax.plot(common_time, fitted, '-', alpha=0.6, linewidth=1)
+
+                        ax.set_title(f"{gname}: Global {str(report_global_model).title()} Fit")
+                        ax.set_xlabel("Time (s)")
+                        ax.set_ylabel("Normalized Intensity")
+                        fig.tight_layout()
+                        buf = io.BytesIO()
+                        fig.savefig(buf, format='png', dpi=150)
+                        plt.close(fig)
+                        buf.seek(0)
+                        elements.append(Image(buf, width=6.5 * inch, height=3.5 * inch))
+                        elements.append(Spacer(1, 0.12 * inch))
+                except Exception:
+                    pass
+
+                # Control-based global-fit amplitude stat
+                if stats is not None and pooled_ctrl_vals and (gname not in report_controls):
+                    sample_vals = _extract_total_amplitudes(r)
+                    if len(sample_vals) > 1 and len(pooled_ctrl_vals) > 1:
+                        try:
+                            _t, p_val = stats.ttest_ind(pooled_ctrl_vals, sample_vals, equal_var=False)
+                            elements.append(Paragraph(
+                                f"Pooled-control comparison (Total Amplitude): p = {float(p_val):.4g}",
+                                styles['FRAPBody']
+                            ))
+                            elements.append(Spacer(1, 0.1 * inch))
+                        except Exception:
+                            pass
 
         for gname in groups_to_compare:
             g = data_manager.groups.get(gname)
