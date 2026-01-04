@@ -2071,6 +2071,94 @@ with tab2:
                     - Enables direct comparison of amplitudes between conditions
                     """)
 
+                    st.markdown("#### Global Fit Analysis / Report Configuration")
+                    st.caption(
+                        "Select which groups are included in this run, designate control/reference groups for pairwise statistics, "
+                        "and set output ordering. These settings are applied before computation."
+                    )
+
+                    all_group_names = list(dm.groups.keys())
+                    if 'global_fit_report_config' not in st.session_state:
+                        default_rows = []
+                        for i, gname in enumerate(all_group_names, start=1):
+                            g_lower = str(gname).lower()
+                            default_role = 'Control' if ('control' in g_lower or g_lower in {'ctrl', 'vehicle'}) else 'Sample'
+                            default_rows.append({
+                                'Include': True,
+                                'Group': gname,
+                                'Role': default_role,
+                                'Order': i,
+                            })
+                        st.session_state.global_fit_report_config = pd.DataFrame(default_rows)
+
+                    cfg_df = st.session_state.global_fit_report_config.copy()
+                    cfg_df = cfg_df[cfg_df['Group'].isin(all_group_names)].copy()
+                    if len(cfg_df) != len(all_group_names):
+                        # Sync if groups changed (e.g., new upload)
+                        existing = set(cfg_df['Group'].tolist())
+                        next_order = int(cfg_df['Order'].max()) + 1 if not cfg_df.empty else 1
+                        for gname in all_group_names:
+                            if gname not in existing:
+                                cfg_df = pd.concat([
+                                    cfg_df,
+                                    pd.DataFrame([{
+                                        'Include': True,
+                                        'Group': gname,
+                                        'Role': 'Sample',
+                                        'Order': next_order,
+                                    }])
+                                ], ignore_index=True)
+                                next_order += 1
+
+                    cfg_df = cfg_df[['Include', 'Group', 'Role', 'Order']].copy()
+                    cfg_df['Include'] = cfg_df['Include'].fillna(True).astype(bool)
+                    cfg_df['Role'] = cfg_df['Role'].fillna('Sample')
+                    cfg_df['Order'] = pd.to_numeric(cfg_df['Order'], errors='coerce').fillna(9999).astype(int)
+
+                    edited_cfg = st.data_editor(
+                        cfg_df,
+                        hide_index=True,
+                        width="stretch",
+                        column_config={
+                            'Include': st.column_config.CheckboxColumn('Include', help='Include group in this run'),
+                            'Group': st.column_config.TextColumn('Group', disabled=True),
+                            'Role': st.column_config.SelectboxColumn('Role', options=['Control', 'Sample']),
+                            'Order': st.column_config.NumberColumn('Order', min_value=1, step=1),
+                        },
+                        key='global_fit_report_cfg_editor'
+                    )
+                    st.session_state.global_fit_report_config = edited_cfg.copy()
+
+                    included_cfg = edited_cfg[edited_cfg['Include']].copy()
+                    included_cfg = included_cfg.sort_values(['Order', 'Group'])
+                    included_groups = included_cfg['Group'].tolist()
+                    control_groups = included_cfg[included_cfg['Role'] == 'Control']['Group'].tolist()
+
+                    col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
+                    with col_cfg1:
+                        compute_stats_vs_control = st.checkbox(
+                            "Compute pairwise stats vs control",
+                            value=True,
+                            help="Runs Welch t-tests comparing each sample group to pooled controls (based on global-fit amplitudes)."
+                        )
+                    with col_cfg2:
+                        render_fit_plots = st.checkbox(
+                            "Render global-fit plots",
+                            value=False,
+                            help="Plots can be slow for large datasets. Enable only when needed."
+                        )
+                    with col_cfg3:
+                        auto_make_reports = st.checkbox(
+                            "Generate PDF/HTML after run",
+                            value=False,
+                            help="Creates reports for the included groups using the same configuration (controls + ordering)."
+                        )
+
+                    if not included_groups:
+                        st.warning("No groups selected for analysis. Enable at least one group above.")
+                    elif compute_stats_vs_control and not control_groups:
+                        st.warning("No control/reference group selected. Mark one or more groups as Role = Control to enable pairwise statistics.")
+
                     col_global1, col_global2 = st.columns(2)
 
                     with col_global1:
@@ -2088,175 +2176,233 @@ with tab2:
                         )
 
                     with col_global2:
-                        if st.button("🚀 Run Global Fit", type="primary"):
+                        if st.button("🚀 Run Global Fit (Configured)", type="primary", disabled=(len(included_groups) == 0)):
                             try:
                                 with st.spinner(f"Performing global {global_model}-component fitting..."):
-                                    # Determine which files to exclude
-                                    files_to_exclude = [] if include_outliers_global else excluded_paths
+                                    def _excluded_for_group(gname: str) -> list:
+                                        if include_outliers_global:
+                                            return []
+                                        g = dm.groups.get(gname, {})
+                                        auto = g.get('auto_outliers', [])
+                                        return list(auto) if isinstance(auto, (list, tuple)) else []
 
-                                    # Perform global fitting directly using the main data manager
-                                    global_result = dm.fit_group_models(
-                                        selected_group_name,
-                                        model=global_model,
-                                        excluded_files=files_to_exclude
-                                    )
-
-                                    if global_result.get('success', False):
-                                        st.success("✅ Global fitting completed successfully!")
-
-                                        # Display global fit results
-                                        st.markdown("#### Global Fit Results")
-
-                                        # Shared parameters
-                                        shared_params = global_result['shared_params']
-                                        col_param1, col_param2, col_param3 = st.columns(3)
-
-                                        if global_model == 'single':
-                                            with col_param1:
-                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
-                                            with col_param3:
-                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
-
-                                        elif global_model == 'double':
-                                            with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
-                                            with col_param3:
-                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
-
-                                        elif global_model == 'triple':
-                                            with col_param1:
-                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
-                                            with col_param2:
-                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
-                                            with col_param3:
-                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s⁻¹")
-
-                                        # Individual amplitudes table
-                                        st.markdown("#### Individual File Amplitudes")
-                                        individual_data = []
-                                        for i, (file_name, params, r2) in enumerate(zip(
-                                            global_result['file_names'],
-                                            global_result['individual_params'],
-                                            global_result['r2_values']
-                                        )):
-                                            row_data = {'File': file_name, 'R²': r2}
-
+                                    def _extract_amplitudes(result: dict) -> dict:
+                                        vals = []
+                                        for params in result.get('individual_params', []) or []:
+                                            if not isinstance(params, dict):
+                                                continue
                                             if global_model == 'single':
-                                                row_data['Amplitude (A)'] = params['A']
+                                                vals.append(params.get('A', np.nan))
                                             elif global_model == 'double':
-                                                row_data['Fast Amplitude (A₁)'] = params['A1']
-                                                row_data['Slow Amplitude (A₂)'] = params['A2']
-                                                row_data['Total Amplitude'] = params['A1'] + params['A2']
+                                                a1 = params.get('A1', np.nan)
+                                                a2 = params.get('A2', np.nan)
+                                                vals.append(a1 + a2)
                                             elif global_model == 'triple':
-                                                row_data['Fast Amplitude (A₁)'] = params['A1']
-                                                row_data['Medium Amplitude (A₂)'] = params['A2']
-                                                row_data['Slow Amplitude (A₃)'] = params['A3']
-                                                row_data['Total Amplitude'] = params['A1'] + params['A2'] + params['A3']
+                                                a1 = params.get('A1', np.nan)
+                                                a2 = params.get('A2', np.nan)
+                                                a3 = params.get('A3', np.nan)
+                                                vals.append(a1 + a2 + a3)
+                                        arr = np.array(vals, dtype=float)
+                                        arr = arr[np.isfinite(arr)]
+                                        return {'total_amplitude': arr}
 
-                                            individual_data.append(row_data)
+                                    results_by_group = {}
+                                    for gname in included_groups:
+                                        res = dm.fit_group_models(
+                                            gname,
+                                            model=global_model,
+                                            excluded_files=_excluded_for_group(gname)
+                                        )
+                                        results_by_group[gname] = res
 
-                                        individual_df = pd.DataFrame(individual_data)
-                                        st.dataframe(individual_df.style.format({
-                                            col: '{:.4f}' for col in individual_df.columns if col not in ['File']
-                                        }), width="stretch")
+                                    failed = [g for g, r in results_by_group.items() if not r or not r.get('success', False)]
+                                    if failed:
+                                        st.error(f"❌ Global fitting failed for: {', '.join(failed)}")
+                                        for g in failed:
+                                            st.caption(f"{g}: {results_by_group[g].get('error', 'Unknown error')}")
 
-                                        # Global fit visualization
-                                        st.markdown("#### Global Fit Visualization")
+                                    ok_groups = [g for g, r in results_by_group.items() if r and r.get('success', False)]
+                                    if not ok_groups:
+                                        st.stop()
 
-                                        # Create plot showing all traces with global fit
-                                        fig_global = go.Figure()
+                                    st.success(f"✅ Global fitting completed for {len(ok_groups)} group(s)!")
 
-                                        # Plot individual data and fits
-                                        fitted_curves = global_result['fitted_curves']
-                                        common_time = global_result['common_time']
+                                    # Summary table
+                                    summary_rows = []
+                                    for gname in ok_groups:
+                                        r = results_by_group[gname]
+                                        sp = r.get('shared_params', {}) or {}
+                                        row = {
+                                            'Group': gname,
+                                            'Model': global_model,
+                                            'N traces': int(len(r.get('file_names', []) or [])),
+                                            'Mean R²': r.get('mean_r2', np.nan),
+                                            'AIC': r.get('aic', np.nan),
+                                        }
+                                        if global_model == 'single':
+                                            row['k'] = sp.get('k', np.nan)
+                                        elif global_model == 'double':
+                                            row['k1'] = sp.get('k1', np.nan)
+                                            row['k2'] = sp.get('k2', np.nan)
+                                        elif global_model == 'triple':
+                                            row['k1'] = sp.get('k1', np.nan)
+                                            row['k2'] = sp.get('k2', np.nan)
+                                            row['k3'] = sp.get('k3', np.nan)
+                                        summary_rows.append(row)
+                                    global_fit_summary_df = pd.DataFrame(summary_rows)
+                                    st.markdown("#### Global Fit Summary")
+                                    st.dataframe(global_fit_summary_df, width="stretch")
 
-                                        for i, (file_name, fitted_curve) in enumerate(zip(global_result['file_names'], fitted_curves)):
-                                            # Find original file data
-                                            file_path = None
-                                            for fp in group['files']:
-                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
-                                                    file_path = fp
-                                                    break
+                                    # Pairwise stats vs pooled controls (based on total amplitude)
+                                    if compute_stats_vs_control and control_groups:
+                                        pooled_ctrl = []
+                                        for g in control_groups:
+                                            r = results_by_group.get(g)
+                                            if r and r.get('success', False):
+                                                pooled_ctrl.append(_extract_amplitudes(r)['total_amplitude'])
+                                        if pooled_ctrl:
+                                            pooled_ctrl = np.concatenate(pooled_ctrl)
 
-                                            if file_path:
+                                            try:
+                                                from scipy import stats as _scipy_stats  # type: ignore
+                                            except Exception:
+                                                _scipy_stats = None
+
+                                            stats_rows = []
+                                            for gname in ok_groups:
+                                                if gname in control_groups:
+                                                    continue
+                                                arr = _extract_amplitudes(results_by_group[gname])['total_amplitude']
+                                                if len(arr) < 2 or len(pooled_ctrl) < 2:
+                                                    pval = np.nan
+                                                else:
+                                                    if _scipy_stats is not None:
+                                                        _t, pval = _scipy_stats.ttest_ind(
+                                                            pooled_ctrl,
+                                                            arr,
+                                                            equal_var=False,
+                                                            nan_policy='omit'
+                                                        )
+                                                    else:
+                                                        pval = np.nan
+                                                stats_rows.append({
+                                                    'Sample group': gname,
+                                                    'Control pooled N': int(len(pooled_ctrl)),
+                                                    'Sample N': int(len(arr)),
+                                                    'Control mean': float(np.mean(pooled_ctrl)) if len(pooled_ctrl) else np.nan,
+                                                    'Sample mean': float(np.mean(arr)) if len(arr) else np.nan,
+                                                    'p (Welch t-test)': pval,
+                                                })
+
+                                            if stats_rows:
+                                                st.markdown("#### Pairwise Statistics vs Pooled Controls")
+                                                st.dataframe(pd.DataFrame(stats_rows), width="stretch")
+
+                                    # Optional plotting (per-group)
+                                    if render_fit_plots:
+                                        st.markdown("#### Global Fit Plots")
+                                        for gname in ok_groups:
+                                            r = results_by_group[gname]
+                                            fig_global = go.Figure()
+                                            fitted_curves = r.get('fitted_curves', []) or []
+                                            common_time = r.get('common_time', None)
+                                            if common_time is None:
+                                                continue
+
+                                            # Add traces
+                                            group_obj = dm.groups.get(gname, {})
+                                            for file_name, fitted_curve in zip(r.get('file_names', []) or [], fitted_curves):
+                                                file_path = None
+                                                for fp in group_obj.get('files', []) or []:
+                                                    if fp in (r.get('excluded_files', []) or []):
+                                                        continue
+                                                    if fp in dm.files and dm.files[fp].get('name') == file_name:
+                                                        file_path = fp
+                                                        break
+                                                if not file_path:
+                                                    continue
                                                 file_data = dm.files[file_path]
                                                 t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
                                                     file_data['time'], file_data['intensity']
                                                 )
-
-                                                # Plot original data
                                                 fig_global.add_trace(go.Scatter(
                                                     x=t_post, y=i_post,
                                                     mode='markers',
                                                     name=f"{file_name} (data)",
-                                                    marker=dict(size=4, opacity=0.6),
+                                                    marker=dict(size=4, opacity=0.55),
                                                     showlegend=False
                                                 ))
-
-                                                # Plot global fit
                                                 fig_global.add_trace(go.Scatter(
                                                     x=common_time, y=fitted_curve,
                                                     mode='lines',
-                                                    name=f"{file_name} (global fit)",
+                                                    name=f"{file_name} (fit)",
                                                     line=dict(width=2),
                                                     showlegend=False
                                                 ))
 
-                                        fig_global.update_layout(
-                                            title=f"Global {global_model.title()}-Component Fit Results",
-                                            xaxis_title="Time (s)",
-                                            yaxis_title="Normalized Intensity",
-                                            height=500
-                                        )
-                                        st.plotly_chart(fig_global, width="stretch")
+                                            fig_global.update_layout(
+                                                title=f"{gname}: Global {global_model.title()}-Component Fit",
+                                                xaxis_title="Time (s)",
+                                                yaxis_title="Normalized Intensity",
+                                                height=450
+                                            )
+                                            st.plotly_chart(fig_global, width="stretch")
 
-                                        # Comparison with individual fits
-                                        st.markdown("#### Comparison with Individual Fits")
-                                        comparison_data = []
+                                    # Optional report generation using same configuration
+                                    if auto_make_reports:
+                                        report_settings = dict(st.session_state.settings)
+                                        report_settings.update({
+                                            'report_controls': control_groups,
+                                            'report_group_order': included_groups,
+                                            'report_subgroup': 'Global Fitting',
+                                            'report_global_fit_model': global_model,
+                                        })
 
-                                        for file_name in global_result['file_names']:
-                                            # Find corresponding individual fit
-                                            file_path = None
-                                            for fp in group['files']:
-                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
-                                                    file_path = fp
-                                                    break
+                                        make_pdf = True
+                                        make_html = generate_html_report is not None
 
-                                            if file_path and file_path in dm.files:
-                                                file_data = dm.files[file_path]
-                                                individual_fit = file_data.get('best_fit')
+                                        outputs = []
+                                        try:
+                                            pdf_path = generate_pdf_report(
+                                                dm,
+                                                included_groups,
+                                                None,
+                                                report_settings
+                                            )
+                                            outputs.append(('PDF', pdf_path))
+                                        except Exception as e:
+                                            st.error(f"PDF report failed: {e}")
 
-                                                if individual_fit and individual_fit['model'] == global_model:
-                                                    individual_r2 = individual_fit.get('r2', np.nan)
-                                                    global_r2 = global_result['r2_values'][global_result['file_names'].index(file_name)]
+                                        if make_html:
+                                            try:
+                                                html_path = generate_html_report(
+                                                    dm,
+                                                    included_groups,
+                                                    None,
+                                                    report_settings
+                                                )
+                                                outputs.append(('HTML', html_path))
+                                            except Exception as e:
+                                                st.error(f"HTML report failed: {e}")
 
-                                                    comparison_data.append({
-                                                        'File': file_name,
-                                                        'Individual R²': individual_r2,
-                                                        'Global R²': global_r2,
-                                                        'Δ R²': global_r2 - individual_r2
-                                                    })
+                                        if outputs:
+                                            st.success("Reports generated.")
 
-                                        if comparison_data:
-                                            comparison_df = pd.DataFrame(comparison_data)
-                                            st.dataframe(comparison_df.style.format({
-                                                'Individual R²': '{:.4f}',
-                                                'Global R²': '{:.4f}',
-                                                'Δ R²': '{:.4f}'
-                                            }), width="stretch")
-
-                                            avg_improvement = comparison_df['Δ R²'].mean()
-                                            if avg_improvement > 0:
-                                                st.success(f"Global fitting improved average R² by {avg_improvement:.4f}")
-                                            else:
-                                                st.info(f"Individual fits performed better on average (Δ R² = {avg_improvement:.4f})")
-
-                                    else:
-                                        st.error(f"❌ Global fitting failed: {global_result.get('error', 'Unknown error')}")
+                                            # Offer downloads
+                                            for label, out_path in outputs:
+                                                try:
+                                                    with open(out_path, 'rb') as f:
+                                                        data = f.read()
+                                                    mime = 'application/pdf' if label == 'PDF' else 'text/html'
+                                                    fname = os.path.basename(out_path)
+                                                    st.download_button(
+                                                        label=f"⬇️ Download {label} ({fname})",
+                                                        data=data,
+                                                        file_name=fname,
+                                                        mime=mime
+                                                    )
+                                                except Exception as e:
+                                                    st.error(f"Failed to prepare {label} download: {e}")
 
                             except Exception as e:
                                 st.error(f"Error during global fitting: {e}")
