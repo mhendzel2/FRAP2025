@@ -27,6 +27,14 @@ try:
 except Exception:
     generate_html_report = None
     HTML_REPORTS_AVAILABLE = False
+
+# Optional drag-and-drop ordering
+try:
+    from streamlit_sortables import sort_items
+    SORTABLES_AVAILABLE = True
+except Exception:
+    sort_items = None
+    SORTABLES_AVAILABLE = False
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 from calibration import Calibration
@@ -2078,6 +2086,7 @@ with tab2:
                     )
 
                     all_group_names = list(dm.groups.keys())
+                    all_group_names = sorted(all_group_names)
                     if 'global_fit_report_config' not in st.session_state:
                         default_rows = []
                         for i, gname in enumerate(all_group_names, start=1):
@@ -2133,6 +2142,26 @@ with tab2:
                     included_cfg = included_cfg.sort_values(['Order', 'Group'])
                     included_groups = included_cfg['Group'].tolist()
                     control_groups = included_cfg[included_cfg['Role'] == 'Control']['Group'].tolist()
+
+                    # Drag-and-drop ordering (applies to graphs/tables/reports)
+                    if SORTABLES_AVAILABLE and included_groups:
+                        st.markdown("**Drag to reorder included groups**")
+                        new_order = sort_items(
+                            included_groups,
+                            direction='vertical',
+                            key='global_fit_group_order_sortable'
+                        )
+                        if new_order and new_order != included_groups:
+                            order_map = {g: i + 1 for i, g in enumerate(new_order)}
+                            edited_cfg = edited_cfg.copy()
+                            edited_cfg['Order'] = edited_cfg.apply(
+                                lambda r: int(order_map.get(r['Group'], r['Order'])),
+                                axis=1
+                            )
+                            st.session_state.global_fit_report_config = edited_cfg.copy()
+                            included_groups = list(new_order)
+                    elif not SORTABLES_AVAILABLE:
+                        st.caption("Drag-and-drop ordering requires `streamlit-sortables`. Using the numeric Order column instead.")
 
                     col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
                     with col_cfg1:
@@ -2232,9 +2261,11 @@ with tab2:
 
                                     ok_groups = [g for g, r in results_by_group.items() if r and r.get('success', False)]
                                     if not ok_groups:
-                                        st.stop()
+                                        st.error("No successful global fits were produced for the selected groups.")
+                                        ok_groups = []
 
-                                    st.success(f"✅ Global fitting completed for {len(ok_groups)} group(s)!")
+                                    if ok_groups:
+                                        st.success(f"✅ Global fitting completed for {len(ok_groups)} group(s)!")
 
                                     # Summary table
                                     summary_rows = []
@@ -2259,8 +2290,6 @@ with tab2:
                                             row['k3'] = sp.get('k3', np.nan)
                                         summary_rows.append(row)
                                     global_fit_summary_df = pd.DataFrame(summary_rows)
-                                    st.markdown("#### Global Fit Summary")
-                                    st.dataframe(global_fit_summary_df, width="stretch")
 
                                     # Pairwise stats vs pooled controls (based on total amplitude)
                                     if compute_stats_vs_control and control_groups:
@@ -2303,59 +2332,29 @@ with tab2:
                                                     'p (Welch t-test)': pval,
                                                 })
 
-                                            if stats_rows:
-                                                st.markdown("#### Pairwise Statistics vs Pooled Controls")
-                                                st.dataframe(pd.DataFrame(stats_rows), width="stretch")
+                                            stats_df = pd.DataFrame(stats_rows) if stats_rows else pd.DataFrame()
+                                        else:
+                                            stats_df = pd.DataFrame()
+                                    else:
+                                        stats_df = pd.DataFrame()
 
-                                    # Optional plotting (per-group)
-                                    if render_fit_plots:
-                                        st.markdown("#### Global Fit Plots")
-                                        for gname in ok_groups:
-                                            r = results_by_group[gname]
-                                            fig_global = go.Figure()
-                                            fitted_curves = r.get('fitted_curves', []) or []
-                                            common_time = r.get('common_time', None)
-                                            if common_time is None:
-                                                continue
-
-                                            # Add traces
-                                            group_obj = dm.groups.get(gname, {})
-                                            for file_name, fitted_curve in zip(r.get('file_names', []) or [], fitted_curves):
-                                                file_path = None
-                                                for fp in group_obj.get('files', []) or []:
-                                                    if fp in (r.get('excluded_files', []) or []):
-                                                        continue
-                                                    if fp in dm.files and dm.files[fp].get('name') == file_name:
-                                                        file_path = fp
-                                                        break
-                                                if not file_path:
-                                                    continue
-                                                file_data = dm.files[file_path]
-                                                t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
-                                                    file_data['time'], file_data['intensity']
-                                                )
-                                                fig_global.add_trace(go.Scatter(
-                                                    x=t_post, y=i_post,
-                                                    mode='markers',
-                                                    name=f"{file_name} (data)",
-                                                    marker=dict(size=4, opacity=0.55),
-                                                    showlegend=False
-                                                ))
-                                                fig_global.add_trace(go.Scatter(
-                                                    x=common_time, y=fitted_curve,
-                                                    mode='lines',
-                                                    name=f"{file_name} (fit)",
-                                                    line=dict(width=2),
-                                                    showlegend=False
-                                                ))
-
-                                            fig_global.update_layout(
-                                                title=f"{gname}: Global {global_model.title()}-Component Fit",
-                                                xaxis_title="Time (s)",
-                                                yaxis_title="Normalized Intensity",
-                                                height=450
-                                            )
-                                            st.plotly_chart(fig_global, width="stretch")
+                                    # Persist results so they remain visible after reruns
+                                    if ok_groups:
+                                        st.session_state.global_fit_last_run = {
+                                            'timestamp': pd.Timestamp.now().isoformat(),
+                                            'global_model': global_model,
+                                            'included_groups': list(included_groups),
+                                            'control_groups': list(control_groups),
+                                            'include_outliers': bool(include_outliers_global),
+                                            'compute_stats_vs_control': bool(compute_stats_vs_control),
+                                            'render_fit_plots': bool(render_fit_plots),
+                                            'auto_make_reports': bool(auto_make_reports),
+                                            'report_format': report_format if auto_make_reports else None,
+                                            'ok_groups': list(ok_groups),
+                                            'failed_groups': list(failed),
+                                            'summary_df': global_fit_summary_df,
+                                            'stats_df': stats_df,
+                                        }
 
                                     # Optional report generation using same configuration
                                     if auto_make_reports:
@@ -2416,6 +2415,83 @@ with tab2:
 
                             except Exception as e:
                                 st.error(f"Error during global fitting: {e}")
+
+                    # Display last run results (persisted)
+                    if 'global_fit_last_run' in st.session_state:
+                        last = st.session_state.global_fit_last_run
+                        with st.expander("📌 Last Global Fit Run Results", expanded=True):
+                            col_lr1, col_lr2 = st.columns([3, 1])
+                            with col_lr1:
+                                st.caption(f"Model: {last.get('global_model')} • Ran: {last.get('timestamp')}")
+                            with col_lr2:
+                                if st.button("Clear last results", key='clear_global_fit_last'):
+                                    del st.session_state.global_fit_last_run
+                                    st.rerun()
+
+                            summary_df = last.get('summary_df')
+                            if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+                                st.markdown("#### Global Fit Summary")
+                                st.dataframe(summary_df, width="stretch")
+
+                            stats_df = last.get('stats_df')
+                            if isinstance(stats_df, pd.DataFrame) and not stats_df.empty:
+                                st.markdown("#### Pairwise Statistics vs Pooled Controls")
+                                st.dataframe(stats_df, width="stretch")
+
+                            show_plots = st.checkbox(
+                                "Show global-fit plots",
+                                value=bool(last.get('render_fit_plots', False)),
+                                key='global_fit_last_show_plots'
+                            )
+                            if show_plots:
+                                model = last.get('global_model')
+                                ok_groups = last.get('ok_groups') or []
+                                for gname in ok_groups:
+                                    g = dm.groups.get(gname, {})
+                                    r = (g.get('global_fit') or {}).get(model)
+                                    if not r or not r.get('success', False):
+                                        continue
+                                    fig_global = go.Figure()
+                                    fitted_curves = r.get('fitted_curves', []) or []
+                                    common_time = r.get('common_time', None)
+                                    if common_time is None:
+                                        continue
+
+                                    group_obj = dm.groups.get(gname, {})
+                                    for file_name, fitted_curve in zip(r.get('file_names', []) or [], fitted_curves):
+                                        file_path = None
+                                        for fp in group_obj.get('files', []) or []:
+                                            if fp in (r.get('excluded_files', []) or []):
+                                                continue
+                                            if fp in dm.files and dm.files[fp].get('name') == file_name:
+                                                file_path = fp
+                                                break
+                                        if not file_path:
+                                            continue
+                                        file_data = dm.files[file_path]
+                                        t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                                            file_data['time'], file_data['intensity']
+                                        )
+                                        fig_global.add_trace(go.Scatter(
+                                            x=t_post, y=i_post,
+                                            mode='markers',
+                                            marker=dict(size=4, opacity=0.55),
+                                            showlegend=False
+                                        ))
+                                        fig_global.add_trace(go.Scatter(
+                                            x=common_time, y=fitted_curve,
+                                            mode='lines',
+                                            line=dict(width=2),
+                                            showlegend=False
+                                        ))
+
+                                    fig_global.update_layout(
+                                        title=f"{gname}: Global {str(model).title()} Fit",
+                                        xaxis_title="Time (s)",
+                                        yaxis_title="Normalized Intensity",
+                                        height=450
+                                    )
+                                    st.plotly_chart(fig_global, width="stretch")
 
                 st.markdown("---")
                 st.markdown("### Step 7: Group Recovery Plots")
