@@ -12,9 +12,16 @@ except Exception:  # pragma: no cover - if plotly missing we degrade gracefully
     px = None
 
 try:
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover
+    go = None
+
+try:
     from scipy import stats
 except Exception:  # pragma: no cover - statistical tests optional
     stats = None
+
+from frap_core import get_post_bleach_data
 
 def _encode_plot(fig) -> str:
     """Return an HTML div for a plotly figure or a placeholder string."""
@@ -119,6 +126,14 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
     if not groups_to_compare:
         return None
 
+    report_controls: List[str] = []
+    report_order: List[str] = list(groups_to_compare)
+    report_global_model: Optional[str] = None
+    if settings:
+        report_controls = list(settings.get('report_controls') or [])
+        report_order = list(settings.get('report_group_order') or report_order)
+        report_global_model = settings.get('report_global_fit_model')
+
     # Collect and combine per-group feature data
     all_group_data: List[pd.DataFrame] = []
     for group_name in groups_to_compare:
@@ -142,6 +157,155 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
         f"<p><b>Report Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>",
         f"<p><b>Groups:</b> {', '.join(groups_to_compare)}</p>",
     ]
+
+    # Global fitting section (if present)
+    def _extract_total_amplitudes(global_fit_result: dict) -> list[float]:
+        vals: list[float] = []
+        for params in (global_fit_result.get('individual_params') or []):
+            if not isinstance(params, dict):
+                continue
+            if report_global_model == 'single':
+                v = params.get('A')
+                if v is not None:
+                    vals.append(float(v))
+            elif report_global_model == 'double':
+                a1 = params.get('A1')
+                a2 = params.get('A2')
+                if a1 is not None and a2 is not None:
+                    vals.append(float(a1) + float(a2))
+            elif report_global_model == 'triple':
+                a1 = params.get('A1')
+                a2 = params.get('A2')
+                a3 = params.get('A3')
+                if a1 is not None and a2 is not None and a3 is not None:
+                    vals.append(float(a1) + float(a2) + float(a3))
+        return vals
+
+    any_global = False
+    if report_global_model in {'single', 'double', 'triple'}:
+        for gname in report_order:
+            if gname not in groups_to_compare:
+                continue
+            g = data_manager.groups.get(gname)
+            if g and isinstance(g.get('global_fit'), dict) and report_global_model in g['global_fit']:
+                if g['global_fit'][report_global_model].get('success', False):
+                    any_global = True
+                    break
+
+    if any_global:
+        html_parts.append("<h2>Global Fitting Results</h2>")
+        if report_controls:
+            html_parts.append(f"<p><b>Control group(s):</b> {_html.escape(', '.join(report_controls))}</p>")
+        html_parts.append(f"<p><b>Model:</b> {_html.escape(str(report_global_model))}</p>")
+
+        pooled_ctrl = []
+        for gname in report_controls:
+            g = data_manager.groups.get(gname) or {}
+            r = (g.get('global_fit') or {}).get(report_global_model)
+            if r and r.get('success', False):
+                pooled_ctrl.extend(_extract_total_amplitudes(r))
+
+        for gname in report_order:
+            if gname not in groups_to_compare:
+                continue
+            g = data_manager.groups.get(gname) or {}
+            r = (g.get('global_fit') or {}).get(report_global_model)
+            if not r or not r.get('success', False):
+                continue
+
+            html_parts.append(f"<h3>{_html.escape(str(gname))}</h3>")
+            sp = r.get('shared_params') or {}
+            meta_rows = [
+                ("N traces", str(len(r.get('file_names') or []))),
+                ("Mean R²", f"{float(r.get('mean_r2')):.4f}" if isinstance(r.get('mean_r2'), (int, float)) else "n/a"),
+                ("AIC", f"{float(r.get('aic')):.2f}" if isinstance(r.get('aic'), (int, float)) else "n/a"),
+            ]
+            if report_global_model == 'single':
+                meta_rows.append(("k", f"{float(sp.get('k', float('nan'))):.6g}"))
+            elif report_global_model == 'double':
+                meta_rows.append(("k1", f"{float(sp.get('k1', float('nan'))):.6g}"))
+                meta_rows.append(("k2", f"{float(sp.get('k2', float('nan'))):.6g}"))
+            elif report_global_model == 'triple':
+                meta_rows.append(("k1", f"{float(sp.get('k1', float('nan'))):.6g}"))
+                meta_rows.append(("k2", f"{float(sp.get('k2', float('nan'))):.6g}"))
+                meta_rows.append(("k3", f"{float(sp.get('k3', float('nan'))):.6g}"))
+
+            html_parts.append("<table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>")
+            for k, v in meta_rows:
+                html_parts.append(f"<tr><td>{_html.escape(str(k))}</td><td>{_html.escape(str(v))}</td></tr>")
+            html_parts.append("</tbody></table>")
+
+            # Per-file amplitude table
+            html_parts.append("<p><b>Per-file Amplitudes (Global Fit)</b></p>")
+            html_parts.append("<table><thead><tr><th>File</th><th>R²</th><th>Total Amplitude</th></tr></thead><tbody>")
+            for fname, params, r2v in zip(r.get('file_names') or [], r.get('individual_params') or [], r.get('r2_values') or []):
+                total_amp = None
+                if isinstance(params, dict):
+                    if report_global_model == 'single':
+                        total_amp = params.get('A')
+                    elif report_global_model == 'double':
+                        a1 = params.get('A1')
+                        a2 = params.get('A2')
+                        if a1 is not None and a2 is not None:
+                            total_amp = float(a1) + float(a2)
+                    elif report_global_model == 'triple':
+                        a1 = params.get('A1')
+                        a2 = params.get('A2')
+                        a3 = params.get('A3')
+                        if a1 is not None and a2 is not None and a3 is not None:
+                            total_amp = float(a1) + float(a2) + float(a3)
+
+                html_parts.append(
+                    f"<tr><td>{_html.escape(str(fname))}</td><td>{_html.escape(f'{float(r2v):.4f}' if isinstance(r2v,(int,float)) else 'n/a')}</td><td>{_html.escape(f'{float(total_amp):.6g}' if isinstance(total_amp,(int,float)) else 'n/a')}</td></tr>"
+                )
+            html_parts.append("</tbody></table>")
+
+            # Plotly figure
+            if go is not None:
+                try:
+                    common_time = r.get('common_time')
+                    fitted_curves = r.get('fitted_curves') or []
+                    fig = go.Figure()
+                    if common_time is not None and fitted_curves:
+                        group_obj = data_manager.groups.get(gname) or {}
+                        excluded = set(r.get('excluded_files') or [])
+                        for fname, fitted in zip(r.get('file_names') or [], fitted_curves):
+                            file_path = None
+                            for fp in (group_obj.get('files') or []):
+                                if fp in excluded:
+                                    continue
+                                if fp in data_manager.files and data_manager.files[fp].get('name') == fname:
+                                    file_path = fp
+                                    break
+                            if file_path is None:
+                                continue
+                            fd = data_manager.files[file_path]
+                            t_post, y_post, _ = get_post_bleach_data(fd['time'], fd['intensity'])
+                            fig.add_trace(go.Scatter(x=t_post, y=y_post, mode='markers', marker=dict(size=4, opacity=0.55), showlegend=False))
+                            fig.add_trace(go.Scatter(x=common_time, y=fitted, mode='lines', line=dict(width=2), showlegend=False))
+
+                        fig.update_layout(
+                            title=f"{gname}: Global {str(report_global_model).title()} Fit",
+                            xaxis_title="Time (s)",
+                            yaxis_title="Normalized Intensity",
+                            height=450,
+                            showlegend=False,
+                        )
+                        html_parts.append(_encode_plot(fig))
+                except Exception:
+                    html_parts.append("<p><i>Global fit plot unavailable.</i></p>")
+
+            # Control-based amplitude stat
+            if stats is not None and pooled_ctrl and (gname not in report_controls):
+                sample_vals = _extract_total_amplitudes(r)
+                if len(sample_vals) > 1 and len(pooled_ctrl) > 1:
+                    try:
+                        _t, p_val = stats.ttest_ind(pooled_ctrl, sample_vals, equal_var=False)
+                        html_parts.append(
+                            f"<p><b>Pooled-control comparison (Total Amplitude):</b> p = {_html.escape(f'{float(p_val):.4g}')}</p>"
+                        )
+                    except Exception:
+                        pass
 
     # Report-generator metadata
     if settings:
