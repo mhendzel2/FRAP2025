@@ -2149,7 +2149,7 @@ with tab2:
                         )
                     with col_cfg3:
                         auto_make_reports = st.checkbox(
-                            "Generate PDF/HTML after run",
+                            "Generate report after run",
                             value=False,
                             help="Creates reports for the included groups using the same configuration (controls + ordering)."
                         )
@@ -2635,7 +2635,7 @@ with tab3:
             st.dataframe(summary_stats)
 
             st.markdown("---")
-            st.markdown("### Automated PDF Report Generation")
+            st.markdown("### Automated Report Generation")
 
             col_pdf1, col_pdf2 = st.columns([2, 1])
 
