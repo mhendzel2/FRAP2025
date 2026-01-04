@@ -61,6 +61,13 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         elements.append(Paragraph(f"Generated: {ts}", styles['FRAPBody']))
         elements.append(Paragraph(f"Groups included: {', '.join(groups_to_compare)}", styles['FRAPBody']))
+        if settings:
+            controls = settings.get('report_controls')
+            subgroup = settings.get('report_subgroup')
+            if controls:
+                elements.append(Paragraph(f"Control group(s): {', '.join(list(controls))}", styles['FRAPBody']))
+            if subgroup is not None:
+                elements.append(Paragraph(f"Subgroup set: {subgroup}", styles['FRAPBody']))
         elements.append(Spacer(1, 0.25 * inch))
 
         # Settings table
@@ -257,6 +264,57 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                                 F, p = stats.f_oneway(*series)
                                 elements.append(Paragraph(f"ANOVA: F={F:.3f}, p={p:.4f}{' (significant)' if p < 0.05 else ''}", styles['FRAPBody']))
                     elements.append(Spacer(1, 0.15 * inch))
+
+            # Control-based comparisons (pooled controls vs each sample)
+            if settings and settings.get('report_controls'):
+                control_groups = [g for g in settings.get('report_controls') if g in groups_to_compare]
+                if control_groups:
+                    elements.append(Paragraph("Control-Based Comparisons (Pooled Controls)", styles['FRAPSubtitle']))
+                    elements.append(Spacer(1, 0.10 * inch))
+
+                    if stats is None:
+                        elements.append(Paragraph("(SciPy not installed – control-based tests skipped)", styles['FRAPBody']))
+                    else:
+                        pooled = combined[combined['group'].isin(control_groups)]
+                        for metric in ['mobile_fraction', 'rate_constant', 'half_time']:
+                            if metric not in combined.columns:
+                                continue
+                            c_vals = pooled[metric].dropna()
+                            if len(c_vals) <= 1:
+                                continue
+
+                            rows = [["Metric", "Control(s)", "Comparison", "N Control", "N Comp", "p-value", "Significant"]]
+                            for g in groups_to_compare:
+                                if g in control_groups:
+                                    continue
+                                g_vals = combined[combined['group'] == g][metric].dropna()
+                                if len(g_vals) <= 1:
+                                    continue
+                                try:
+                                    _, p = stats.ttest_ind(c_vals, g_vals, equal_var=False)
+                                except Exception:
+                                    continue
+                                rows.append([
+                                    metric.replace('_', ' ').title(),
+                                    ", ".join(control_groups),
+                                    g,
+                                    int(len(c_vals)),
+                                    int(len(g_vals)),
+                                    f"{p:.4g}",
+                                    "Yes" if p < 0.05 else "No",
+                                ])
+
+                            if len(rows) > 1:
+                                tbl = Table(rows, colWidths=[1.3*inch, 1.2*inch, 1.2*inch, 0.7*inch, 0.7*inch, 0.8*inch, 0.8*inch])
+                                tbl.setStyle(TableStyle([
+                                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                                ]))
+                                elements.append(Paragraph(metric.replace('_', ' ').title(), styles['FRAPSection']))
+                                elements.append(tbl)
+                                elements.append(Spacer(1, 0.12 * inch))
 
         # Simple plot (mobile fraction boxplot)
         if len(groups_to_compare) > 1:

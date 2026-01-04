@@ -21,6 +21,12 @@ import plotly.express as px
 from typing import Dict, Any, Optional, Tuple, List
 import logging
 from frap_pdf_reports import generate_pdf_report
+try:
+    from frap_html_reports import generate_html_report
+    HTML_REPORTS_AVAILABLE = True
+except Exception:
+    generate_html_report = None
+    HTML_REPORTS_AVAILABLE = False
 from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
 from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
 from calibration import Calibration
@@ -2485,54 +2491,125 @@ with tab3:
                 st.markdown("- Detailed results for each experimental group")
 
             with col_pdf2:
-                # Group selection for PDF report
-                selected_groups_pdf = st.multiselect(
-                    "Select groups for PDF report:",
-                    options=list(dm.groups.keys()),
-                    default=list(dm.groups.keys()),
-                    help="Choose which groups to include in the comprehensive report"
+                st.markdown("**Report Generator Options**")
+                st.caption("Define control(s), explicit group order, and subgroup analysis sets.")
+
+                group_names = list(dm.groups.keys())
+                default_cfg = pd.DataFrame({
+                    'Include': [True] * len(group_names),
+                    'Group': group_names,
+                    'Role': ['Sample'] * len(group_names),
+                    'Order': list(range(1, len(group_names) + 1)),
+                    'Subgroup': ['All'] * len(group_names),
+                })
+
+                cfg_df = st.data_editor(
+                    default_cfg,
+                    hide_index=True,
+                    key='report_generator_config_v1',
+                    column_config={
+                        'Include': st.column_config.CheckboxColumn(help='Include this group in report generation'),
+                        'Role': st.column_config.SelectboxColumn(options=['Control', 'Sample'], help='Control groups are pooled for control-based comparisons'),
+                        'Order': st.column_config.NumberColumn(min_value=1, step=1, help='Lower numbers appear first in the report'),
+                        'Subgroup': st.column_config.TextColumn(help='Use to create subgroup analysis sets (e.g., A, B, C). Use "All" for one combined report.'),
+                    },
+                    disabled=['Group'],
+                    use_container_width=True,
                 )
 
-                if st.button("📄 Generate PDF Report", type="primary", disabled=len(selected_groups_pdf) < 2):
-                    if len(selected_groups_pdf) >= 2:
-                        try:
-                            with st.spinner("Generating comprehensive PDF report..."):
-                                # Generate the PDF report
+                col_out1, col_out2 = st.columns(2)
+                with col_out1:
+                    make_pdf = st.checkbox("Generate PDF", value=True, key='report_make_pdf')
+                with col_out2:
+                    make_html = st.checkbox("Generate HTML", value=False, disabled=(not HTML_REPORTS_AVAILABLE), key='report_make_html')
+                    if not HTML_REPORTS_AVAILABLE:
+                        st.caption("HTML reports unavailable (missing frap_html_reports dependencies).")
+
+                run_disabled = (cfg_df is None) or (cfg_df['Include'].sum() < 2) or (not make_pdf and not make_html)
+                if st.button("📄 Generate Report(s)", type="primary", disabled=run_disabled):
+                    try:
+                        with st.spinner("Generating report(s)..."):
+                            cfg = cfg_df.copy()
+                            cfg = cfg[cfg['Include'] == True]
+                            cfg['Order'] = pd.to_numeric(cfg['Order'], errors='coerce').fillna(9999).astype(int)
+                            cfg['Subgroup'] = cfg['Subgroup'].fillna('All').astype(str)
+                            cfg = cfg.sort_values(['Subgroup', 'Order', 'Group'])
+
+                            # Split into subgroup analysis sets
+                            subgroup_labels = cfg['Subgroup'].unique().tolist() if not cfg.empty else []
+                            outputs = []  # (filename, bytes, mime)
+
+                            for subgroup in subgroup_labels:
+                                sub_cfg = cfg[cfg['Subgroup'] == subgroup]
+                                groups_ordered = sub_cfg['Group'].tolist()
+                                control_groups = sub_cfg[sub_cfg['Role'] == 'Control']['Group'].tolist()
+
+                                # Merge report metadata into settings
+                                report_settings = dict(st.session_state.settings)
+                                report_settings['report_controls'] = control_groups
+                                report_settings['report_group_order'] = groups_ordered
+                                report_settings['report_subgroup'] = subgroup
+
                                 timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-                                pdf_filename = f"FRAP_Statistical_Report_{timestamp}.pdf"
+                                safe_sub = ''.join([c if c.isalnum() or c in ('-', '_') else '_' for c in str(subgroup)])
 
-                                # Call the PDF report generator
-                                output_file = generate_pdf_report(
-                                    data_manager=dm,
-                                    groups_to_compare=selected_groups_pdf,
-                                    output_filename=pdf_filename,
-                                    settings=st.session_state.settings
-                                )
+                                if make_pdf:
+                                    pdf_filename = f"FRAP_Report_{safe_sub}_{timestamp}.pdf"
+                                    pdf_path = generate_pdf_report(
+                                        data_manager=dm,
+                                        groups_to_compare=groups_ordered,
+                                        output_filename=pdf_filename,
+                                        settings=report_settings,
+                                    )
+                                    if pdf_path:
+                                        with open(pdf_path, 'rb') as f:
+                                            outputs.append((pdf_filename, f.read(), 'application/pdf'))
+                                        os.remove(pdf_path)
 
-                                # Read the generated PDF file
-                                with open(output_file, 'rb') as pdf_file:
-                                    pdf_data = pdf_file.read()
+                                if make_html and generate_html_report is not None:
+                                    html_filename = f"FRAP_Report_{safe_sub}_{timestamp}.html"
+                                    html_path = generate_html_report(
+                                        data_manager=dm,
+                                        groups_to_compare=groups_ordered,
+                                        output_filename=html_filename,
+                                        settings=report_settings,
+                                    )
+                                    if html_path:
+                                        with open(html_path, 'rb') as f:
+                                            outputs.append((html_filename, f.read(), 'text/html'))
+                                        os.remove(html_path)
 
-                                # Provide download button
+                            if not outputs:
+                                st.error("No reports were generated. Ensure selected groups have processed data.")
+                            elif len(outputs) == 1:
+                                fn, data, mime = outputs[0]
                                 st.download_button(
-                                    label="⬇️ Download PDF Report",
-                                    data=pdf_data,
-                                    file_name=pdf_filename,
-                                    mime="application/pdf",
-                                    help="Download comprehensive statistical analysis report"
+                                    label=f"⬇️ Download {fn}",
+                                    data=data,
+                                    file_name=fn,
+                                    mime=mime,
                                 )
+                                st.success("Report generated successfully!")
+                            else:
+                                # Multiple subgroups -> ZIP
+                                import zipfile
+                                zip_buf = io.BytesIO()
+                                with zipfile.ZipFile(zip_buf, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                                    for fn, data, _mime in outputs:
+                                        zf.writestr(fn, data)
+                                zip_buf.seek(0)
+                                zip_name = f"FRAP_Reports_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.zip"
+                                st.download_button(
+                                    label="⬇️ Download Reports (ZIP)",
+                                    data=zip_buf.getvalue(),
+                                    file_name=zip_name,
+                                    mime="application/zip",
+                                )
+                                st.success(f"Generated {len(outputs)} report file(s) across {len(subgroup_labels)} subgroup(s).")
 
-                                st.success("PDF report generated successfully!")
-                                st.info(f"Report includes {len(selected_groups_pdf)} groups with comprehensive statistical analysis")
-
-                                # Clean up temporary file
-                                os.remove(output_file)
-
-                        except Exception as e:
-                            st.error(f"Error generating PDF report: {e}")
-                            st.error("Please ensure all selected groups have processed data")
-                    else:
-                        st.warning("Select at least 2 groups for statistical comparison")
+                    except Exception as e:
+                        st.error(f"Error generating report(s): {e}")
+                        st.error("Please ensure all selected groups have processed data")
 
 with tab4:
     st.header("⚖️ Comparative Group Analysis")

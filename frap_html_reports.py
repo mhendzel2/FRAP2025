@@ -64,6 +64,50 @@ def _stat_tests_table(combined_df: pd.DataFrame, group_order: List[str]) -> str:
     return ''.join(html)
 
 
+def _control_tests_table(combined_df: pd.DataFrame, group_order: List[str], control_groups: List[str]) -> str:
+    """Generate HTML for pooled-control vs sample Welch t-tests."""
+    if stats is None or len(group_order) < 2:
+        return "<p><i>Control-based tests unavailable (scipy not installed or insufficient groups).</i></p>"
+
+    control_groups = [g for g in control_groups if g in group_order]
+    if not control_groups:
+        return "<p><i>No valid control groups selected.</i></p>"
+
+    pooled = combined_df[combined_df['group'].isin(control_groups)]
+    metrics = [m for m in ['mobile_fraction', 'rate_constant', 'half_time'] if m in combined_df.columns]
+    if not metrics:
+        return "<p><i>No comparable metrics found for control-based testing.</i></p>"
+
+    rows = []
+    for metric in metrics:
+        c_vals = pooled[metric].dropna()
+        if len(c_vals) <= 1:
+            continue
+        for g in group_order:
+            if g in control_groups:
+                continue
+            g_vals = combined_df[combined_df['group'] == g][metric].dropna()
+            if len(g_vals) <= 1:
+                continue
+            try:
+                _t, p_val = stats.ttest_ind(c_vals, g_vals, equal_var=False)
+            except Exception:
+                continue
+            rows.append((metric, ", ".join(control_groups), g, len(c_vals), len(g_vals), p_val, "Yes" if p_val < 0.05 else "No"))
+
+    if not rows:
+        return "<p><i>Insufficient data for control-based comparisons.</i></p>"
+
+    html = ["<table><thead><tr><th>Metric</th><th>Control(s)</th><th>Comparison</th><th>N Ctrl</th><th>N Comp</th><th>p-value</th><th>Significant</th></tr></thead><tbody>"]
+    for metric, ctrls, comp, n_ctrl, n_comp, pval, sig in rows:
+        sig_color = '#d4edda' if sig == 'Yes' else '#f8d7da'
+        html.append(
+            f"<tr style='background:{sig_color}'><td>{metric.replace('_',' ')}</td><td>{_html.escape(ctrls)}</td><td>{_html.escape(str(comp))}</td><td>{n_ctrl}</td><td>{n_comp}</td><td>{pval:.4g}</td><td>{sig}</td></tr>"
+        )
+    html.append("</tbody></table>")
+    return ''.join(html)
+
+
 def generate_html_report(data_manager, groups_to_compare, output_filename: Optional[str] = None, settings: Optional[Dict[str, Any]] = None):
     """Generate a comprehensive HTML report.
 
@@ -99,6 +143,15 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
         f"<p><b>Groups:</b> {', '.join(groups_to_compare)}</p>",
     ]
 
+    # Report-generator metadata
+    if settings:
+        ctrls = settings.get('report_controls')
+        subgroup = settings.get('report_subgroup')
+        if ctrls:
+            html_parts.append(f"<p><b>Control group(s):</b> {_html.escape(', '.join(list(ctrls)))}</p>")
+        if subgroup is not None:
+            html_parts.append(f"<p><b>Subgroup set:</b> {_html.escape(str(subgroup))}</p>")
+
     # Settings
     if settings:
         settings_df = pd.DataFrame(list(settings.items()), columns=['Parameter', 'Value'])
@@ -120,6 +173,11 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
     if len(groups_to_compare) > 1:
         html_parts.append("<h2>Statistical Comparison</h2>")
         html_parts.append(_stat_tests_table(combined_df, groups_to_compare))
+
+        # Control-based comparison table (pooled controls)
+        if settings and settings.get('report_controls'):
+            html_parts.append("<h3>Control-Based Comparisons (Pooled Controls)</h3>")
+            html_parts.append(_control_tests_table(combined_df, groups_to_compare, list(settings.get('report_controls'))))
 
     # Plots (only if plotly available and multiple groups)
     if px is not None and len(groups_to_compare) >= 1 and summary_metrics:
