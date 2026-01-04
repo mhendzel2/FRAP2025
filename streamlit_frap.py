@@ -2154,6 +2154,15 @@ with tab2:
                             help="Creates reports for the included groups using the same configuration (controls + ordering)."
                         )
 
+                    report_format = "Both" if generate_html_report is not None else "PDF"
+                    if auto_make_reports:
+                        report_format = st.selectbox(
+                            "Report output format",
+                            options=["PDF", "HTML", "Both"] if generate_html_report is not None else ["PDF"],
+                            index=2 if generate_html_report is not None else 0,
+                            help="Choose which report(s) to generate after the configured global fit completes."
+                        )
+
                     if not included_groups:
                         st.warning("No groups selected for analysis. Enable at least one group above.")
                     elif compute_stats_vs_control and not control_groups:
@@ -2358,20 +2367,21 @@ with tab2:
                                             'report_global_fit_model': global_model,
                                         })
 
-                                        make_pdf = True
-                                        make_html = generate_html_report is not None
+                                        make_pdf = report_format in {'PDF', 'Both'}
+                                        make_html = (report_format in {'HTML', 'Both'}) and (generate_html_report is not None)
 
                                         outputs = []
-                                        try:
-                                            pdf_path = generate_pdf_report(
-                                                dm,
-                                                included_groups,
-                                                None,
-                                                report_settings
-                                            )
-                                            outputs.append(('PDF', pdf_path))
-                                        except Exception as e:
-                                            st.error(f"PDF report failed: {e}")
+                                        if make_pdf:
+                                            try:
+                                                pdf_path = generate_pdf_report(
+                                                    dm,
+                                                    included_groups,
+                                                    None,
+                                                    report_settings
+                                                )
+                                                outputs.append(('PDF', pdf_path))
+                                            except Exception as e:
+                                                st.error(f"PDF report failed: {e}")
 
                                         if make_html:
                                             try:
@@ -2663,13 +2673,18 @@ with tab3:
                     use_container_width=True,
                 )
 
-                col_out1, col_out2 = st.columns(2)
-                with col_out1:
-                    make_pdf = st.checkbox("Generate PDF", value=True, key='report_make_pdf')
-                with col_out2:
-                    make_html = st.checkbox("Generate HTML", value=False, disabled=(not HTML_REPORTS_AVAILABLE), key='report_make_html')
-                    if not HTML_REPORTS_AVAILABLE:
-                        st.caption("HTML reports unavailable (missing frap_html_reports dependencies).")
+                report_format = st.selectbox(
+                    "Report output format",
+                    options=["PDF", "HTML", "Both"] if HTML_REPORTS_AVAILABLE else ["PDF"],
+                    index=0,
+                    key='report_output_format_v1',
+                    help="Choose which report(s) to generate for each subgroup set."
+                )
+
+                make_pdf = report_format in {'PDF', 'Both'}
+                make_html = (report_format in {'HTML', 'Both'}) and HTML_REPORTS_AVAILABLE
+                if report_format in {'HTML', 'Both'} and not HTML_REPORTS_AVAILABLE:
+                    st.caption("HTML reports unavailable (missing frap_html_reports dependencies).")
 
                 run_disabled = (cfg_df is None) or (cfg_df['Include'].sum() < 2) or (not make_pdf and not make_html)
                 if st.button("📄 Generate Report(s)", type="primary", disabled=run_disabled):
