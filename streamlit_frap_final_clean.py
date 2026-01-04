@@ -1793,6 +1793,61 @@ with tab2:
             st.warning("This group is empty. Add files from the sidebar.")
         else:
             st.markdown("---")
+            with st.expander("🔬 Pre-Analysis Heterogeneity Check", expanded=True):
+                st.markdown("""
+                **Quickly estimate if you are dealing with one or more populations before deep fitting.**
+                This section calculates raw metrics directly from the data, which is much faster than curve fitting.
+                Look for high variability (CV > 50%) in these metrics as a sign of potential heterogeneity.
+                """)
+
+                raw_metrics = []
+                for file_path in group['files']:
+                    if file_path in dm.files:
+                        file_data = dm.files[file_path]
+                        time = file_data.get('time')
+                        intensity = file_data.get('intensity')
+
+                        if time is not None and intensity is not None:
+                            try:
+                                # Simplified raw metrics calculation
+                                bleach_idx = np.argmin(intensity)
+                                if bleach_idx < len(intensity) - 1:
+                                    post_bleach_int = intensity[bleach_idx+1:]
+                                    post_bleach_time = time[bleach_idx+1:] - time[bleach_idx+1]
+
+                                    endpoint = np.mean(post_bleach_int[-5:]) if len(post_bleach_int) > 5 else np.mean(post_bleach_int)
+                                    half_max = (post_bleach_int[0] + endpoint) / 2.0
+
+                                    # Find where intensity crosses half-max
+                                    half_time_idx = np.where(post_bleach_int >= half_max)[0]
+                                    approx_half_time = post_bleach_time[half_time_idx[0]] if len(half_time_idx) > 0 else np.nan
+
+                                    raw_metrics.append({
+                                        'file_name': file_data['name'],
+                                        'approx_half_time': approx_half_time,
+                                        'endpoint': endpoint
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Could not calculate raw metrics for {file_data['name']}: {e}")
+
+                if raw_metrics:
+                    raw_df = pd.DataFrame(raw_metrics)
+
+                    m_col1, m_col2, m_col3 = st.columns(3)
+                    with m_col1:
+                        st.metric("Mean Approx. Half-Time", f"{raw_df['approx_half_time'].mean():.2f} s")
+                    with m_col2:
+                        st.metric("Half-Time CV", f"{(raw_df['approx_half_time'].std() / raw_df['approx_half_time'].mean() * 100):.1f}%")
+                    with m_col3:
+                        st.metric("Endpoint CV", f"{(raw_df['endpoint'].std() / raw_df['endpoint'].mean() * 100):.1f}%")
+
+                    if (raw_df['approx_half_time'].std() / raw_df['approx_half_time'].mean()) > 0.5:
+                        st.warning("High variability in half-time suggests multiple kinetic populations.")
+                    else:
+                        st.success("Half-time variability is low, suggesting a single kinetic population.")
+                else:
+                    st.info("No raw metrics could be calculated for this group.")
+
             st.markdown("### Step 1: Statistical Outlier Removal")
             dm.update_group_analysis(selected_group_name)
             features_df=group.get('features_df')
@@ -3094,12 +3149,27 @@ with tab2:
             
             available_groups = list(dm.groups.keys())
             
+            if 'selected_groups_holistic' not in st.session_state or not st.session_state.selected_groups_holistic:
+                st.session_state.selected_groups_holistic = available_groups[:2] if len(available_groups) >= 2 else available_groups
+
+            def select_all_holistic_groups():
+                st.session_state.selected_groups_holistic = available_groups
+
+            def clear_all_holistic_groups():
+                st.session_state.selected_groups_holistic = []
+
             selected_groups_holistic = st.multiselect(
                 "Choose experimental groups:",
                 options=available_groups,
-                default=available_groups[:2] if len(available_groups) >= 2 else available_groups,
+                key='selected_groups_holistic',
                 help="Select 2+ groups to compare their mean recovery curves"
             )
+
+            b_col1, b_col2 = st.columns(2)
+            with b_col1:
+                st.button("Select All", on_click=select_all_holistic_groups, key="holistic_select_all")
+            with b_col2:
+                st.button("Clear", on_click=clear_all_holistic_groups, key="holistic_clear_all")
 
             if len(selected_groups_holistic) >= 2:
                 st.markdown("---")
@@ -3886,6 +3956,41 @@ with tab3:
                             st.error("Please ensure all selected groups have processed data")
                     else:
                         st.warning("Select at least 2 groups for statistical comparison")
+
+                # HTML Report Generation Button
+                if st.button("📄 Generate HTML Report", type="secondary", disabled=len(selected_groups_pdf) < 1):
+                    if selected_groups_pdf:
+                        try:
+                            from frap_html_reports import generate_html_report
+                            with st.spinner("Generating interactive HTML report..."):
+                                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                                html_filename = f"FRAP_Interactive_Report_{timestamp}.html"
+
+                                output_file = generate_html_report(
+                                    data_manager=dm,
+                                    groups_to_compare=selected_groups_pdf,
+                                    output_filename=html_filename,
+                                    settings=st.session_state.settings
+                                )
+
+                                with open(output_file, 'rb') as html_file:
+                                    html_data = html_file.read()
+
+                                st.download_button(
+                                    label="⬇️ Download HTML Report",
+                                    data=html_data,
+                                    file_name=html_filename,
+                                    mime="text/html",
+                                    help="Download interactive HTML report with Plotly charts"
+                                )
+                                st.success("HTML report generated successfully!")
+                                os.remove(output_file)
+                        except ImportError:
+                            st.error("HTML report generation module not found. Please ensure `frap_html_reports.py` is available.")
+                        except Exception as e:
+                            st.error(f"Error generating HTML report: {e}")
+                    else:
+                        st.warning("Select at least 1 group to generate an HTML report.")
 
 with tab4:
     # Use the comprehensive image analysis interface
