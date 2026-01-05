@@ -2143,6 +2143,71 @@ with tab2:
                     included_groups = included_cfg['Group'].tolist()
                     control_groups = included_cfg[included_cfg['Role'] == 'Control']['Group'].tolist()
 
+                    st.markdown("#### Report Output Scope & Contents")
+                    st.caption(
+                        "Choose which groups and sections flow into the generated report. "
+                        "Selections default to all included groups but can be narrowed for faster comparisons."
+                    )
+
+                    report_group_options = included_groups if included_groups else all_group_names
+                    stored_report_groups = st.session_state.get('global_fit_report_groups', report_group_options)
+                    stored_report_groups = [g for g in stored_report_groups if g in report_group_options]
+                    if not stored_report_groups:
+                        stored_report_groups = list(report_group_options)
+
+                    col_report_scope1, col_report_scope2 = st.columns(2)
+                    with col_report_scope1:
+                        report_groups = st.multiselect(
+                            "Groups to include in report output",
+                            options=report_group_options,
+                            default=stored_report_groups,
+                            key='global_fit_report_groups_selector',
+                            help="Controls which groups appear in the exported report tables and stats."
+                        )
+                    with col_report_scope2:
+                        if st.button("Select all available", key="report_scope_select_all", use_container_width=True):
+                            report_groups = list(report_group_options)
+                            st.session_state.global_fit_report_groups = report_groups
+                            st.rerun()
+                        if st.button(
+                            "Use only control groups",
+                            key="report_scope_select_ctrls",
+                            disabled=(len(control_groups) == 0),
+                            use_container_width=True
+                        ):
+                            report_groups = [g for g in report_group_options if g in control_groups]
+                            st.session_state.global_fit_report_groups = report_groups
+                            st.rerun()
+
+                    st.session_state.global_fit_report_groups = report_groups
+
+                    section_options = [
+                        ("settings", "Analysis settings table"),
+                        ("global_fits", "Global fitting results (tables & plots)"),
+                        ("summary_stats", "Per-group summary statistics"),
+                        ("stat_tests", "Statistical comparisons"),
+                        ("plots", "Comparison plots"),
+                        ("detailed_results", "Detailed per-file results tables"),
+                        ("multi_spot", "Global multi-spot comparison (when available)"),
+                    ]
+                    stored_sections = st.session_state.get(
+                        'global_fit_report_sections',
+                        [opt for opt, _ in section_options]
+                    )
+                    stored_sections = [s for s in stored_sections if any(s == opt for opt, _ in section_options)]
+                    if not stored_sections:
+                        stored_sections = [opt for opt, _ in section_options]
+
+                    selected_sections = st.multiselect(
+                        "Report sections to include",
+                        options=[opt for opt, _ in section_options],
+                        format_func=lambda x: dict(section_options).get(x, x),
+                        default=stored_sections,
+                        key='global_fit_report_sections_selector',
+                        help="Uncheck sections to trim the report to only the outputs you need."
+                    )
+                    st.session_state.global_fit_report_sections = selected_sections
+
                     # Drag-and-drop ordering (applies to graphs/tables/reports)
                     if SORTABLES_AVAILABLE and included_groups:
                         st.markdown("**Drag to reorder included groups**")
@@ -2345,6 +2410,8 @@ with tab2:
                                             'global_model': global_model,
                                             'included_groups': list(included_groups),
                                             'control_groups': list(control_groups),
+                                            'report_groups': [g for g in st.session_state.get('global_fit_report_groups', included_groups) if g in included_groups],
+                                            'report_sections': list(st.session_state.get('global_fit_report_sections', [])),
                                             'include_outliers': bool(include_outliers_global),
                                             'compute_stats_vs_control': bool(compute_stats_vs_control),
                                             'render_fit_plots': bool(render_fit_plots),
@@ -2358,12 +2425,20 @@ with tab2:
 
                                     # Optional report generation using same configuration
                                     if auto_make_reports:
+                                        report_groups = st.session_state.get('global_fit_report_groups', included_groups)
+                                        report_groups = [g for g in report_groups if g in included_groups]
+                                        if not report_groups:
+                                            report_groups = list(included_groups)
+
+                                        report_sections = st.session_state.get('global_fit_report_sections', [])
+
                                         report_settings = dict(st.session_state.settings)
                                         report_settings.update({
-                                            'report_controls': control_groups,
-                                            'report_group_order': included_groups,
+                                            'report_controls': [g for g in control_groups if g in report_groups],
+                                            'report_group_order': [g for g in included_groups if g in report_groups],
                                             'report_subgroup': 'Global Fitting',
                                             'report_global_fit_model': global_model,
+                                            'report_output_sections': report_sections,
                                         })
 
                                         make_pdf = report_format in {'PDF', 'Both'}
@@ -2374,7 +2449,7 @@ with tab2:
                                             try:
                                                 pdf_path = generate_pdf_report(
                                                     dm,
-                                                    included_groups,
+                                                    report_groups,
                                                     None,
                                                     report_settings
                                                 )
@@ -2386,7 +2461,7 @@ with tab2:
                                             try:
                                                 html_path = generate_html_report(
                                                     dm,
-                                                    included_groups,
+                                                    report_groups,
                                                     None,
                                                     report_settings
                                                 )

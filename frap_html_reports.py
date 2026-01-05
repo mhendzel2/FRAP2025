@@ -129,10 +129,15 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
     report_controls: List[str] = []
     report_order: List[str] = list(groups_to_compare)
     report_global_model: Optional[str] = None
+    requested_sections: set[str] = set()
     if settings:
         report_controls = list(settings.get('report_controls') or [])
         report_order = list(settings.get('report_group_order') or report_order)
         report_global_model = settings.get('report_global_fit_model')
+        requested_sections = set(settings.get('report_output_sections') or [])
+
+    def _section_enabled(section: str) -> bool:
+        return (not requested_sections) or (section in requested_sections)
 
     # Collect and combine per-group feature data
     all_group_data: List[pd.DataFrame] = []
@@ -192,7 +197,7 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
                     any_global = True
                     break
 
-    if any_global:
+    if any_global and _section_enabled('global_fits'):
         html_parts.append("<h2>Global Fitting Results</h2>")
         if report_controls:
             html_parts.append(f"<p><b>Control group(s):</b> {_html.escape(', '.join(report_controls))}</p>")
@@ -308,7 +313,7 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
                         pass
 
     # Report-generator metadata
-    if settings:
+    if settings and _section_enabled('settings'):
         ctrls = settings.get('report_controls')
         subgroup = settings.get('report_subgroup')
         if ctrls:
@@ -317,24 +322,25 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
             html_parts.append(f"<p><b>Subgroup set:</b> {_html.escape(str(subgroup))}</p>")
 
     # Settings
-    if settings:
+    if settings and _section_enabled('settings'):
         settings_df = pd.DataFrame(list(settings.items()), columns=['Parameter', 'Value'])
         html_parts.append("<h2>Analysis Settings</h2>")
         html_parts.append(settings_df.to_html(index=False))
 
     # Summary Statistics
-    html_parts.append("<h2>Summary Statistics</h2>")
-    summary_metrics = [m for m in ['mobile_fraction', 'rate_constant', 'half_time'] if m in combined_df.columns]
-    if summary_metrics:
-        summary_table = combined_df.groupby('group')[summary_metrics].agg(['mean', 'std']).round(3)
-        if not summary_table.empty:
-            summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
-            html_parts.append(summary_table.to_html())
-    else:
-        html_parts.append("<p><i>No summary metrics available.</i></p>")
+    if _section_enabled('summary_stats'):
+        html_parts.append("<h2>Summary Statistics</h2>")
+        summary_metrics = [m for m in ['mobile_fraction', 'rate_constant', 'half_time'] if m in combined_df.columns]
+        if summary_metrics:
+            summary_table = combined_df.groupby('group')[summary_metrics].agg(['mean', 'std']).round(3)
+            if not summary_table.empty:
+                summary_table.columns = [' '.join(col).strip() for col in summary_table.columns.values]
+                html_parts.append(summary_table.to_html())
+        else:
+            html_parts.append("<p><i>No summary metrics available.</i></p>")
 
     # Statistical Comparison
-    if len(groups_to_compare) > 1:
+    if len(groups_to_compare) > 1 and _section_enabled('stat_tests'):
         html_parts.append("<h2>Statistical Comparison</h2>")
         html_parts.append(_stat_tests_table(combined_df, groups_to_compare))
 
@@ -344,7 +350,7 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
             html_parts.append(_control_tests_table(combined_df, groups_to_compare, list(settings.get('report_controls'))))
 
     # Plots (only if plotly available and multiple groups)
-    if px is not None and len(groups_to_compare) >= 1 and summary_metrics:
+    if px is not None and len(groups_to_compare) >= 1 and 'summary_metrics' in locals() and summary_metrics and _section_enabled('plots'):
         try:
             long_df = combined_df.melt(id_vars='group', value_vars=summary_metrics, var_name='Metric', value_name='Value')
             fig_box = px.box(long_df, x='Metric', y='Value', color='group', notched=True,
@@ -355,20 +361,22 @@ def generate_html_report(data_manager, groups_to_compare, output_filename: Optio
             html_parts.append("<p><i>Plot generation failed.</i></p>")
 
     # Detailed results
-    html_parts.append("<h2>Detailed Results</h2>")
-    html_parts.append(combined_df.to_html(index=False))
+    if _section_enabled('detailed_results'):
+        html_parts.append("<h2>Detailed Results</h2>")
+        html_parts.append(combined_df.to_html(index=False))
 
     # Global multi-spot comparison (special application; included only if present on group)
     multi_spot_any = False
-    for group_name in groups_to_compare:
-        grp = data_manager.groups.get(group_name) if hasattr(data_manager, 'groups') else None
-        if not grp:
-            continue
-        if grp.get('global_multispot_compare') or grp.get('global_multispot_report_md'):
-            multi_spot_any = True
-            break
+    if _section_enabled('multi_spot'):
+        for group_name in groups_to_compare:
+            grp = data_manager.groups.get(group_name) if hasattr(data_manager, 'groups') else None
+            if not grp:
+                continue
+            if grp.get('global_multispot_compare') or grp.get('global_multispot_report_md'):
+                multi_spot_any = True
+                break
 
-    if multi_spot_any:
+    if multi_spot_any and _section_enabled('multi_spot'):
         html_parts.append("<h2>Global Multi-Spot Model Comparison</h2>")
         html_parts.append("<p><i>Included only when run manually; not part of batch processing.</i></p>")
         for group_name in groups_to_compare:
