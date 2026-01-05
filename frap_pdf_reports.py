@@ -73,7 +73,7 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         elements.append(Spacer(1, 0.25 * inch))
 
         # Settings table
-        if settings:
+        if settings and _section_enabled('settings'):
             rows = [["Parameter", "Value"]]
             for key, label in [
                 ('default_criterion', 'Model Selection Criterion'),
@@ -99,8 +99,9 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
             elements.append(Spacer(1, 0.25 * inch))
 
         # Group summaries
-        elements.append(Paragraph("Group Summaries", styles['FRAPSubtitle']))
-        elements.append(Spacer(1, 0.15 * inch))
+        if _section_enabled('summary_stats') or _section_enabled('detailed_results'):
+            elements.append(Paragraph("Group Summaries", styles['FRAPSubtitle']))
+            elements.append(Spacer(1, 0.15 * inch))
         key_metrics = [
             'mobile_fraction', 'immobile_fraction', 'rate_constant', 'k_off', 'half_time',
             'diffusion_coefficient', 'radius_of_gyration', 'molecular_weight_estimate',
@@ -113,13 +114,14 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
 
         # Global multi-spot comparison (special application; included only if present)
         multi_spot_any = False
-        for gname in groups_to_compare:
-            g = data_manager.groups.get(gname)
-            if g and g.get('global_multispot_compare'):
-                multi_spot_any = True
-                break
+        if _section_enabled('multi_spot'):
+            for gname in groups_to_compare:
+                g = data_manager.groups.get(gname)
+                if g and g.get('global_multispot_compare'):
+                    multi_spot_any = True
+                    break
 
-        if multi_spot_any:
+        if multi_spot_any and _section_enabled('multi_spot'):
             elements.append(Paragraph("Global Multi-Spot Model Comparison", styles['FRAPSubtitle']))
             elements.append(Paragraph("(Included only when run manually; not part of batch processing.)", styles['FRAPBody']))
             elements.append(Spacer(1, 0.15 * inch))
@@ -171,10 +173,15 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         report_global_model = None
         report_controls: List[str] = []
         report_order: List[str] = []
+        requested_sections: set[str] = set()
         if settings:
             report_global_model = settings.get('report_global_fit_model')
             report_controls = list(settings.get('report_controls') or [])
             report_order = list(settings.get('report_group_order') or [])
+            requested_sections = set(settings.get('report_output_sections') or [])
+
+        def _section_enabled(section: str) -> bool:
+            return (not requested_sections) or (section in requested_sections)
 
         def _extract_total_amplitudes(global_fit_result: dict) -> list[float]:
             vals: list[float] = []
@@ -207,7 +214,7 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                         any_global = True
                         break
 
-        if any_global:
+        if any_global and _section_enabled('global_fits'):
             elements.append(Paragraph("Global Fitting Results", styles['FRAPSubtitle']))
             elements.append(Spacer(1, 0.15 * inch))
 
@@ -346,64 +353,66 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                         except Exception:
                             pass
 
-        for gname in groups_to_compare:
-            g = data_manager.groups.get(gname)
-            if not g or g.get('features_df') is None or g['features_df'].empty:
-                continue
-            df = g['features_df']
-            elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
-            elements.append(Paragraph(f"Total Files: {len(g.get('files', []))}, Analyzed: {len(df)}", styles['FRAPBody']))
-            avail = [m for m in key_metrics if m in df.columns]
-            if avail:
-                rows = [["Metric", "Mean", "Std", "Median", "Min", "Max"]]
-                for m in avail:
-                    series = df[m].dropna()
-                    if not len(series):
-                        continue
-                    rows.append([
-                        m.replace('_', ' ').title(),
-                        f"{series.mean():.3f}", f"{series.std():.3f}", f"{series.median():.3f}", f"{series.min():.3f}", f"{series.max():.3f}"
-                    ])
-                mtbl = Table(rows, colWidths=[1.6*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch])
-                mtbl.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
-                ]))
-                elements.append(mtbl)
-            # component summary
-            comp_rows = [["Component", "% Mobile", "Rate (k)", "Half-time (s)"]]
-            has_comp = False
-            for comp in component_metrics:
-                pcol = f'proportion_of_mobile_{comp}'
-                rcol = f'rate_constant_{comp}'
-                hcol = f'half_time_{comp}'
-                if pcol in df.columns and rcol in df.columns:
-                    pvals = df[pcol].dropna(); rvals = df[rcol].dropna(); hvals = df[hcol].dropna() if hcol in df.columns else pd.Series(dtype=float)
-                    if len(pvals) and len(rvals):
-                        comp_rows.append([
-                            comp.capitalize(),
-                            f"{pvals.mean():.1f}%",
-                            f"{rvals.mean():.4f}",
-                            f"{hvals.mean():.2f}" if len(hvals) else 'N/A'
+        if _section_enabled('summary_stats') or _section_enabled('detailed_results'):
+            for gname in groups_to_compare:
+                g = data_manager.groups.get(gname)
+                if not g or g.get('features_df') is None or g['features_df'].empty:
+                    continue
+                df = g['features_df']
+                elements.append(Paragraph(f"Group: {gname}", styles['FRAPSection']))
+                elements.append(Paragraph(f"Total Files: {len(g.get('files', []))}, Analyzed: {len(df)}", styles['FRAPBody']))
+                avail = [m for m in key_metrics if m in df.columns]
+                if avail and _section_enabled('summary_stats'):
+                    rows = [["Metric", "Mean", "Std", "Median", "Min", "Max"]]
+                    for m in avail:
+                        series = df[m].dropna()
+                        if not len(series):
+                            continue
+                        rows.append([
+                            m.replace('_', ' ').title(),
+                            f"{series.mean():.3f}", f"{series.std():.3f}", f"{series.median():.3f}", f"{series.min():.3f}", f"{series.max():.3f}"
                         ])
-                        has_comp = True
-            if has_comp:
-                elements.append(Spacer(1, 0.05 * inch))
-                elements.append(Paragraph("Component Analysis", styles['FRAPBody']))
-                ctbl = Table(comp_rows, colWidths=[1.3*inch]*4)
-                ctbl.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
-                ]))
-                elements.append(ctbl)
-            elements.append(Spacer(1, 0.2 * inch))
+                    mtbl = Table(rows, colWidths=[1.6*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch])
+                    mtbl.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                    ]))
+                    elements.append(mtbl)
+                # component summary
+                if _section_enabled('detailed_results'):
+                    comp_rows = [["Component", "% Mobile", "Rate (k)", "Half-time (s)"]]
+                    has_comp = False
+                    for comp in component_metrics:
+                        pcol = f'proportion_of_mobile_{comp}'
+                        rcol = f'rate_constant_{comp}'
+                        hcol = f'half_time_{comp}'
+                        if pcol in df.columns and rcol in df.columns:
+                            pvals = df[pcol].dropna(); rvals = df[rcol].dropna(); hvals = df[hcol].dropna() if hcol in df.columns else pd.Series(dtype=float)
+                            if len(pvals) and len(rvals):
+                                comp_rows.append([
+                                    comp.capitalize(),
+                                    f"{pvals.mean():.1f}%",
+                                    f"{rvals.mean():.4f}",
+                                    f"{hvals.mean():.2f}" if len(hvals) else 'N/A'
+                                ])
+                                has_comp = True
+                    if has_comp:
+                        elements.append(Spacer(1, 0.05 * inch))
+                        elements.append(Paragraph("Component Analysis", styles['FRAPBody']))
+                        ctbl = Table(comp_rows, colWidths=[1.3*inch]*4)
+                        ctbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.lightgrey)
+                        ]))
+                        elements.append(ctbl)
+                elements.append(Spacer(1, 0.2 * inch))
 
         # Statistical comparison
-        if len(groups_to_compare) > 1:
+        if len(groups_to_compare) > 1 and _section_enabled('stat_tests'):
             elements.append(Paragraph("Statistical Comparison", styles['FRAPSubtitle']))
             elements.append(Spacer(1, 0.15 * inch))
             combined_parts = []
@@ -498,7 +507,7 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
                                 elements.append(Spacer(1, 0.12 * inch))
 
         # Simple plot (mobile fraction boxplot)
-        if len(groups_to_compare) > 1:
+        if len(groups_to_compare) > 1 and _section_enabled('plots'):
             try:
                 plt.figure(figsize=(6.0, 4.0))
                 labels, data = [], []
