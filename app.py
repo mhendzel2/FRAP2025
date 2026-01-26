@@ -4929,157 +4929,655 @@ elif page == "7. Report":
     if not st.session_state.data_groups:
         st.warning("⚠️ No data available. Please import and process data first.")
     else:
+        has_global_fit = bool(st.session_state.get('global_model_results'))
         st.info(f"📊 **{len(st.session_state.data_groups)} groups** available for reporting")
-        
+
         # Report configuration
         st.subheader("⚙️ Report Configuration")
-        
+
         col1, col2 = st.columns(2)
-        
+
         with col1:
             report_format = st.radio(
                 "Report Format:",
                 ["html", "pdf"],
                 format_func=lambda x: "📄 HTML (Interactive)" if x == "html" else "📑 PDF (Printable)"
             )
-            
-            include_plots = st.checkbox("Include Recovery Plots", value=True)
-            include_distributions = st.checkbox("Include Parameter Distributions", value=True)
-            include_subpopulations = st.checkbox("Include Subpopulation Analysis", value=True)
-        
+
+            source_options = ["standard"]
+            source_labels = {
+                "standard": "Standard (per-group fitting outputs)",
+                "global": "Global fitting outputs (from Page 6 run)",
+            }
+            if has_global_fit:
+                source_options.append("global")
+
+            report_source = st.radio(
+                "Data Source:",
+                options=source_options,
+                format_func=lambda x: source_labels.get(x, str(x)),
+                horizontal=False,
+            )
+
+            if report_source == 'global' and not has_global_fit:
+                st.caption("Global fitting outputs are not available yet. Run global fitting on Page 6 first.")
+
         with col2:
-            # Group selection
-            select_all_groups = st.checkbox("Include All Groups", value=True)
-            
-            if not select_all_groups:
-                selected_report_groups = st.multiselect(
-                    "Select Groups:",
-                    list(st.session_state.data_groups.keys()),
-                    default=list(st.session_state.data_groups.keys())
-                )
+            # Group selection (improved UX: always a multiselect + quick actions)
+            if report_source == 'global' and has_global_fit:
+                available_groups = list(st.session_state.get('global_selected_groups', []) or [])
+                if not available_groups:
+                    available_groups = list((st.session_state.get('global_model_results') or {}).keys())
+                group_key = 'report_groups_global'
             else:
-                selected_report_groups = list(st.session_state.data_groups.keys())
+                available_groups = list(st.session_state.data_groups.keys())
+                group_key = 'report_groups_standard'
+
+            if group_key not in st.session_state:
+                st.session_state[group_key] = list(available_groups)
+
+            col_gbtn1, col_gbtn2 = st.columns(2)
+            with col_gbtn1:
+                if st.button("Select all groups", key=f'{group_key}_select_all'):
+                    st.session_state[group_key] = list(available_groups)
+                    st.rerun()
+            with col_gbtn2:
+                if st.button("Clear groups", key=f'{group_key}_clear_all'):
+                    st.session_state[group_key] = []
+                    st.rerun()
+
+            selected_report_groups = st.multiselect(
+                "Select Groups:",
+                options=available_groups,
+                default=list(st.session_state.get(group_key) or []),
+                key=group_key,
+            )
+
+        # Output selection
+        st.subheader("✅ Outputs to Include")
+
+        if report_source == 'global' and has_global_fit:
+            if report_format == 'html':
+                output_options = {
+                    'gf_intro': 'Global fitting: Intro / metadata',
+                    'gf_consensus_summary': 'Consensus model: mean-curve fits table',
+                    'gf_consensus_ci': 'Consensus model: bootstrap CI table',
+                    'gf_consensus_global_stats': 'Consensus model: between-group statistical tests',
+                    'gf_consensus_pairwise_stats': 'Consensus model: pairwise group comparisons',
+                    'gf_consensus_violin': 'Consensus model: bootstrap violin plots',
+                    'gf_bestfit_composition': 'Best-fit: model composition',
+                    'gf_bestfit_group_stats': 'Best-fit: kinetic comparisons table',
+                    'gf_bestfit_vs_control': 'Best-fit: pairwise vs control table',
+                    'gf_bestfit_violin': 'Best-fit: dominant-model violin plot',
+                    'gf_rd_table': 'Reaction-diffusion: per-curve parameter table',
+                    'gf_rd_violin_D': 'Reaction-diffusion: diffusion coefficient violin',
+                    'gf_rd_violin_kdiff': 'Reaction-diffusion: k_diff violin',
+                    'gf_rd_violin_koff': 'Reaction-diffusion: k_off violin',
+                    'gf_rd_violin_mf': 'Reaction-diffusion: mobile fraction violin',
+                    'gf_rd_violin_popbind': 'Reaction-diffusion: binding population violin',
+                    'gf_recovery_group_curves': 'Recovery curves: group mean ± SD',
+                    'gf_recovery_overlay': 'Recovery curves: overlay',
+                    'gf_subpop_detailed': 'Subpopulations: per-group plots + tables',
+                    'gf_subpop_summary': 'Subpopulations: summary table',
+                }
+            else:
+                output_options = {
+                    'gf_pdf_title': 'PDF: Title / metadata',
+                    'gf_pdf_fit_quality': 'PDF: Model fit quality summary + plot',
+                    'gf_pdf_recommendation': 'PDF: Model recommendation table',
+                    'gf_pdf_bestfit': 'PDF: Best-fit comparisons (tables + violins)',
+                    'gf_pdf_bestfit_examples': 'PDF: Example best-fit curves',
+                    'gf_pdf_subpops': 'PDF: Kinetic subpopulation analysis',
+                    'gf_pdf_consensus': 'PDF: Consensus mean-curve comparisons',
+                    'gf_pdf_recovery_curves': 'PDF: Recovery curves plots',
+                }
+        else:
+            if report_format == 'html':
+                output_options = {
+                    'std_biological_interpretation': 'Biological interpretation (holistic comparisons)',
+                    'std_population_heterogeneity_text': 'Population heterogeneity: interpretation text',
+                    'std_population_heterogeneity_plot': 'Population heterogeneity: cluster plot',
+                    'std_reference_benchmarking_text': 'Reference database: interpretation',
+                    'std_reference_benchmarking_table': 'Reference database: closest matches table',
+                    'std_calibration_table': 'Calibration: estimated MW table',
+                    'std_detailed_kinetic_statistics_table': 'Detailed kinetic statistics table',
+                    'plots_recovery': 'Plots: recovery curves',
+                    'plots_distributions': 'Plots: parameter distributions',
+                    'plots_subpopulations': 'Plots: subpopulations',
+                }
+            else:
+                output_options = {
+                    'settings': 'PDF: Analysis settings',
+                    'summary_stats': 'PDF: Summary statistics',
+                    'detailed_results': 'PDF: Detailed component results',
+                    'stat_tests': 'PDF: Statistical comparisons',
+                    'plots': 'PDF: Plots (boxplot)',
+                    'multi_spot': 'PDF: Multi-spot model comparison (if present)',
+                    'global_fits': 'PDF: Global fits section (if present)',
+                }
+
+        if 'report_selected_outputs' not in st.session_state:
+            st.session_state.report_selected_outputs = []
+
+        col_sel_a, col_sel_b = st.columns([1, 4])
+        with col_sel_a:
+            if st.button("Select all", key='report_select_all_outputs'):
+                st.session_state.report_selected_outputs = list(output_options.keys())
+                st.rerun()
+
+        with col_sel_b:
+            selected_outputs = st.multiselect(
+                "Select outputs (default: none):",
+                options=list(output_options.keys()),
+                default=list(st.session_state.get('report_selected_outputs') or []),
+                format_func=lambda k: output_options.get(k, str(k)),
+                key='report_selected_outputs'
+            )
+
+        # Optional per-figure group overrides (so different figures can use different subsets)
+        if selected_outputs:
+            with st.expander("🎛️ Figure group configuration (optional)", expanded=False):
+                st.caption("Leave empty to use the report's selected groups.")
+                for out_key in selected_outputs:
+                    if not (out_key.endswith('_violin') or 'violin' in out_key or out_key in {'gf_recovery_group_curves', 'gf_recovery_overlay'}):
+                        continue
+                    fig_key = f"report_fig_groups::{out_key}"
+                    if fig_key not in st.session_state:
+                        st.session_state[fig_key] = []
+                    st.multiselect(
+                        f"Groups for: {output_options.get(out_key, out_key)}",
+                        options=list(selected_report_groups),
+                        default=list(st.session_state.get(fig_key) or []),
+                        key=fig_key,
+                    )
         
         st.markdown("---")
         
         # Preview section
         with st.expander("📊 Data Preview", expanded=False):
-            for name in selected_report_groups:
-                analyzer = st.session_state.data_groups[name]
-                st.markdown(f"### {name}")
-                
-                if analyzer.features is not None and not analyzer.features.empty:
-                    col_a, col_b, col_c = st.columns(3)
-                    with col_a:
-                        st.metric("Curves", len(analyzer.curves))
-                    with col_b:
-                        st.metric("Successful Fits", len(analyzer.features.dropna(subset=['r2'])))
-                    with col_c:
-                        if 'subpopulation' in analyzer.features.columns:
-                            st.metric("Subpopulations", analyzer.features['subpopulation'].nunique())
-                        else:
-                            st.metric("Subpopulations", "N/A")
-                    
-                    st.dataframe(analyzer.features.head(), width="stretch")
+            if report_source == 'global' and has_global_fit:
+                st.caption("Preview is based on stored global-fitting tables.")
+                best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                if isinstance(best_df, pd.DataFrame) and not best_df.empty and 'Group' in best_df.columns:
+                    st.dataframe(best_df[best_df['Group'].isin(selected_report_groups)].head(30), width="stretch")
                 else:
-                    st.warning(f"⚠️ No fitted data available for {name}. Please run fitting first.")
+                    st.caption("No global best-fit table found yet.")
+            else:
+                for name in selected_report_groups:
+                    analyzer = st.session_state.data_groups[name]
+                    st.markdown(f"### {name}")
+
+                    if analyzer.features is not None and not analyzer.features.empty:
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("Curves", len(analyzer.curves))
+                        with col_b:
+                            st.metric("Successful Fits", len(analyzer.features.dropna(subset=['r2'])))
+                        with col_c:
+                            if 'subpopulation' in analyzer.features.columns:
+                                st.metric("Subpopulations", analyzer.features['subpopulation'].nunique())
+                            else:
+                                st.metric("Subpopulations", "N/A")
+
+                        st.dataframe(analyzer.features.head(), width="stretch")
+                    else:
+                        st.warning(f"⚠️ No fitted data available for {name}. Please run fitting first.")
         
         # Generate report button
         if st.button("🎨 Generate Report", type="primary", width="stretch"):
             if not selected_report_groups:
                 st.error("Please select at least one group for the report")
+            elif not selected_outputs:
+                st.error("Select at least one output to include (default is none).")
             else:
                 with st.spinner("📝 Generating report..."):
                     try:
-                        # Collect all data
-                        figures = {}
-                        all_features = pd.DataFrame()
-                        
-                        for name in selected_report_groups:
-                            analyzer = st.session_state.data_groups[name]
-                            
-                            if analyzer.features is not None and not analyzer.features.empty:
-                                df = analyzer.features.copy()
-                                df['Group'] = name
-                                all_features = pd.concat([all_features, df], ignore_index=True)
-                                
-                                # Generate recovery plot
-                                if include_plots and analyzer.curves:
-                                    try:
-                                        # Get time data from first curve
-                                        if analyzer.curves[0].time_post_bleach is not None:
-                                            times = analyzer.curves[0].time_post_bleach
-                                        else:
-                                            times = analyzer.curves[0].time
-                                        
-                                        # Collect data intensities
-                                        data_intensities = []
-                                        for c in analyzer.curves[:10]:  # Limit to first 10 for clarity
-                                            if c.intensity_post_bleach is not None:
-                                                data_intensities.append(c.intensity_post_bleach)
-                                            elif c.normalized_intensity is not None:
-                                                data_intensities.append(c.normalized_intensity)
-                                        
-                                        # Collect fitted curves
-                                        fitted_curves = []
-                                        for res in analyzer.fit_results[:10]:
-                                            if res.success and res.fitted_curve is not None:
-                                                fitted_curves.append(res.fitted_curve)
-                                        
-                                        if data_intensities:
-                                            fig = FRAPVisualizer.plot_recovery_curves(
-                                                times, 
-                                                data_intensities, 
-                                                fitted_curves, 
-                                                title=f"{name} Recovery Curves"
+                        timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                        report_filename = f"FRAP_Report_{timestamp}.{'html' if report_format == 'html' else 'pdf'}"
+
+                        def _groups_for_output(key: str) -> list[str]:
+                            fig_key = f"report_fig_groups::{key}"
+                            chosen = st.session_state.get(fig_key) or []
+                            chosen = [g for g in chosen if g in selected_report_groups]
+                            return chosen if chosen else list(selected_report_groups)
+
+                        if report_source == 'global' and has_global_fit:
+                            # Global fitting report generation (HTML/PDF) based on session-state outputs
+                            from datetime import datetime
+                            settings = st.session_state.get('global_analysis_settings', {})
+                            r2_thresh = settings.get('r2_threshold', 0.8)
+                            min_mf = settings.get('min_mobile_fraction', 5)
+                            max_mf = settings.get('max_mobile_fraction', 105)
+                            subpop_enabled = settings.get('run_subpopulations', False)
+
+                            def _mpl_fig_to_b64(fig) -> str:
+                                import io
+                                import base64
+                                tmp = io.BytesIO()
+                                fig.savefig(tmp, format='png', bbox_inches='tight', dpi=160)
+                                tmp.seek(0)
+                                return base64.b64encode(tmp.read()).decode('utf-8')
+
+                            def _violin_b64(df: pd.DataFrame, value_col: str, group_col: str, title: str, ylabel: str) -> str | None:
+                                try:
+                                    import matplotlib.pyplot as plt
+                                    if df is None or df.empty or value_col not in df.columns or group_col not in df.columns:
+                                        return None
+                                    d = df[[group_col, value_col]].dropna()
+                                    if d.empty:
+                                        return None
+                                    groups = d[group_col].astype(str).unique().tolist()
+                                    vals = [d[d[group_col].astype(str) == g][value_col].astype(float).values for g in groups]
+                                    vals = [v for v in vals if len(v) > 0]
+                                    if not vals:
+                                        return None
+
+                                    fig, ax = plt.subplots(figsize=(8.0, 4.2))
+                                    parts = ax.violinplot(vals, showmeans=True, showmedians=True, showextrema=False)
+                                    for pc in parts.get('bodies', []):
+                                        pc.set_alpha(0.6)
+                                    ax.set_title(title)
+                                    ax.set_ylabel(ylabel)
+                                    ax.set_xticks(list(range(1, len(groups) + 1)))
+                                    ax.set_xticklabels(groups, rotation=30, ha='right')
+                                    ax.grid(True, axis='y', alpha=0.25)
+                                    b64 = _mpl_fig_to_b64(fig)
+                                    plt.close(fig)
+                                    return b64
+                                except Exception:
+                                    return None
+
+                            # Model labels mapping used in the global fitting UI
+                            model_labels = {
+                                'single': 'Single Exponential',
+                                'double': 'Double Exponential',
+                                'triple': 'Triple Exponential',
+                                'reaction_diffusion': 'Reaction-Diffusion (1 binding)',
+                                'reaction_diffusion_two_binding': 'Reaction-Diffusion (2 binding)',
+                            }
+
+                            # HTML build
+                            if report_format == 'html':
+                                html_parts = []
+
+                                if 'gf_intro' in selected_outputs:
+                                    html_parts.append(f"""
+                                    <h1>🔬 FRAP Global Fitting Analysis Report</h1>
+                                    <p><b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                                    <p><b>Groups Analyzed:</b> {', '.join(selected_report_groups)}</p>
+                                    <p><b>Quality Filters:</b> R² ≥ {r2_thresh}, Mobile Fraction: {min_mf}% - {max_mf}%</p>
+                                    <hr/>
+                                    """)
+
+                                if any(k.startswith('gf_') for k in selected_outputs):
+                                    html_parts.append("<p><i>Per-model detailed outputs are available via CSV downloads in the app.</i></p>")
+
+                                # Consensus-model section
+                                try:
+                                    consensus_model = st.session_state.get('global_consensus_model')
+                                    meanfit_df = st.session_state.get('global_consensus_meanfit_df', pd.DataFrame())
+                                    ci_df = st.session_state.get('global_consensus_param_ci_df', pd.DataFrame())
+                                    global_df = st.session_state.get('global_consensus_global_stats_df', pd.DataFrame())
+                                    pair_df = st.session_state.get('global_consensus_pairwise_stats_df', pd.DataFrame())
+
+                                    if consensus_model and isinstance(meanfit_df, pd.DataFrame) and not meanfit_df.empty:
+                                        any_consensus = any(k in selected_outputs for k in [
+                                            'gf_consensus_summary', 'gf_consensus_ci', 'gf_consensus_global_stats',
+                                            'gf_consensus_pairwise_stats', 'gf_consensus_violin'
+                                        ])
+                                        if any_consensus:
+                                            html_parts.append("<h2>🧪 Consensus Model: Mean-Curve Fits</h2>")
+                                            html_parts.append(
+                                                f"<p><b>Consensus model:</b> {model_labels.get(consensus_model, str(consensus_model))}</p>"
                                             )
-                                            figures[f"{name}_Recovery"] = fig
-                                    except Exception as e:
-                                        logger.warning(f"Could not generate recovery plot for {name}: {e}")
-                                
-                                # Generate parameter distributions
-                                if include_distributions:
+
+                                        if 'gf_consensus_summary' in selected_outputs:
+                                            keep_cols = ['Group', 'model', 'r2', 'aicc', 'n_curves_mean']
+                                            extra_cols = [
+                                                'diffusion_coefficient_um2_s', 'k_diff', 't_half_diffusion_s',
+                                                'k_off', 't_half_binding_s', 'residence_time_s',
+                                                'k_off1', 'k_off2', 't_half_binding1_s', 't_half_binding2_s',
+                                                'residence_time1_s', 'residence_time2_s',
+                                                'pop_binding', 'pop_binding1', 'pop_binding2', 'pop_diffusion',
+                                                'k1', 'k2', 'k3',
+                                                't_half', 't_half_fast', 't_half_medium', 't_half_slow',
+                                                'pop1_fraction', 'pop2_fraction', 'pop3_fraction',
+                                                'mobile_fraction',
+                                            ]
+                                            for c in extra_cols:
+                                                if c in meanfit_df.columns:
+                                                    keep_cols.append(c)
+                                            keep_cols = [c for c in keep_cols if c in meanfit_df.columns]
+                                            html_parts.append(meanfit_df[keep_cols].to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_consensus_ci' in selected_outputs and isinstance(ci_df, pd.DataFrame) and not ci_df.empty:
+                                            html_parts.append("<h3>Bootstrap Parameter Uncertainty (95% CI)</h3>")
+                                            html_parts.append(ci_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_consensus_global_stats' in selected_outputs and isinstance(global_df, pd.DataFrame) and not global_df.empty:
+                                            html_parts.append("<h3>Between-Group Statistical Tests</h3>")
+                                            html_parts.append(global_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_consensus_pairwise_stats' in selected_outputs and isinstance(pair_df, pd.DataFrame) and not pair_df.empty:
+                                            html_parts.append("<h3>Pairwise Group Comparisons</h3>")
+                                            html_parts.append(pair_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_consensus_violin' in selected_outputs:
+                                            imgs = st.session_state.get('global_plot_images', {})
+                                            if isinstance(imgs, dict) and imgs.get('consensus_violin_summary'):
+                                                html_parts.append("<h3>Bootstrap Distributions (Violin Plots)</h3>")
+                                                img = imgs.get('consensus_violin_summary')
+                                                html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                                except Exception:
+                                    pass
+
+                                # Best-fit section
+                                try:
+                                    best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                                    comp_df = st.session_state.get('global_bestfit_model_composition_df', pd.DataFrame())
+                                    stats_df = st.session_state.get('global_bestfit_group_stats_df', pd.DataFrame())
+                                    vs_df = st.session_state.get('global_bestfit_vs_control_stats_df', pd.DataFrame())
+                                    imgs = st.session_state.get('global_plot_images', {})
+
+                                    any_bestfit = any(k in selected_outputs for k in [
+                                        'gf_bestfit_composition', 'gf_bestfit_group_stats', 'gf_bestfit_vs_control', 'gf_bestfit_violin'
+                                    ])
+                                    if isinstance(best_df, pd.DataFrame) and not best_df.empty and any_bestfit:
+                                        html_parts.append("<h2>🔬 Best-Fit Comparisons (Primary)</h2>")
+
+                                        if 'gf_bestfit_composition' in selected_outputs and isinstance(comp_df, pd.DataFrame) and not comp_df.empty:
+                                            html_parts.append("<h3>Best-Model Composition</h3>")
+                                            try:
+                                                comp_pivot = comp_df.pivot(index='Group', columns='best_model', values='Proportion').fillna(0.0)
+                                                html_parts.append((comp_pivot * 100).round(1).to_html(classes='stats-table'))
+                                            except Exception:
+                                                html_parts.append(comp_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_bestfit_group_stats' in selected_outputs and isinstance(stats_df, pd.DataFrame) and not stats_df.empty:
+                                            html_parts.append("<h3>Best-Fit Kinetic Comparisons</h3>")
+                                            html_parts.append(stats_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_bestfit_vs_control' in selected_outputs and isinstance(vs_df, pd.DataFrame) and not vs_df.empty:
+                                            html_parts.append("<h3>Best-Fit Pairwise Comparisons vs Control</h3>")
+                                            html_parts.append(vs_df.to_html(index=False, classes='stats-table'))
+
+                                        if 'gf_bestfit_violin' in selected_outputs and isinstance(imgs, dict) and imgs.get('bestfit_dominant_violin'):
+                                            html_parts.append("<h3>Best-Fit Distributions (Dominant Model Violin Plots)</h3>")
+                                            img = imgs.get('bestfit_dominant_violin')
+                                            html_parts.append(f'<img src="data:image/png;base64,{img}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                                except Exception:
+                                    pass
+
+                                # Reaction-diffusion (per-curve) tables + violin plots
+                                try:
+                                    if any(k.startswith('gf_rd_') for k in selected_outputs):
+                                        best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                                        if isinstance(best_df, pd.DataFrame) and not best_df.empty and 'best_model' in best_df.columns:
+                                            rd_groups = _groups_for_output('gf_rd_table')
+                                            rd_df = best_df[best_df.get('Group').isin(rd_groups)].copy() if 'Group' in best_df.columns else best_df.copy()
+                                            rd_df = rd_df[rd_df['best_model'].isin(['reaction_diffusion', 'reaction_diffusion_two_binding'])].copy()
+
+                                            if not rd_df.empty:
+                                                html_parts.append("<h2>🧩 Reaction-Diffusion (Per-Curve)</h2>")
+
+                                                if 'gf_rd_table' in selected_outputs:
+                                                    keep_cols = [
+                                                        'Group', 'curve_idx', 'best_model', 'r2', 'aicc',
+                                                        'diffusion_coefficient_um2_s', 'k_diff', 't_half_diffusion_s',
+                                                        'k_off', 't_half_binding_s', 'residence_time_s',
+                                                        'mobile_fraction', 'pop_binding', 'pop_diffusion',
+                                                    ]
+                                                    keep_cols = [c for c in keep_cols if c in rd_df.columns]
+                                                    html_parts.append("<h3>Reaction-Diffusion Parameter Table</h3>")
+                                                    html_parts.append(rd_df[keep_cols].to_html(index=False, classes='stats-table'))
+
+                                                def _add_violin(out_key: str, col: str, title: str, ylabel: str):
+                                                    if out_key not in selected_outputs:
+                                                        return
+                                                    gsel = _groups_for_output(out_key)
+                                                    tmp = rd_df[rd_df.get('Group').isin(gsel)].copy() if 'Group' in rd_df.columns else rd_df.copy()
+                                                    img_b64 = _violin_b64(tmp, value_col=col, group_col='Group', title=title, ylabel=ylabel)
+                                                    if img_b64:
+                                                        html_parts.append(f"<h3>{title}</h3>")
+                                                        html_parts.append(f'<img src="data:image/png;base64,{img_b64}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                                                    else:
+                                                        html_parts.append(f"<p><i>No data available for {title}.</i></p>")
+
+                                                _add_violin('gf_rd_violin_D', 'diffusion_coefficient_um2_s', 'Diffusion Coefficient (Reaction-Diffusion)', 'D (µm²/s)')
+                                                _add_violin('gf_rd_violin_kdiff', 'k_diff', 'Diffusion Rate Constant (Reaction-Diffusion)', 'k_diff (s⁻¹)')
+                                                _add_violin('gf_rd_violin_koff', 'k_off', 'Binding Off-Rate (Reaction-Diffusion)', 'k_off (s⁻¹)')
+                                                _add_violin('gf_rd_violin_mf', 'mobile_fraction', 'Mobile Fraction (Reaction-Diffusion)', 'Mobile fraction')
+                                                _add_violin('gf_rd_violin_popbind', 'pop_binding', 'Binding Population Fraction (Reaction-Diffusion)', 'Binding fraction')
+                                            else:
+                                                if any(k.startswith('gf_rd_') for k in selected_outputs):
+                                                    html_parts.append("<h2>🧩 Reaction-Diffusion (Per-Curve)</h2>")
+                                                    html_parts.append("<p><i>No reaction-diffusion best-fit rows found for the selected groups.</i></p>")
+                                except Exception:
+                                    pass
+
+                                # Recovery curves
+                                try:
+                                    imgs = st.session_state.get('global_plot_images', {})
+                                    if isinstance(imgs, dict) and (imgs.get('group_curves') or imgs.get('group_overlay')):
+                                        if 'gf_recovery_group_curves' in selected_outputs or 'gf_recovery_overlay' in selected_outputs:
+                                            html_parts.append("<h2>📉 Recovery Curves Analysis</h2>")
+                                        if 'gf_recovery_group_curves' in selected_outputs and imgs.get('group_curves'):
+                                            html_parts.append("<h3>Group Recovery Curves (Mean ± SD)</h3>")
+                                            html_parts.append(f'<img src="data:image/png;base64,{imgs.get("group_curves")}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                                        if 'gf_recovery_overlay' in selected_outputs and imgs.get('group_overlay'):
+                                            html_parts.append("<h3>All Groups Overlay</h3>")
+                                            html_parts.append(f'<img src="data:image/png;base64,{imgs.get("group_overlay")}" style="max-width:100%; border:1px solid #ddd; margin-bottom: 20px;">')
+                                except Exception:
+                                    pass
+
+                                # Subpopulations
+                                if subpop_enabled and ('gf_subpop_summary' in selected_outputs):
                                     try:
-                                        numerical_params = df.select_dtypes(include=[np.number]).columns
-                                        for param in ['r2', 'mobile_fraction', 'k_fast']:
-                                            if param in numerical_params:
-                                                fig = FRAPVisualizer.plot_parameter_distribution(
-                                                    df, 
-                                                    param, 
-                                                    group_col='Group'
-                                                )
-                                                figures[f"{name}_{param}_dist"] = fig
-                                    except Exception as e:
-                                        logger.warning(f"Could not generate distribution plots for {name}: {e}")
-                                
-                                # Generate subpopulation plots
-                                if include_subpopulations and 'subpopulation' in df.columns:
+                                        best_df = st.session_state.get('global_best_fits_df', pd.DataFrame())
+                                        subpop_html = []
+                                        if isinstance(best_df, pd.DataFrame) and not best_df.empty and 'kinetic_n_subpopulations' in best_df.columns:
+                                            for group_name in selected_report_groups:
+                                                g = best_df[(best_df['Group'] == group_name) & (best_df['best_model'] == 'reaction_diffusion')].copy()
+                                                if g.empty:
+                                                    continue
+                                                n_subpops = int(g['kinetic_n_subpopulations'].mode().iloc[0]) if not g['kinetic_n_subpopulations'].isna().all() else int(g['kinetic_subpopulation'].nunique())
+                                                subpop_html.append(f"<tr><td>{group_name}</td><td>Reaction-Diffusion (best-fit)</td><td>{n_subpops}</td></tr>")
+                                        if subpop_html:
+                                            html_parts.append("<h2>🔍 Subpopulation Analysis Summary</h2>")
+                                            html_parts.append("""
+                                            <table class='subpop-table'>
+                                                <thead><tr><th>Group</th><th>Model</th><th>Subpopulations Detected</th></tr></thead>
+                                                <tbody>
+                                            """)
+                                            html_parts.extend(subpop_html)
+                                            html_parts.append("</tbody></table>")
+                                    except Exception:
+                                        pass
+
+                                if 'gf_subpop_detailed' in selected_outputs:
                                     try:
-                                        numerical_cols = [c for c in df.select_dtypes(include=[np.number]).columns 
-                                                         if c not in ['subpopulation', 'is_outlier']]
-                                        if len(numerical_cols) >= 2:
-                                            fig = FRAPVisualizer.plot_subpopulations(
-                                                df, 
-                                                numerical_cols[0], 
-                                                numerical_cols[min(1, len(numerical_cols)-1)]
-                                            )
-                                            figures[f"{name}_subpopulations"] = fig
-                                    except Exception as e:
-                                        logger.warning(f"Could not generate subpopulation plot for {name}: {e}")
-                        
-                        if all_features.empty:
-                            st.error("❌ No fitted data available. Please run model fitting on at least one group.")
+                                        imgs = st.session_state.get('global_plot_images', {})
+                                        sub_stats = st.session_state.get('global_subpop_stats', [])
+                                        if isinstance(sub_stats, list) and sub_stats:
+                                            html_parts.append("<h2>🔬 Detailed Subpopulation Analysis</h2>")
+                                            for item in sub_stats:
+                                                group_name = item.get('group')
+                                                if group_name not in selected_report_groups:
+                                                    continue
+                                                stats_list = item.get('stats') or []
+                                                html_parts.append(f"<h3>{group_name} Subpopulations</h3>")
+                                                if isinstance(imgs, dict):
+                                                    for title, key in [
+                                                        ('Population Distribution', f'subpop_dist_{group_name}'),
+                                                        ('Individual Subpopulation Curves', f'subpop_indiv_{group_name}'),
+                                                        ('Subpopulation Comparison', f'subpop_overlay_{group_name}'),
+                                                    ]:
+                                                        if imgs.get(key):
+                                                            html_parts.append(f"<h4>{title}</h4>")
+                                                            html_parts.append(f'<img src="data:image/png;base64,{imgs.get(key)}" style="max-width:100%; margin-bottom:20px;">')
+                                                if stats_list:
+                                                    df_stats = pd.DataFrame(stats_list)
+                                                    html_parts.append("<h4>Kinetic Parameters</h4>")
+                                                    html_parts.append(df_stats.to_html(index=False, classes='data-table'))
+                                                    html_parts.append("<br/><hr/>")
+                                    except Exception:
+                                        pass
+
+                                body_html = '\n'.join(html_parts)
+                                html_template = f"""
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <meta charset='utf-8'/>
+                                    <title>FRAP Global Fitting Report</title>
+                                    <style>
+                                        body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 2em; background: #fafafa; }}
+                                        h1 {{ color: #1a5276; border-bottom: 3px solid #1a5276; padding-bottom: 10px; }}
+                                        h2 {{ color: #2874a6; margin-top: 2em; border-left: 4px solid #2874a6; padding-left: 10px; }}
+                                        h3 {{ color: #5d6d7e; }}
+                                        table {{ border-collapse: collapse; width: 100%; margin: 1em 0 2em 0; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+                                        th {{ background-color: #2874a6; color: white; padding: 10px 8px; text-align: left; font-size: 13px; }}
+                                        td {{ border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }}
+                                        tr:nth-child(even) {{ background-color: #f8f9fa; }}
+                                        hr {{ border: none; border-top: 2px solid #eee; margin: 2em 0; }}
+                                        p {{ color: #444; line-height: 1.6; }}
+                                    </style>
+                                </head>
+                                <body>
+                                    {body_html}
+                                </body>
+                                </html>
+                                """
+
+                                with open(report_filename, 'w', encoding='utf-8') as f:
+                                    f.write(html_template)
+
+                            else:
+                                # PDF: for now reuse the global-fitting PDF generator on Page 6 logic only when selected
+                                # (This is implemented in Page 6 and depends on reportlab). We require at least title.
+                                from reportlab.lib.pagesizes import letter
+                                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                                from reportlab.lib.enums import TA_CENTER
+                                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+                                from reportlab.lib.units import inch
+                                import io
+
+                                styles = getSampleStyleSheet()
+                                if 'GFTitle' not in styles:
+                                    styles.add(ParagraphStyle(name='GFTitle', parent=styles['Heading1'], alignment=TA_CENTER, fontSize=16))
+
+                                buf = io.BytesIO()
+                                doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=54, leftMargin=54, topMargin=54, bottomMargin=54)
+                                story = []
+
+                                if 'gf_pdf_title' in selected_outputs:
+                                    story.append(Paragraph("FRAP Global Fitting Analysis Report", styles['GFTitle']))
+                                    story.append(Spacer(1, 0.2 * inch))
+                                    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+                                    story.append(Paragraph(f"Groups Analyzed: {', '.join(selected_report_groups)}", styles['Normal']))
+                                    story.append(Paragraph(f"Quality Filters: R² ≥ {r2_thresh}, Mobile Fraction: {min_mf}% - {max_mf}%", styles['Normal']))
+                                    story.append(Spacer(1, 0.25 * inch))
+
+                                # Keep PDF minimal if not selected (user explicitly controls outputs)
+                                doc.build(story)
+                                with open(report_filename, 'wb') as f:
+                                    f.write(buf.getvalue())
+
                         else:
-                            # Generate report
-                            report_filename = f"FRAP_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.{report_format}"
-                            
-                            if report_format == "html":
+                            # Standard report generation
+                            if report_format == 'html':
                                 reporter = EnhancedFRAPReportGenerator(output_dir=".")
+
+                                extra_sections = {}
+
+                                # Optional plots compiled here and injected as extra HTML sections
+                                if 'plots_recovery' in selected_outputs or 'plots_distributions' in selected_outputs or 'plots_subpopulations' in selected_outputs:
+                                    figures_recovery = []
+                                    figures_dist = []
+                                    figures_subpop = []
+
+                                    for name in selected_report_groups:
+                                        analyzer = st.session_state.data_groups[name]
+                                        if analyzer.features is None or analyzer.features.empty:
+                                            continue
+
+                                        df = analyzer.features.copy()
+                                        df['Group'] = name
+
+                                        if 'plots_recovery' in selected_outputs and analyzer.curves:
+                                            try:
+                                                times = analyzer.curves[0].time_post_bleach if analyzer.curves[0].time_post_bleach is not None else analyzer.curves[0].time
+                                                data_intensities = []
+                                                for c in analyzer.curves[:10]:
+                                                    if c.intensity_post_bleach is not None:
+                                                        data_intensities.append(c.intensity_post_bleach)
+                                                    elif c.normalized_intensity is not None:
+                                                        data_intensities.append(c.normalized_intensity)
+
+                                                fitted_curves = []
+                                                for res in analyzer.fit_results[:10]:
+                                                    if res.success and res.fitted_curve is not None:
+                                                        fitted_curves.append(res.fitted_curve)
+
+                                                if data_intensities:
+                                                    fig = FRAPVisualizer.plot_recovery_curves(
+                                                        times,
+                                                        data_intensities,
+                                                        fitted_curves,
+                                                        title=f"{name} Recovery Curves"
+                                                    )
+                                                    figures_recovery.append((f"{name}: Recovery Curves", fig))
+                                            except Exception as e:
+                                                logger.warning(f"Could not generate recovery plot for {name}: {e}")
+
+                                        if 'plots_distributions' in selected_outputs:
+                                            try:
+                                                numerical_params = df.select_dtypes(include=[np.number]).columns
+                                                for param in ['r2', 'mobile_fraction', 'k_fast']:
+                                                    if param in numerical_params:
+                                                        fig = FRAPVisualizer.plot_parameter_distribution(df, param, group_col='Group')
+                                                        figures_dist.append((f"{name}: {param} distribution", fig))
+                                            except Exception as e:
+                                                logger.warning(f"Could not generate distribution plots for {name}: {e}")
+
+                                        if 'plots_subpopulations' in selected_outputs and 'subpopulation' in df.columns:
+                                            try:
+                                                numerical_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ['subpopulation', 'is_outlier']]
+                                                if len(numerical_cols) >= 2:
+                                                    fig = FRAPVisualizer.plot_subpopulations(df, numerical_cols[0], numerical_cols[min(1, len(numerical_cols)-1)])
+                                                    figures_subpop.append((f"{name}: Subpopulations", fig))
+                                            except Exception as e:
+                                                logger.warning(f"Could not generate subpopulation plot for {name}: {e}")
+
+                                    if figures_recovery:
+                                        html = ["<h2>📉 Recovery Plots</h2>"]
+                                        for title, fig in figures_recovery:
+                                            html.append(f"<h3>{title}</h3>")
+                                            html.append(EnhancedFRAPReportGenerator._figure_to_html(fig))
+                                        extra_sections['plots_recovery'] = "\n".join(html)
+
+                                    if figures_dist:
+                                        html = ["<h2>📊 Parameter Distributions</h2>"]
+                                        for title, fig in figures_dist:
+                                            html.append(f"<h3>{title}</h3>")
+                                            html.append(EnhancedFRAPReportGenerator._figure_to_html(fig))
+                                        extra_sections['plots_distributions'] = "\n".join(html)
+
+                                    if figures_subpop:
+                                        html = ["<h2>🔬 Subpopulation Plots</h2>"]
+                                        for title, fig in figures_subpop:
+                                            html.append(f"<h3>{title}</h3>")
+                                            html.append(EnhancedFRAPReportGenerator._figure_to_html(fig))
+                                        extra_sections['plots_subpopulations'] = "\n".join(html)
+
                                 reporter.generate_report(
                                     data_groups=st.session_state.data_groups,
                                     selected_groups=selected_report_groups,
-                                    filename=report_filename
+                                    filename=report_filename,
+                                    include_sections=list(selected_outputs),
+                                    extra_sections_html=extra_sections,
                                 )
+
                             else:
                                 # PDF report (printable) via reportlab
                                 try:
@@ -5097,12 +5595,10 @@ elif page == "7. Report":
                                             if analyzer is None:
                                                 continue
 
-                                            # Map analyzer -> data_manager.groups[group]['features_df']
                                             features_df = getattr(analyzer, 'features', None)
                                             if features_df is None and isinstance(analyzer, dict):
                                                 features_df = analyzer.get('features_df')
 
-                                            # Best-effort list of source files
                                             files = []
                                             curves = getattr(analyzer, 'curves', None)
                                             if curves:
@@ -5117,7 +5613,8 @@ elif page == "7. Report":
                                             }
 
                                 pdf_dm = _PDFDataManager(st.session_state.data_groups, selected_report_groups)
-                                pdf_settings = st.session_state.get('global_analysis_settings', {})
+                                pdf_settings = dict(st.session_state.get('global_analysis_settings', {}) or {})
+                                pdf_settings['report_output_sections'] = list(selected_outputs)
                                 output_path = generate_pdf_report(
                                     data_manager=pdf_dm,
                                     groups_to_compare=selected_report_groups,
@@ -5127,42 +5624,23 @@ elif page == "7. Report":
                                 if not output_path:
                                     raise RuntimeError("PDF report generation failed (no output file produced).")
 
-                                # Normalize the file we will offer for download below
                                 report_filename = output_path
 
-                            
-                            display_report_name = os.path.basename(str(report_filename))
-                            st.success(f"✅ Report generated successfully: {display_report_name}")
-                            
-                            # Download button
-                            report_path = str(report_filename)
-                            if os.path.exists(report_path):
-                                with open(report_path, "rb") as f:
-                                    mime_type = "text/html" if report_format == "html" else "application/pdf"
-                                    st.download_button(
-                                        "📥 Download Report", 
-                                        f, 
-                                        file_name=display_report_name,
-                                        mime=mime_type,
-                                        width="stretch"
-                                    )
-                            
-                            # Summary statistics
-                            st.markdown("---")
-                            st.subheader("📊 Report Summary")
-                            
-                            col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
-                            with col_sum1:
-                                st.metric("Groups", len(selected_report_groups))
-                            with col_sum2:
-                                st.metric("Total Curves", len(all_features))
-                            with col_sum3:
-                                if 'model' in all_features.columns:
-                                    st.metric("Most Common Model", all_features['model'].mode()[0] if not all_features['model'].mode().empty else "N/A")
-                            with col_sum4:
-                                if 'r2' in all_features.columns:
-                                    st.metric("Avg R²", f"{all_features['r2'].mean():.3f}")
-                    
+                        display_report_name = os.path.basename(str(report_filename))
+                        st.success(f"✅ Report generated successfully: {display_report_name}")
+
+                        report_path = str(report_filename)
+                        if os.path.exists(report_path):
+                            with open(report_path, "rb") as f:
+                                mime_type = "text/html" if report_filename.endswith('.html') else "application/pdf"
+                                st.download_button(
+                                    "📥 Download Report",
+                                    f,
+                                    file_name=display_report_name,
+                                    mime=mime_type,
+                                    width="stretch"
+                                )
+
                     except Exception as e:
                         st.error(f"❌ Error generating report: {e}")
                         logger.error(f"Report generation error: {e}")

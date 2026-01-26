@@ -173,15 +173,16 @@ def generate_pdf_report(data_manager, groups_to_compare: List[str], output_filen
         report_global_model = None
         report_controls: List[str] = []
         report_order: List[str] = []
-        requested_sections: set[str] = set()
+        requested_sections: Optional[set[str]] = None
         if settings:
             report_global_model = settings.get('report_global_fit_model')
             report_controls = list(settings.get('report_controls') or [])
             report_order = list(settings.get('report_group_order') or [])
-            requested_sections = set(settings.get('report_output_sections') or [])
+            if 'report_output_sections' in settings:
+                requested_sections = set(settings.get('report_output_sections') or [])
 
         def _section_enabled(section: str) -> bool:
-            return (not requested_sections) or (section in requested_sections)
+            return (requested_sections is None) or (section in requested_sections)
 
         def _extract_total_amplitudes(global_fit_result: dict) -> list[float]:
             vals: list[float] = []
