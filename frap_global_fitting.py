@@ -194,6 +194,27 @@ def model_triple_exponential(t: np.ndarray, Mf: float, F1: float, F2: float,
                  F3 * (1.0 - np.exp(-k3 * t)))
 
 
+def model_anomalous_diffusion(t: np.ndarray, A: float, C: float,
+                              tau: float, alpha: float) -> np.ndarray:
+    """
+    Stretched-exponential model for anomalous diffusion.
+
+    F(t) = A * (1 - exp(-(t/tau)^alpha)) + C
+    """
+    t_safe = np.maximum(np.asarray(t, dtype=float), 0.0)
+    tau_safe = max(float(tau), 1e-12)
+    return A * (1.0 - np.exp(-((t_safe / tau_safe) ** alpha))) + C
+
+
+def model_reaction_dominant(t: np.ndarray, A: float, C: float, k_off: float) -> np.ndarray:
+    """
+    Reaction-dominant binding proxy model for trace-only FRAP.
+
+    F(t) = A * (1 - exp(-k_off * t)) + C
+    """
+    return A * (1.0 - np.exp(-k_off * t)) + C
+
+
 # Model registry with metadata
 MODEL_REGISTRY = {
     'single': {
@@ -222,6 +243,24 @@ MODEL_REGISTRY = {
         'local_params': ['Mf'],
         'param_names': ['Mf', 'F1', 'F2', 'k1', 'k2', 'k3'],
         'description': 'Triple exponential (three populations)'
+    },
+    'anomalous': {
+        'function': model_anomalous_diffusion,
+        'n_kinetic_params': 2,  # tau, alpha
+        'n_amplitude_params': 2,  # A, C (both local)
+        'global_params': ['tau', 'alpha'],
+        'local_params': ['A', 'C'],
+        'param_names': ['A', 'C', 'tau', 'alpha'],
+        'description': 'Anomalous diffusion (stretched exponential)'
+    },
+    'reaction_dominant': {
+        'function': model_reaction_dominant,
+        'n_kinetic_params': 1,  # k_off
+        'n_amplitude_params': 2,  # A, C (both local)
+        'global_params': ['k_off'],
+        'local_params': ['A', 'C'],
+        'param_names': ['A', 'C', 'k_off'],
+        'description': 'Reaction-dominant binding proxy'
     }
 }
 
@@ -263,7 +302,7 @@ class GlobalFitter:
         Parameters
         ----------
         model_name : str
-            Name of the model ('single', 'double', 'triple')
+            Name of the model ('single', 'double', 'triple', 'anomalous', 'reaction_dominant')
         curve_ids : list
             List of curve identifiers
         initial_guesses : dict, optional
@@ -288,7 +327,12 @@ class GlobalFitter:
             'k2': 0.1,
             'k3': 0.01,
             'F1': 0.33,
-            'F2': 0.33
+            'F2': 0.33,
+            'A': 0.8,
+            'C': 0.0,
+            'tau': 1.0,
+            'alpha': 0.8,
+            'k_off': 0.1
         }
         
         if initial_guesses:
@@ -316,14 +360,26 @@ class GlobalFitter:
             params.add('F1_global', value=defaults['F1'], min=0.01, max=0.98)
             params.add('F2_global', value=defaults['F2'], min=0.01, 
                       expr=f'min(0.98 - F1_global, {defaults["F2"]})')
+        elif model_name == 'anomalous':
+            params.add('tau_global', value=defaults['tau'], min=1e-6, max=1e4)
+            params.add('alpha_global', value=defaults['alpha'], min=0.05, max=1.5)
+        elif model_name == 'reaction_dominant':
+            params.add('k_off_global', value=defaults['k_off'], min=1e-6, max=50)
         
-        # Add Mf parameters (local or global)
-        if self.mf_is_local:
+        # Add local amplitude/offset parameters for mechanistic models.
+        if model_name in {'anomalous', 'reaction_dominant'}:
             for cid in curve_ids:
                 safe_cid = self._sanitize_id(cid)
-                params.add(f'Mf_{safe_cid}', value=defaults['Mf'], min=0.01, max=1.5)
+                params.add(f'A_{safe_cid}', value=defaults['A'], min=0.0, max=2.0)
+                params.add(f'C_{safe_cid}', value=defaults['C'], min=-0.2, max=1.5)
         else:
-            params.add('Mf_global', value=defaults['Mf'], min=0.01, max=1.5)
+            # Add Mf parameters (local or global)
+            if self.mf_is_local:
+                for cid in curve_ids:
+                    safe_cid = self._sanitize_id(cid)
+                    params.add(f'Mf_{safe_cid}', value=defaults['Mf'], min=0.01, max=1.5)
+            else:
+                params.add('Mf_global', value=defaults['Mf'], min=0.01, max=1.5)
         
         return params
     
@@ -359,30 +415,47 @@ class GlobalFitter:
         for curve_id, (t_data, y_data) in datasets.items():
             safe_cid = self._sanitize_id(curve_id)
             
-            # Get Mf (local or global)
-            if self.mf_is_local:
-                Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
-            else:
-                Mf = pvals.get('Mf_global', 0.8)
-            
             # Calculate prediction based on model
             if model_name == 'single':
+                if self.mf_is_local:
+                    Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                else:
+                    Mf = pvals.get('Mf_global', 0.8)
                 k = pvals['k_global']
                 y_pred = model_func(t_data, Mf, k)
                 
             elif model_name == 'double':
+                if self.mf_is_local:
+                    Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                else:
+                    Mf = pvals.get('Mf_global', 0.8)
                 k_fast = pvals['k_fast_global']
                 k_slow = pvals['k_slow_global']
                 F_fast = pvals['F_fast_global']
                 y_pred = model_func(t_data, Mf, F_fast, k_fast, k_slow)
                 
             elif model_name == 'triple':
+                if self.mf_is_local:
+                    Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                else:
+                    Mf = pvals.get('Mf_global', 0.8)
                 k1 = pvals['k1_global']
                 k2 = pvals['k2_global']
                 k3 = pvals['k3_global']
                 F1 = pvals['F1_global']
                 F2 = pvals['F2_global']
                 y_pred = model_func(t_data, Mf, F1, F2, k1, k2, k3)
+            elif model_name == 'anomalous':
+                A = pvals.get(f'A_{safe_cid}', 0.8)
+                C = pvals.get(f'C_{safe_cid}', 0.0)
+                tau = pvals['tau_global']
+                alpha = pvals['alpha_global']
+                y_pred = model_func(t_data, A, C, tau, alpha)
+            elif model_name == 'reaction_dominant':
+                A = pvals.get(f'A_{safe_cid}', 0.8)
+                C = pvals.get(f'C_{safe_cid}', 0.0)
+                k_off = pvals['k_off_global']
+                y_pred = model_func(t_data, A, C, k_off)
             else:
                 raise ValueError(f"Unknown model: {model_name}")
             
@@ -402,7 +475,7 @@ class GlobalFitter:
         curves : list of CurveData
             Curves to fit (should all be from same group)
         model_name : str
-            Model to use ('single', 'double', 'triple')
+            Model to use ('single', 'double', 'triple', 'anomalous', or 'reaction_dominant')
         initial_guesses : dict, optional
             Initial parameter values
         calc_confidence : bool
@@ -468,33 +541,54 @@ class GlobalFitter:
             for curve in curves:
                 safe_cid = self._sanitize_id(curve.curve_id)
                 
-                # Get Mf
-                if self.mf_is_local:
-                    Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
-                else:
-                    Mf = pvals.get('Mf_global', 0.8)
-                
                 # Calculate fitted curve
                 if model_name == 'single':
+                    if self.mf_is_local:
+                        Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                    else:
+                        Mf = pvals.get('Mf_global', 0.8)
                     fitted = model_func(curve.time, Mf, pvals['k_global'])
                 elif model_name == 'double':
+                    if self.mf_is_local:
+                        Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                    else:
+                        Mf = pvals.get('Mf_global', 0.8)
                     fitted = model_func(curve.time, Mf, pvals['F_fast_global'],
                                        pvals['k_fast_global'], pvals['k_slow_global'])
                 elif model_name == 'triple':
+                    if self.mf_is_local:
+                        Mf = pvals.get(f'Mf_{safe_cid}', 0.8)
+                    else:
+                        Mf = pvals.get('Mf_global', 0.8)
                     fitted = model_func(curve.time, Mf, pvals['F1_global'], pvals['F2_global'],
                                        pvals['k1_global'], pvals['k2_global'], pvals['k3_global'])
+                elif model_name == 'anomalous':
+                    A = pvals.get(f'A_{safe_cid}', 0.8)
+                    C = pvals.get(f'C_{safe_cid}', 0.0)
+                    fitted = model_func(curve.time, A, C, pvals['tau_global'], pvals['alpha_global'])
+                elif model_name == 'reaction_dominant':
+                    A = pvals.get(f'A_{safe_cid}', 0.8)
+                    C = pvals.get(f'C_{safe_cid}', 0.0)
+                    fitted = model_func(curve.time, A, C, pvals['k_off_global'])
+                else:
+                    raise ValueError(f"Unknown model: {model_name}")
                 
                 residuals = curve.intensity - fitted
                 ss_res = np.sum(residuals**2)
                 ss_tot = np.sum((curve.intensity - np.mean(curve.intensity))**2)
                 r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
-                
-                curve_fits[curve.curve_id] = {
+
+                payload = {
                     'fitted': fitted,
                     'residuals': residuals,
                     'r2': r2,
-                    'Mf': Mf
                 }
+                if model_name in {'anomalous', 'reaction_dominant'}:
+                    payload['A'] = A
+                    payload['C'] = C
+                else:
+                    payload['Mf'] = Mf
+                curve_fits[curve.curve_id] = payload
             
             # Confidence intervals
             ci = {}
@@ -687,11 +781,36 @@ class ModelSelector:
         
         if len(available) == 1:
             return available[0], "Only one model converged"
-        
+
+        # Mechanistic models (anomalous/reaction_dominant) are not strictly nested
+        # with exponential families, so we switch to information-criterion ranking.
+        nested_family = {'single', 'double', 'triple'}
+        if not set(available).issubset(nested_family):
+            best_model, aic_table = ModelSelector.compare_models_aic(results)
+            if best_model is None or aic_table.empty:
+                return None, "No successful fits after AIC filtering"
+
+            lines = ["AIC ranking for non-nested model set:"]
+            aic_sorted = aic_table.sort_values('aic')
+            for _, row in aic_sorted.iterrows():
+                lines.append(
+                    f"{row['model']}: AIC={row['aic']:.2f}, "
+                    f"ΔAIC={row.get('delta_aic', np.nan):.2f}, "
+                    f"weight={row.get('aic_weight', np.nan):.3f}"
+                )
+            lines.append(f"Selected by minimum AIC: {best_model}")
+            return str(best_model), "\n".join(lines)
+
         rationale_parts = []
         
         # Start with simplest model as baseline
-        model_complexity = {'single': 1, 'double': 2, 'triple': 3}
+        model_complexity = {
+            'single': 1,
+            'reaction_dominant': 1,
+            'double': 2,
+            'anomalous': 2,
+            'triple': 3,
+        }
         available_sorted = sorted(available, key=lambda x: model_complexity.get(x, 99))
         
         current_best = available_sorted[0]
@@ -737,7 +856,11 @@ class UnifiedModelWorkflow:
     3. Final comparative analysis: Refit all groups with the unified model
     """
     
-    def __init__(self, mf_is_local: bool = True, alpha: float = 0.05):
+    def __init__(self,
+                 mf_is_local: bool = True,
+                 alpha: float = 0.05,
+                 candidate_models: Optional[List[str]] = None,
+                 include_mechanistic_models: bool = False):
         """
         Initialize workflow.
         
@@ -747,11 +870,20 @@ class UnifiedModelWorkflow:
             Whether mobile fraction is fitted per-curve
         alpha : float
             Significance level for model selection
+        candidate_models : list, optional
+            Explicit model list override. If provided, this takes precedence.
+        include_mechanistic_models : bool
+            Include anomalous + reaction-dominant models in the default candidate set.
         """
         self.fitter = GlobalFitter(mf_is_local=mf_is_local)
         self.selector = ModelSelector()
         self.alpha = alpha
-        self.candidate_models = ['single', 'double']  # Can add 'triple'
+        if candidate_models is not None:
+            self.candidate_models = list(candidate_models)
+        elif include_mechanistic_models:
+            self.candidate_models = ['single', 'double', 'anomalous', 'reaction_dominant']
+        else:
+            self.candidate_models = ['single', 'double']
     
     def prepare_data(self, df: pd.DataFrame,
                      time_col: str = 'Time',
@@ -909,7 +1041,13 @@ class UnifiedModelWorkflow:
         group_preferences = {}
         rationale_parts = []
         
-        model_complexity = {'single': 1, 'double': 2, 'triple': 3}
+        model_complexity = {
+            'single': 1,
+            'reaction_dominant': 1,
+            'double': 2,
+            'anomalous': 2,
+            'triple': 3,
+        }
         max_required_complexity = 0
         unified_model = 'single'
         
@@ -1317,7 +1455,9 @@ def run_global_frap_analysis(df: pd.DataFrame,
                               group_col: str = 'GroupID',
                               mf_is_local: bool = True,
                               alpha: float = 0.05,
-                              normalize: bool = True) -> UnifiedAnalysisResult:
+                              normalize: bool = True,
+                              candidate_models: Optional[List[str]] = None,
+                              include_mechanistic_models: bool = False) -> UnifiedAnalysisResult:
     """
     Convenience function to run complete global FRAP analysis.
     
@@ -1333,6 +1473,10 @@ def run_global_frap_analysis(df: pd.DataFrame,
         Significance level for model selection
     normalize : bool
         Whether to apply double normalization
+    candidate_models : list, optional
+        Explicit model set for phase-1 exploration.
+    include_mechanistic_models : bool
+        Include anomalous + reaction-dominant models in default exploration.
         
     Returns
     -------
@@ -1360,7 +1504,12 @@ def run_global_frap_analysis(df: pd.DataFrame,
     >>> print(f"Unified model: {result.unified_model}")
     >>> print(result.comparison_table)
     """
-    workflow = UnifiedModelWorkflow(mf_is_local=mf_is_local, alpha=alpha)
+    workflow = UnifiedModelWorkflow(
+        mf_is_local=mf_is_local,
+        alpha=alpha,
+        candidate_models=candidate_models,
+        include_mechanistic_models=include_mechanistic_models
+    )
     return workflow.run_full_analysis(
         df, time_col, intensity_col, curve_col, group_col, normalize
     )
@@ -1436,6 +1585,8 @@ __all__ = [
     'model_single_exponential',
     'model_double_exponential',
     'model_triple_exponential',
+    'model_anomalous_diffusion',
+    'model_reaction_dominant',
     'MODEL_REGISTRY',
     'GlobalFitter',
     'ModelSelector',

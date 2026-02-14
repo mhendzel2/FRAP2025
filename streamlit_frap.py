@@ -812,7 +812,7 @@ class FRAPDataManager:
         group_name : str
             Name of the group to fit
         model : str
-            Model type ('single', 'double', or 'triple')
+            Model type ('single', 'double', 'triple', 'anomalous_diffusion', or 'reaction_diffusion')
         excluded_files : list, optional
             List of file paths to exclude from global fitting
 
@@ -2265,10 +2265,31 @@ with tab2:
                     col_global1, col_global2 = st.columns(2)
 
                     with col_global1:
+                        enable_mechanistic_models = st.checkbox(
+                            "Enable mechanistic models (anomalous + reaction-diffusion)",
+                            value=False,
+                            help=(
+                                "Adds mechanistic models optimized for treatment-vs-mutant discrimination. "
+                                "Disable to run exponential-only global fitting."
+                            )
+                        )
+
+                        global_model_options = ["single", "double", "triple"]
+                        if enable_mechanistic_models:
+                            global_model_options.extend(["anomalous_diffusion", "reaction_diffusion"])
+
+                        model_labels = {
+                            "single": "Single-component exponential",
+                            "double": "Double-component exponential",
+                            "triple": "Triple-component exponential",
+                            "anomalous_diffusion": "Anomalous Diffusion (shared tau/beta)",
+                            "reaction_diffusion": "Reaction-Diffusion (shared k_diff/k_off)",
+                        }
+
                         global_model = st.selectbox(
                             "Select model for global fitting:",
-                            ["single", "double", "triple"],
-                            format_func=lambda x: f"{x.title()}-component exponential",
+                            global_model_options,
+                            format_func=lambda x: model_labels.get(x, str(x)),
                             help="Choose the kinetic model for global fitting"
                         )
 
@@ -2281,7 +2302,8 @@ with tab2:
                     with col_global2:
                         if st.button("🚀 Run Global Fit (Configured)", type="primary", disabled=(len(included_groups) == 0)):
                             try:
-                                with st.spinner(f"Performing global {global_model}-component fitting..."):
+                                model_label = model_labels.get(global_model, str(global_model))
+                                with st.spinner(f"Performing global fitting ({model_label})..."):
                                     def _excluded_for_group(gname: str) -> list:
                                         if include_outliers_global:
                                             return []
@@ -2305,6 +2327,12 @@ with tab2:
                                                 a2 = params.get('A2', np.nan)
                                                 a3 = params.get('A3', np.nan)
                                                 vals.append(a1 + a2 + a3)
+                                            elif global_model == 'anomalous_diffusion':
+                                                vals.append(params.get('A', np.nan))
+                                            elif global_model == 'reaction_diffusion':
+                                                a_diff = params.get('A_diff', np.nan)
+                                                a_bind = params.get('A_bind', np.nan)
+                                                vals.append(a_diff + a_bind)
                                         arr = np.array(vals, dtype=float)
                                         arr = arr[np.isfinite(arr)]
                                         return {'total_amplitude': arr}
@@ -2353,6 +2381,12 @@ with tab2:
                                             row['k1'] = sp.get('k1', np.nan)
                                             row['k2'] = sp.get('k2', np.nan)
                                             row['k3'] = sp.get('k3', np.nan)
+                                        elif global_model == 'anomalous_diffusion':
+                                            row['tau'] = sp.get('tau', np.nan)
+                                            row['beta'] = sp.get('beta', np.nan)
+                                        elif global_model == 'reaction_diffusion':
+                                            row['k_diff'] = sp.get('k_diff', np.nan)
+                                            row['k_off'] = sp.get('k_off', np.nan)
                                         summary_rows.append(row)
                                     global_fit_summary_df = pd.DataFrame(summary_rows)
 
@@ -2561,7 +2595,7 @@ with tab2:
                                         ))
 
                                     fig_global.update_layout(
-                                        title=f"{gname}: Global {str(model).title()} Fit",
+                                        title=f"{gname}: Global {model_labels.get(model, str(model))} Fit",
                                         xaxis_title="Time (s)",
                                         yaxis_title="Normalized Intensity",
                                         height=450

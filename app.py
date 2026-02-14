@@ -344,7 +344,8 @@ def load_groups_from_zip(zip_file, bleach_frame_idx=None):
             for root, dirs, files in os.walk(temp_dir):
                 data_files = [f for f in files 
                              if f.lower().endswith(('.csv', '.xls', '.xlsx')) 
-                             and not f.startswith('.')]
+                             and not f.startswith('.')
+                             and not f.startswith('~$')]  # Skip Excel temp/lock files
                 
                 if data_files:
                     folder_name = os.path.basename(root)

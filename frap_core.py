@@ -85,6 +85,8 @@ def get_post_bleach_data(time: np.ndarray,
 
     • The recovery curve is extrapolated back to the photobleach point using the
       initial recovery trajectory, ensuring proper fitting from the true bleach event.
+    • The fit-time origin is shifted by half a frame so fitting starts at the
+      midpoint between the bleach step and the first post-bleach frame.
     • Uses linear extrapolation of early recovery points back to bleach time.
 
     Parameters
@@ -133,13 +135,16 @@ def get_post_bleach_data(time: np.ndarray,
     # Use the lower of measured and extrapolated values (more conservative)
     i_bleach_final = min(i_bleach_extrapolated, i_bleach_measured)
     
-    # Build corrected vectors starting from extrapolated bleach point
-    # The time vector should not include the original bleach timepoint again, only subsequent ones.
+    # Build corrected vectors starting from extrapolated bleach point.
     t_post = np.concatenate([[t_bleach], time[i_min+1:]])
     i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
-    
-    # Reset time to start from zero at bleach event
-    t_post = t_post - t_bleach
+
+    # Start fitting at the midpoint between the bleach step and first post-bleach frame.
+    t_first_post = time[i_min + 1]
+    dt_first = t_first_post - t_bleach
+    if dt_first <= 0:
+        raise ValueError("Time values must increase after bleach frame.")
+    t_post = (t_post - t_bleach) + (0.5 * dt_first)
     
     return t_post, i_post, i_min
 
@@ -324,7 +329,8 @@ class FRAPAnalysisCore:
         
         This method implements proper extrapolation of the early recovery trajectory
         back to the photobleach event to ensure accurate fitting from the true
-        starting point of recovery.
+        starting point of recovery, with the fit-time origin shifted by half a frame
+        (midpoint between bleach and first post-bleach frame).
         
         Parameters:
         -----------
@@ -393,12 +399,16 @@ class FRAPAnalysisCore:
             i_bleach_final = i_bleach_measured
         
         # --- Build corrected post-bleach vectors ---
-        # Start from the extrapolated bleach point
+        # Start from the extrapolated bleach point.
         t_post = np.concatenate([[t_bleach], time[i_min+1:]])
         i_post = np.concatenate([[i_bleach_final], intensity[i_min+1:]])
-        
-        # Reset time scale to start from zero at bleach event
-        t_post = t_post - t_bleach
+
+        # Start fitting at the midpoint between bleach and first post-bleach frame.
+        t_first_post = time[i_min + 1]
+        dt_first = t_first_post - t_bleach
+        if dt_first <= 0:
+            raise ValueError("Time values must increase after bleach frame.")
+        t_post = (t_post - t_bleach) + (0.5 * dt_first)
         
         return t_post, i_post, i_min
 

@@ -163,6 +163,8 @@ class FRAPInputHandler:
         1. Identify initial phase of recovery.
         2. Back-extrapolate to t=0 (bleach time).
         3. Determine F(0)_comp.
+        4. Build post-bleach time axis with a half-frame offset so fitting starts
+           at the midpoint between the bleach step and the first post-bleach frame.
         """
         if data.normalized_intensity is None:
             raise ValueError("Data must be normalized before Time Zero Correction.")
@@ -207,9 +209,13 @@ class FRAPInputHandler:
         
         data.f_zero_comp = f_zero_comp
         
-        # Set post-bleach data for fitting
-        # We start from t=0 (relative to bleach)
-        data.time_post_bleach = time[bleach_frame_idx:] - t_bleach
+        # Set post-bleach data for fitting, shifted by half a frame.
+        if bleach_frame_idx + 1 >= len(time):
+            raise ValueError("Need at least one frame after bleach for midpoint timing.")
+        dt_first = time[bleach_frame_idx + 1] - t_bleach
+        if dt_first <= 0:
+            raise ValueError("Time values must increase after bleach frame.")
+        data.time_post_bleach = (time[bleach_frame_idx:] - t_bleach) + (0.5 * dt_first)
         data.intensity_post_bleach = intensity[bleach_frame_idx:]
         
         # Important: The first point in intensity_post_bleach is the measured bleach depth.
