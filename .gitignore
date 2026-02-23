@@ -1,42 +1,59 @@
-# Python
+# Generated analysis outputs
+FRAP_Report_*.html
+FRAP_Report_*.pdf
+FRAP_Analysis_Report*.html
+FRAP_Analysis_Report*.pdf
+__tmp_report.*
+output/
+
+# Debug and logs
+debug.log
+*.log
+
+# Version markers
+0.3.1
+[0-9]*.[0-9]*.[0-9]*
+
+# Python artifacts
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
+*.egg-info/
+dist/
+build/
 
 # Virtual environments
 venv/
 env/
 ENV/
-.venv
+.venv/
 
-# IDEs
+# Data files (large microscopy data should not be tracked)
+*.tif
+*.tiff
+*.nd2
+*.lif
+*.czi
+
+# Data policy
+data/
+!data/README.md
+
+# IDE / tool artifacts
 .vscode/
 .idea/
+.replit
 *.swp
 *.swo
 *~
 
-# OS
+# OS artifacts
 .DS_Store
 Thumbs.db
 
-# Data files (keep specific patterns that were important)
-data/*_-*
-data/*_*[0-9]
+# AI agent instructions (do not expose publicly)
+.github/instructions/
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
+# Local analysis artifacts
+callgraph_inventory.json
+markdown_index.json
 
-# Snyk Security Extension - AI Rules (auto-generated)
-.github\instructions\snyk_rules.instructions.md
-
-venv/
-
-# Snyk Security Extension - AI Rules (auto-generated)
-.github/instructions/snyk_rules.instructions.md
-
-venv/
