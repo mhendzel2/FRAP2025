@@ -3021,15 +3021,13 @@ with tab5:
                         return {'__ndarray__': data.tolist(), 'dtype': str(data.dtype)}
                     elif isinstance(data, pd.DataFrame):
                         return {'__dataframe__': data.to_dict(orient='split')}
-                    elif isinstance(data, (np.integer,)):
+                    elif isinstance(data, np.integer):
                         return int(data)
-                    elif isinstance(data, (np.floating,)):
+                    elif isinstance(data, (np.floating, float)):
                         v = float(data)
-                        return None if (v != v or v == float('inf') or v == float('-inf')) else v
-                    elif isinstance(data, (np.bool_,)):
+                        return None if (np.isnan(v) or np.isinf(v)) else v
+                    elif isinstance(data, np.bool_):
                         return bool(data)
-                    elif isinstance(data, float):
-                        return None if (data != data or data == float('inf') or data == float('-inf')) else data
                     else:
                         return data
 
