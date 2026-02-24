@@ -25,7 +25,7 @@ Author: FRAP Analysis Suite
 
 import numpy as np
 from scipy import ndimage, optimize
-from scipy.sparse import diags, csr_matrix
+from scipy.sparse import diags, csr_matrix, bmat
 from scipy.sparse.linalg import spsolve
 from typing import Dict, List, Tuple, Optional, Any
 import logging
@@ -50,11 +50,13 @@ class PDEParameters:
     D: float  # Diffusion coefficient (µm²/s)
     k_on: float = 0.0  # Binding rate (s⁻¹)
     k_off: float = 0.0  # Unbinding rate (s⁻¹)
+    k_on2: float = 0.0  # Binding rate 2 (s⁻¹)
+    k_off2: float = 0.0  # Unbinding rate 2 (s⁻¹)
     immobile_fraction: float = 0.0  # Fraction of immobile protein (0-1)
     
     def to_array(self) -> np.ndarray:
         """Convert parameters to array for optimization."""
-        return np.array([self.D, self.k_on, self.k_off, self.immobile_fraction])
+        return np.array([self.D, self.k_on, self.k_off, self.k_on2, self.k_off2, self.immobile_fraction])
     
     @classmethod
     def from_array(cls, arr: np.ndarray) -> 'PDEParameters':
@@ -63,7 +65,9 @@ class PDEParameters:
             D=arr[0],
             k_on=arr[1] if len(arr) > 1 else 0.0,
             k_off=arr[2] if len(arr) > 2 else 0.0,
-            immobile_fraction=arr[3] if len(arr) > 3 else 0.0
+            k_on2=arr[3] if len(arr) > 3 else 0.0,
+            k_off2=arr[4] if len(arr) > 4 else 0.0,
+            immobile_fraction=arr[5] if len(arr) > 5 else 0.0
         )
 
 
@@ -432,6 +436,208 @@ class FiniteDifferenceSolver:
         }
 
 
+class ReactionDiffusionSystemSolver:
+    """
+    Solver for coupled systems of reaction-diffusion equations.
+    Supports 1 or 2 binding components.
+
+    Model:
+    u: Free diffusing protein
+    v1: Bound protein 1 (immobile)
+    v2: Bound protein 2 (immobile)
+
+    Equations:
+    ∂u/∂t = D∇²u - (kon1 + kon2)u + koff1*v1 + koff2*v2
+    ∂v1/∂t = kon1*u - koff1*v1
+    ∂v2/∂t = kon2*u - koff2*v2
+    """
+
+    def __init__(self,
+                 cell_mask: np.ndarray,
+                 bleach_mask: np.ndarray,
+                 pixel_size: float = 1.0,
+                 boundary_condition: BoundaryCondition = BoundaryCondition.NEUMANN):
+        self.helper = FiniteDifferenceSolver(cell_mask, bleach_mask, pixel_size, boundary_condition)
+        self.n = self.helper.n_points
+        self.bleach_mask = bleach_mask
+        self.cell_mask = cell_mask
+        self.ny, self.nx = cell_mask.shape
+        self.helper._create_index_mapping()
+        self.idx_1d_to_2d = self.helper.idx_1d_to_2d
+
+    def simulate(self,
+                 params: PDEParameters,
+                 time_points: np.ndarray,
+                 model_type: str = 'reaction_diffusion_1',
+                 bleach_depth: float = 0.0) -> Dict[str, Any]:
+
+        n = self.n
+        dt = np.min(np.diff(time_points)) if len(time_points) > 1 else 0.1
+
+        # Calculate equilibrium fractions (sum = 1.0)
+        # u_eq + v1_eq + v2_eq = 1.0
+        # v1_eq = (kon1/koff1) * u_eq = K1 * u_eq
+        # v2_eq = (kon2/koff2) * u_eq = K2 * u_eq
+
+        K1 = params.k_on / params.k_off if params.k_off > 1e-9 else 0
+
+        if model_type == 'reaction_diffusion_2':
+            K2 = params.k_on2 / params.k_off2 if params.k_off2 > 1e-9 else 0
+            num_species = 3
+        else:
+            K2 = 0
+            num_species = 2
+
+        u_eq = 1.0 / (1.0 + K1 + K2)
+        v1_eq = K1 * u_eq
+        v2_eq = K2 * u_eq
+
+        # Initial conditions: apply bleach
+        # u(0) = u_eq * bleach
+        # v1(0) = v1_eq * bleach
+        # v2(0) = v2_eq * bleach
+
+        u = np.full(n, u_eq)
+        v1 = np.full(n, v1_eq)
+        v2 = np.full(n, v2_eq)
+
+        for idx in range(n):
+            j, i = self.idx_1d_to_2d[idx]
+            if self.bleach_mask[j, i]:
+                u[idx] *= bleach_depth
+                v1[idx] *= bleach_depth
+                v2[idx] *= bleach_depth
+
+        # Stack state vector X = [u, v1, v2]
+        if num_species == 3:
+            X = np.concatenate([u, v1, v2])
+        else:
+            X = np.concatenate([u, v1])
+
+        # Build block matrices
+        # Laplacian block for u
+        L_u = self.helper._build_laplacian_matrix(params.D)
+        Z = csr_matrix((n, n))
+        I = diags(np.ones(n), 0, format='csr')
+
+        # Reaction blocks
+        # R11: u -> u term: -(kon1 + kon2)
+        rate_u_loss = -(params.k_on + (params.k_on2 if num_species == 3 else 0))
+        R_uu = diags(np.full(n, rate_u_loss), 0, format='csr')
+
+        # R12: v1 -> u term: +koff1
+        R_uv1 = diags(np.full(n, params.k_off), 0, format='csr')
+
+        # R21: u -> v1 term: +kon1
+        R_v1u = diags(np.full(n, params.k_on), 0, format='csr')
+
+        # R22: v1 -> v1 term: -koff1
+        R_v1v1 = diags(np.full(n, -params.k_off), 0, format='csr')
+
+        if num_species == 3:
+            # R13: v2 -> u term: +koff2
+            R_uv2 = diags(np.full(n, params.k_off2), 0, format='csr')
+
+            # R31: u -> v2 term: +kon2
+            R_v2u = diags(np.full(n, params.k_on2), 0, format='csr')
+
+            # R33: v2 -> v2 term: -koff2
+            R_v2v2 = diags(np.full(n, -params.k_off2), 0, format='csr')
+
+            # System matrix A
+            # [ L + Ruu   Ruv1    Ruv2 ]
+            # [ Rv1u      Rv1v1   0    ]
+            # [ Rv2u      0       Rv2v2]
+
+            A_blocks = [
+                [L_u + R_uu, R_uv1, R_uv2],
+                [R_v1u,      R_v1v1, Z],
+                [R_v2u,      Z,      R_v2v2]
+            ]
+        else:
+            # System matrix A
+            # [ L + Ruu   Ruv1  ]
+            # [ Rv1u      Rv1v1 ]
+
+            A_blocks = [
+                [L_u + R_uu, R_uv1],
+                [R_v1u,      R_v1v1]
+            ]
+
+        A = bmat(A_blocks, format='csr')
+
+        # Crank-Nicolson matrices
+        total_size = num_species * n
+        I_total = diags(np.ones(total_size), 0, format='csr')
+
+        A_implicit = I_total - 0.5 * dt * A
+        A_explicit = I_total + 0.5 * dt * A
+
+        # Bleach indices for averaging
+        bleach_indices = []
+        for idx in range(n):
+            j, i = self.idx_1d_to_2d[idx]
+            if self.bleach_mask[j, i]:
+                bleach_indices.append(idx)
+        bleach_indices = np.array(bleach_indices)
+
+        recovery_curve = []
+        concentration_fields = []
+
+        current_time = 0.0
+        time_idx = 0
+
+        while time_idx < len(time_points):
+            target_time = time_points[time_idx]
+
+            while current_time < target_time:
+                step_dt = min(dt, target_time - current_time)
+
+                if abs(step_dt - dt) > 1e-10:
+                    A_implicit = I_total - 0.5 * step_dt * A
+                    A_explicit = I_total + 0.5 * step_dt * A
+
+                rhs = A_explicit @ X
+                X = spsolve(A_implicit, rhs)
+
+                # Clip to physical range [0, 1]?
+                # Actually sum should be <= 1 (approx).
+                X = np.maximum(X, 0)
+
+                current_time += step_dt
+
+            # Extract components
+            u_curr = X[:n]
+            v1_curr = X[n:2*n]
+            if num_species == 3:
+                v2_curr = X[2*n:]
+                total = u_curr + v1_curr + v2_curr
+            else:
+                total = u_curr + v1_curr
+
+            # Record
+            if len(bleach_indices) > 0:
+                mean_int = np.mean(total[bleach_indices])
+            else:
+                mean_int = np.mean(total)
+            recovery_curve.append(mean_int)
+
+            # Store field (total concentration)
+            field_2d = np.zeros((self.ny, self.nx))
+            for idx in range(n):
+                j, i = self.idx_1d_to_2d[idx]
+                field_2d[j, i] = total[idx]
+            concentration_fields.append(field_2d.copy())
+
+            time_idx += 1
+
+        return {
+            'recovery_curve': np.array(recovery_curve),
+            'concentration_fields': np.array(concentration_fields),
+            'time': time_points
+        }
+
+
 class PDEFRAPFitter:
     """
     Fit FRAP data using PDE-based model.
@@ -456,6 +662,7 @@ class PDEFRAPFitter:
             Physical size of each pixel (µm)
         """
         self.solver = FiniteDifferenceSolver(cell_mask, bleach_mask, pixel_size)
+        self.system_solver = ReactionDiffusionSystemSolver(cell_mask, bleach_mask, pixel_size)
         self.cell_mask = cell_mask
         self.bleach_mask = bleach_mask
         self.pixel_size = pixel_size
@@ -474,6 +681,16 @@ class PDEFRAPFitter:
             params = PDEParameters(D=param_array[0], k_on=param_array[1], k_off=param_array[2])
         elif model_type == 'diffusion_immobile':
             params = PDEParameters(D=param_array[0], immobile_fraction=param_array[1])
+        elif model_type == 'reaction_diffusion_1':
+            params = PDEParameters(D=param_array[0], k_on=param_array[1], k_off=param_array[2])
+        elif model_type == 'reaction_diffusion_2':
+            params = PDEParameters(
+                D=param_array[0],
+                k_on=param_array[1],
+                k_off=param_array[2],
+                k_on2=param_array[3],
+                k_off2=param_array[4]
+            )
         else:  # full model
             params = PDEParameters(
                 D=param_array[0], 
@@ -484,7 +701,11 @@ class PDEFRAPFitter:
         
         # Simulate
         try:
-            result = self.solver.simulate(params, time_data, bleach_depth=bleach_depth)
+            if model_type in ['reaction_diffusion_1', 'reaction_diffusion_2']:
+                result = self.system_solver.simulate(params, time_data, model_type, bleach_depth)
+            else:
+                result = self.solver.simulate(params, time_data, bleach_depth=bleach_depth)
+
             simulated = result['recovery_curve']
             
             # Calculate residual sum of squares
@@ -514,7 +735,8 @@ class PDEFRAPFitter:
         intensity_data : np.ndarray
             Normalized intensity values (0-1)
         model_type : str
-            One of: 'diffusion_only', 'diffusion_binding', 'diffusion_immobile', 'full'
+            One of: 'diffusion_only', 'diffusion_binding', 'diffusion_immobile', 'full',
+                    'reaction_diffusion_1', 'reaction_diffusion_2', 'auto_binding'
         bleach_depth : float, optional
             Initial intensity after bleach. If None, estimated from data
         initial_guess : dict, optional
@@ -524,13 +746,46 @@ class PDEFRAPFitter:
             
         Returns:
         --------
-        Dict containing:
-            'params': Fitted PDEParameters
-            'fitted_curve': Fitted recovery curve
-            'r2': R-squared
-            'aic': Akaike Information Criterion
-            'residuals': Fit residuals
+        Dict containing fit results
         """
+        # Handle automatic model selection
+        if model_type == 'auto_binding':
+            logger.info("Running auto model selection for binding components...")
+
+            # Fit 1-component
+            res1 = self.fit(time_data, intensity_data, model_type='reaction_diffusion_1',
+                           bleach_depth=bleach_depth, initial_guess=initial_guess, bounds=bounds)
+
+            # Fit 2-component
+            res2 = self.fit(time_data, intensity_data, model_type='reaction_diffusion_2',
+                           bleach_depth=bleach_depth, initial_guess=initial_guess, bounds=bounds)
+
+            # Model selection using BIC
+            n = len(intensity_data)
+            k1 = 3 # D, kon, koff
+            k2 = 5 # D, kon1, koff1, kon2, koff2
+
+            # BIC = AIC - 2k + k*ln(n)
+            bic1 = res1['aic'] - 2*k1 + k1*np.log(n)
+            bic2 = res2['aic'] - 2*k2 + k2*np.log(n)
+
+            logger.info(f"Model Selection: 1-comp BIC={bic1:.2f}, 2-comp BIC={bic2:.2f}")
+
+            # Require significant improvement to pick more complex model (BIC diff > 10)
+            if bic2 < bic1 - 10:
+                logger.info("Selected 2-component model")
+                best_res = res2
+            else:
+                logger.info("Selected 1-component model")
+                best_res = res1
+
+            best_res['model_comparison'] = {
+                'bic1': bic1,
+                'bic2': bic2,
+                'selected': best_res['model_type']
+            }
+            return best_res
+
         # Estimate bleach depth if not provided
         if bleach_depth is None:
             bleach_depth = intensity_data[0]
@@ -538,9 +793,9 @@ class PDEFRAPFitter:
         # Set up parameter bounds and initial guesses
         if model_type == 'diffusion_only':
             n_params = 1
-            default_guess = [1.0]  # D in µm²/s
+            default_guess = [1.0]  # D
             default_bounds = [(0.001, 100.0)]
-        elif model_type == 'diffusion_binding':
+        elif model_type in ['diffusion_binding', 'reaction_diffusion_1']:
             n_params = 3
             default_guess = [1.0, 0.1, 0.1]  # D, k_on, k_off
             default_bounds = [(0.001, 100.0), (0.0, 10.0), (0.0, 10.0)]
@@ -548,6 +803,11 @@ class PDEFRAPFitter:
             n_params = 2
             default_guess = [1.0, 0.2]  # D, immobile_fraction
             default_bounds = [(0.001, 100.0), (0.0, 0.9)]
+        elif model_type == 'reaction_diffusion_2':
+            n_params = 5
+            # D, k_on1, k_off1, k_on2, k_off2
+            default_guess = [1.0, 0.1, 0.1, 0.1, 0.01]
+            default_bounds = [(0.001, 100.0), (0.0, 10.0), (0.0, 10.0), (0.0, 10.0), (0.0, 10.0)]
         else:  # full
             n_params = 4
             default_guess = [1.0, 0.1, 0.1, 0.2]
@@ -557,18 +817,28 @@ class PDEFRAPFitter:
         x0 = np.array(default_guess)
         param_bounds = default_bounds
         
-        if initial_guess:
+        # Determine parameter names based on model type
+        if model_type == 'diffusion_only':
+            param_names = ['D']
+        elif model_type in ['diffusion_binding', 'reaction_diffusion_1']:
+            param_names = ['D', 'k_on', 'k_off']
+        elif model_type == 'diffusion_immobile':
+            param_names = ['D', 'immobile_fraction']
+        elif model_type == 'reaction_diffusion_2':
+            param_names = ['D', 'k_on', 'k_off', 'k_on2', 'k_off2']
+        else: # full
             param_names = ['D', 'k_on', 'k_off', 'immobile_fraction']
-            for i, name in enumerate(param_names[:n_params]):
+
+        if initial_guess:
+            for i, name in enumerate(param_names):
                 if name in initial_guess:
                     x0[i] = initial_guess[name]
         
         if bounds:
-            param_names = ['D', 'k_on', 'k_off', 'immobile_fraction']
-            for i, name in enumerate(param_names[:n_params]):
+            for i, name in enumerate(param_names):
                 if name in bounds:
                     param_bounds[i] = bounds[name]
-        
+
         # Optimize
         result = optimize.minimize(
             self._objective,
@@ -582,17 +852,26 @@ class PDEFRAPFitter:
         # Extract fitted parameters
         if model_type == 'diffusion_only':
             fitted_params = PDEParameters(D=result.x[0])
-        elif model_type == 'diffusion_binding':
+        elif model_type in ['diffusion_binding', 'reaction_diffusion_1']:
             fitted_params = PDEParameters(D=result.x[0], k_on=result.x[1], k_off=result.x[2])
         elif model_type == 'diffusion_immobile':
             fitted_params = PDEParameters(D=result.x[0], immobile_fraction=result.x[1])
+        elif model_type == 'reaction_diffusion_2':
+            fitted_params = PDEParameters(
+                D=result.x[0], k_on=result.x[1], k_off=result.x[2],
+                k_on2=result.x[3], k_off2=result.x[4]
+            )
         else:
             fitted_params = PDEParameters(
                 D=result.x[0], k_on=result.x[1], k_off=result.x[2], immobile_fraction=result.x[3]
             )
         
         # Generate fitted curve
-        sim_result = self.solver.simulate(fitted_params, time_data, bleach_depth=bleach_depth)
+        if model_type in ['reaction_diffusion_1', 'reaction_diffusion_2']:
+            sim_result = self.system_solver.simulate(fitted_params, time_data, model_type, bleach_depth)
+        else:
+            sim_result = self.solver.simulate(fitted_params, time_data, bleach_depth=bleach_depth)
+
         fitted_curve = sim_result['recovery_curve']
         
         # Calculate statistics
@@ -616,7 +895,8 @@ class PDEFRAPFitter:
             'aic': aic,
             'residuals': residuals,
             'success': result.success,
-            'message': result.message
+            'message': result.message,
+            'model_type': model_type
         }
 
 
@@ -641,7 +921,7 @@ def fit_frap_with_pde(image_stack: np.ndarray,
     pixel_size : float
         Physical size of each pixel (µm)
     model_type : str
-        Model type: 'diffusion_only', 'diffusion_binding', 'diffusion_immobile', 'full'
+        Model type. If 'auto_binding', compares 1 vs 2 binding components.
     cell_threshold : float, optional
         Threshold for cell detection
     bleach_threshold : float
@@ -684,6 +964,9 @@ def fit_frap_with_pde(image_stack: np.ndarray,
     # Get corresponding time points
     recovery_time = time_points[bleach_frame:] - time_points[bleach_frame]
     
+    # Fit
+    fitter = PDEFRAPFitter(cell_mask, bleach_mask, pixel_size)
+
     # Fit
     fitter = PDEFRAPFitter(cell_mask, bleach_mask, pixel_size)
     result = fitter.fit(recovery_time, recovery_curve, model_type=model_type)
