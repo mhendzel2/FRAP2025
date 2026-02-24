@@ -3919,13 +3919,16 @@ with tab5:
                     elif isinstance(data, np.ndarray):
                         return {'__ndarray__': data.tolist(), 'dtype': str(data.dtype)}
                     elif isinstance(data, pd.DataFrame):
-                        return {'__dataframe__': data.to_dict(orient='list')}
+                        return {'__dataframe__': data.to_dict(orient='split')}
                     elif isinstance(data, (np.integer,)):
                         return int(data)
                     elif isinstance(data, (np.floating,)):
-                        return float(data)
+                        v = float(data)
+                        return None if (v != v or v == float('inf') or v == float('-inf')) else v
                     elif isinstance(data, (np.bool_,)):
                         return bool(data)
+                    elif isinstance(data, float):
+                        return None if (data != data or data == float('inf') or data == float('-inf')) else data
                     else:
                         return data
 
@@ -3938,7 +3941,7 @@ with tab5:
                 }
 
                 session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                session_bytes = json.dumps(session_data, allow_nan=False).encode('utf-8')
+                session_bytes = json.dumps(session_data).encode('utf-8')
 
                 st.download_button(
                     label="⬇️ Download Session File",
@@ -3974,7 +3977,7 @@ with tab5:
                             if '__ndarray__' in data:
                                 return np.array(data['__ndarray__'], dtype=data['dtype'])
                             elif '__dataframe__' in data:
-                                return pd.DataFrame(data['__dataframe__'])
+                                return pd.DataFrame(**data['__dataframe__'])
                             else:
                                 return {k: _deserialize_session(v) for k, v in data.items()}
                         elif isinstance(data, list):
