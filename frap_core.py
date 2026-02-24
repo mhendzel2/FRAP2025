@@ -726,7 +726,8 @@ class FRAPAnalysisCore:
             # This maintains ROI2 post-bleach value constant (= 100% or 1.0)
             # Correction factor = ROI2_post / ROI2(t)
             # When ROI2 decreases due to photobleaching, correction factor > 1 (increases ROI1)
-            photobleaching_correction = roi2_post_bleach / result_df['roi2_bg_corrected']
+            roi2_safe = result_df['roi2_bg_corrected'].replace(0, np.nan)
+            photobleaching_correction = roi2_post_bleach / roi2_safe
             
             # Clip correction factor to reasonable bounds to avoid artifacts
             photobleaching_correction = photobleaching_correction.clip(lower=0.5, upper=2.0).fillna(1.0)
