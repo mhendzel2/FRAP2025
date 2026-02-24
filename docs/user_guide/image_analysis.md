@@ -17,3 +17,14 @@ Use `frap2025.image.frap_image_analysis` utilities for frame-stack workflows.
 
 - Ellipticity > 1.2: circular-model assumptions may be violated.
 - Pre-bleach slope > 1%/frame: acquisition photobleaching likely significant.
+
+## Release Notes 0.4.0 (Image Analysis)
+
+- Added capillary-wave spectroscopy support for condensate contours via `frap2025.material_mechanics.compute_capillary_waves`.
+- Added backend-switchable deformation-field computation via `frap2025.optical_flow_analysis.compute_deformation_field`:
+   - `method="farneback"` (classical default)
+   - `method="raft"` (deep-learning backend when optional dependencies are available)
+- Added advanced optional install profile for image-biophysics tooling:
+   - `pip install -e .[advanced]`
+
+If optional advanced dependencies are missing (e.g., torch/torchvision), FRAP2025 automatically falls back to classical methods and remains fully usable.
