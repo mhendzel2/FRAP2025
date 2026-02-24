@@ -1,0 +1,20 @@
+{
+  "title": "FRAP2025: A Fluorescence Recovery After Photobleaching Analysis Platform",
+  "description": "Streamlit and Python toolkit for quantitative FRAP analysis with physics-validated fitting, normalization, and statistical comparison workflows.",
+  "creators": [
+    {
+      "name": "Hendzel, Michael",
+      "affiliation": "University of Alberta"
+    }
+  ],
+  "license": "MIT",
+  "upload_type": "software",
+  "keywords": [
+    "FRAP",
+    "fluorescence microscopy",
+    "biophysics",
+    "cell biology",
+    "quantitative imaging"
+  ],
+  "access_right": "open"
+}

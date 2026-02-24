@@ -1,0 +1,3432 @@
+"""
+FRAP Analysis App - Final Verified Version
+A comprehensive FRAP analysis application with supervised outlier removal, sequential group plots,
+a detailed kinetics table showing proportions relative to both the mobile pool and the total population,
+and all original settings functionality restored.
+"""
+
+import streamlit as st
+
+from streamlit_compat import patch_streamlit_width
+
+patch_streamlit_width(st)
+import pandas as pd
+import numpy as np
+import os
+import io
+from scipy.optimize import curve_fit
+from scipy.ndimage import minimum_position
+import plotly.graph_objects as go
+import plotly.express as px
+from typing import Dict, Any, Optional, Tuple, List
+import logging
+from frap_pdf_reports import generate_pdf_report
+from frap_image_analysis import FRAPImageAnalyzer, create_image_analysis_interface
+from frap_core import FRAPAnalysisCore as CoreFRAPAnalysis
+from frap_reference_database import display_reference_database_ui
+from frap_reference_integration import display_reference_comparison_widget
+import zipfile
+import tempfile
+import shutil
+# --- Page and Logging Configuration ---
+st.set_page_config(page_title="FRAP Analysis", page_icon="🔬", layout="wide", initial_sidebar_state="expanded")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+os.makedirs('data', exist_ok=True)
+
+def validate_frap_data(df: pd.DataFrame, file_path: str = "") -> bool:
+    """
+    Validate the structure and quality of FRAP data.
+
+    Args:
+        df: DataFrame to validate
+        file_path: Path to the file (for error reporting)
+
+    Returns:
+        bool: True if data is valid, False otherwise
+    """
+    try:
+        # Check required columns
+        required_cols = ['time', 'ROI1', 'ROI2', 'ROI3']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            logger.error(f"Missing required columns {missing_cols} in {file_path}")
+            return False
+
+        # Check data types
+        for col in required_cols:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                logger.error(f"Column '{col}' is not numeric in {file_path}")
+                return False
+
+        # Check for sufficient data points
+        if len(df) < 10:
+            logger.error(f"Insufficient data points ({len(df)}) in {file_path}")
+            return False
+
+        # Check for monotonic time
+        if not df['time'].is_monotonic_increasing:
+            logger.warning(f"Time column is not monotonic in {file_path}")
+
+        # Check for negative intensities (should be non-negative)
+        for col in ['ROI1', 'ROI2', 'ROI3']:
+            if (df[col] < 0).any():
+                logger.warning(f"Negative intensities found in column '{col}' in {file_path}")
+
+        # Check for NaN values
+        try:
+            has_nan = df[required_cols].isnull().sum().sum() > 0
+            if has_nan:
+                logger.warning(f"NaN values found in data from {file_path}")
+        except Exception:
+            logger.debug(f"Could not check for NaN values in {file_path}")
+
+        logger.info(f"Data validation passed for {file_path}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Data validation failed for {file_path}: {e}")
+        return False
+
+def gaussian_2d(xy: Tuple[np.ndarray, np.ndarray], A: float, x0: float, y0: float,
+                sigma_x: float, sigma_y: float, theta: float, offset: float) -> np.ndarray:
+    """A 2D Gaussian function for PSF fitting."""
+    x, y = xy
+    x0 = float(x0)
+    y0 = float(y0)
+    a = (np.cos(theta)**2)/(2*sigma_x**2) + (np.sin(theta)**2)/(2*sigma_y**2)
+    b = -(np.sin(2*theta))/(4*sigma_x**2) + (np.sin(2*theta))/(4*sigma_y**2)
+    c = (np.sin(theta)**2)/(2*sigma_x**2) + (np.cos(theta)**2)/(2*sigma_y**2)
+    g = offset + A * np.exp( - (a*((x-x0)**2) + 2*b*(x-x0)*(y-y0) + c*((y-y0)**2)))
+    return g.ravel()
+
+def fit_psf(image_data: np.ndarray) -> Dict[str, float]:
+    """
+    Fits a 2D Gaussian to image data to find the PSF.
+
+    Parameters:
+    -----------
+    image_data : numpy.ndarray
+        A 2D array representing the cropped image of a fluorescent bead.
+
+    Returns:
+    --------
+    dict
+        A dictionary containing the fitted parameters (sigma_x, sigma_y).
+    """
+    # Create x and y coordinate arrays
+    x = np.arange(image_data.shape[1])
+    y = np.arange(image_data.shape[0])
+    x, y = np.meshgrid(x, y)
+
+    # Initial guesses for the parameters
+    initial_guess = (
+        np.max(image_data),
+        image_data.shape[1]/2,
+        image_data.shape[0]/2,
+        2.0,
+        2.0,
+        0,
+        np.min(image_data)
+    )
+
+    try:
+        # The curve_fit function requires the data to be flattened
+        popt, _ = curve_fit(gaussian_2d, (x.ravel(), y.ravel()), image_data.ravel(), p0=initial_guess)
+
+        # Extract the parameters
+        A, x0, y0, sigma_x, sigma_y, theta, offset = popt
+
+        return {
+            'sigma_x': abs(sigma_x),
+            'sigma_y': abs(sigma_y),
+            'amplitude': A,
+            'center_x': x0,
+            'center_y': y0,
+            'theta': theta,
+            'offset': offset
+        }
+    except Exception as e:
+        logger.error(f"PSF fitting failed: {e}")
+        return {'sigma_x': 2.0, 'sigma_y': 2.0}
+
+def track_bleach_center(image_stack: np.ndarray, bleach_frame_index: int,
+                       search_radius: int = 5) -> List[Tuple[int, int]]:
+    """
+    Tracks the center of the photobleached region across an image stack.
+
+    Parameters:
+    -----------
+    image_stack : numpy.ndarray
+        The 3D FRAP data (time, y, x).
+    bleach_frame_index : int
+        The index of the frame immediately after photobleaching.
+    search_radius : int
+        The radius (in pixels) to search for the minimum in subsequent frames.
+
+    Returns:
+    --------
+    list
+        A list of (y, x) coordinates of the bleach center for each frame post-bleach.
+    """
+    post_bleach_stack = image_stack[bleach_frame_index:]
+    centers = []
+
+    # Find the initial center in the first post-bleach frame
+    initial_center = tuple(minimum_position(post_bleach_stack[0]))
+    centers.append(initial_center)
+
+    last_center = initial_center
+    for i in range(1, len(post_bleach_stack)):
+        frame = post_bleach_stack[i]
+
+        # Define a search area around the last known center
+        y_min = max(0, int(last_center[0]) - search_radius)
+        y_max = min(frame.shape[0], int(last_center[0]) + search_radius)
+        x_min = max(0, int(last_center[1]) - search_radius)
+        x_max = min(frame.shape[1], int(last_center[1]) + search_radius)
+
+        search_area = frame[y_min:y_max, x_min:x_max]
+
+        # Find the minimum in the search area
+        local_min_pos = tuple(minimum_position(search_area))
+
+        # Convert back to global frame coordinates
+        current_center = (int(local_min_pos[0]) + y_min, int(local_min_pos[1]) + x_min)
+        centers.append(current_center)
+        last_center = current_center
+
+    return centers
+
+def interpret_kinetics(k, bleach_radius_um, gfp_d=25.0, gfp_rg=2.82, gfp_mw=27.0):
+    """
+    Centralized kinetics interpretation function with CORRECTED mathematics
+    """
+    if k <= 0:
+        return {
+            'k_off': k,
+            'diffusion_coefficient': np.nan,
+            'apparent_mw': np.nan,
+            'half_time_diffusion': np.nan,
+            'half_time_binding': np.nan
+        }
+
+    # 1. Interpretation as a binding/unbinding process
+    k_off = k  # The rate is the dissociation constant
+    half_time_binding = np.log(2) / k  # Time for 50% recovery via binding
+
+    # 2. Interpretation as a diffusion process
+    # CORRECTED FORMULA: For 2D diffusion: D = (w^2 * k) / 4
+    # where w is bleach radius and k is the exponential rate in exp(-k*t), i.e. k = 1/tau.
+    # This is the mathematically correct formula WITHOUT the erroneous np.log(2) factor
+    diffusion_coefficient = (bleach_radius_um**2 * k) / 4.0  # CORRECTED: removed ln(2)
+    half_time_diffusion = np.log(2) / k  # Half-time from rate constant
+
+    # Estimate apparent molecular weight from diffusion coefficient
+    # Using Stokes-Einstein relation: D ∝ 1/Rg ∝ 1/MW^(1/3)
+    if diffusion_coefficient > 0:
+        apparent_mw = gfp_mw * (gfp_d / diffusion_coefficient)**3
+    else:
+        apparent_mw = np.nan
+
+    return {
+        'k_off': k_off,
+        'diffusion_coefficient': diffusion_coefficient,
+        'apparent_mw': apparent_mw,
+        'half_time_diffusion': half_time_diffusion,
+        'half_time_binding': half_time_binding
+    }
+
+def generate_markdown_report(group_name, settings, summary_df, detailed_df, excluded_count, total_count):
+    """
+    Generates a comprehensive Markdown report from the analysis results.
+    """
+    from datetime import datetime
+
+    # Calculate summary statistics
+    included_data = detailed_df[detailed_df['Status'] == 'Included']
+
+    report_str = f"""# FRAP Analysis Report
+
+**Group Name:** {group_name}
+**Report Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+**Analysis Software:** Enhanced FRAP Analysis Platform
+
+---
+
+## Executive Summary
+
+- **Total Files Analyzed:** {total_count}
+- **Files Included in Analysis:** {total_count - excluded_count}
+- **Outliers Excluded:** {excluded_count}
+- **Primary Analysis:** Dual-interpretation kinetics (diffusion vs. binding)
+
+---
+
+## Analysis Settings
+
+| Parameter | Value |
+|-----------|-------|
+| Model Selection Criterion | {settings.get('default_criterion', 'AIC').upper()} |
+| Outlier Detection Method | IQR-based filtering |
+| Bleach Radius | {settings.get('default_bleach_radius', 1.0):.2f} pixels |
+| Pixel Size | {settings.get('default_pixel_size', 1.0):.3f} μm/pixel |
+| Effective Bleach Size | {settings.get('default_bleach_radius', 1.0) * settings.get('default_pixel_size', 1.0):.3f} μm |
+| Reference Protein | GFP (D = {settings.get('default_gfp_diffusion', 25.0):.1f} μm²/s, MW = 27 kDa) |
+
+---
+
+## Population-Level Results
+
+### Averaged Kinetic Parameters
+"""
+
+    # Add the summary dataframe
+    if not summary_df.empty:
+        report_str += "\n" + summary_df.to_markdown(index=True) + "\n"
+
+    report_str += """
+### Biological Interpretation Summary
+
+The kinetic rates can be interpreted in two ways:
+
+**Diffusion-Limited Recovery:**
+- Assumes fluorescence recovery is limited by molecular diffusion
+- Provides apparent diffusion coefficients and molecular weight estimates
+- Useful for comparing mobility between conditions
+
+**Binding-Limited Recovery:**
+- Assumes recovery is limited by molecular binding/unbinding kinetics
+- Provides dissociation rate constants (k_off) and residence times
+- Useful for studying protein-chromatin interactions
+
+---
+
+## Individual File Analysis
+
+### Summary Statistics (Included Files Only)
+"""
+
+    if len(included_data) > 0:
+        # Calculate summary statistics
+        numeric_cols = ['Mobile (%)', 'Primary Rate (k)', 'App. D (μm²/s)', 'App. MW (kDa)', 'R²']
+        stats_summary = included_data[numeric_cols].describe()
+
+        report_str += "\n" + stats_summary.round(3).to_markdown() + "\n"
+
+        # Add variability analysis
+        report_str += f"""
+### Data Quality Assessment
+
+- **Mobile Fraction CV:** {(included_data['Mobile (%)'].std() / included_data['Mobile (%)'].mean() * 100):.1f}%
+- **Rate Constant CV:** {(included_data['Primary Rate (k)'].std() / included_data['Primary Rate (k)'].mean() * 100):.1f}%
+- **Average R²:** {included_data['R²'].mean():.3f} ± {included_data['R²'].std():.3f}
+- **Data Consistency:** {'Excellent' if included_data['Primary Rate (k)'].std() / included_data['Primary Rate (k)'].mean() < 0.3 else 'Good' if included_data['Primary Rate (k)'].std() / included_data['Primary Rate (k)'].mean() < 0.5 else 'Variable'}
+
+"""
+
+    report_str += """
+### Detailed Results Table
+
+**Legend:**
+- ✅ Included in population analysis
+- ❌ Excluded as outlier
+
+| File | Status | Mobile (%) | Rate (k) | k_off (1/s) | App. D (μm²/s) | App. MW (kDa) | Model | R² |
+|------|--------|------------|----------|-------------|----------------|---------------|-------|-----|
+"""
+
+    # Add detailed results
+    for _, row in detailed_df.iterrows():
+        status_icon = "✅" if row['Status'] == 'Included' else "❌"
+        report_str += f"| {row['File Name']} | {status_icon} | {row['Mobile (%)']:.1f} | {row['Primary Rate (k)']:.4f} | {row['k_off (1/s)']:.4f} | {row['App. D (μm²/s)']:.3f} | {row['App. MW (kDa)']:.1f} | {row['Model']} | {row['R²']:.3f} |\n"
+
+    report_str += """
+---
+
+## Experimental Recommendations
+
+### Data Quality
+"""
+
+    if len(included_data) > 0:
+        avg_r2 = included_data['R²'].mean()
+        cv_rate = included_data['Primary Rate (k)'].std() / included_data['Primary Rate (k)'].mean()
+
+        if avg_r2 > 0.95:
+            report_str += "- **Excellent curve fits** (R² > 0.95) indicate high data quality\n"
+        elif avg_r2 > 0.90:
+            report_str += "- **Good curve fits** (R² > 0.90) suggest reliable data\n"
+        else:
+            report_str += "- **Consider data quality improvement** - some fits show R² < 0.90\n"
+
+        if cv_rate < 0.3:
+            report_str += "- **Low variability** in kinetic rates suggests consistent experimental conditions\n"
+        else:
+            report_str += "- **Higher variability** detected - consider experimental factors affecting recovery rates\n"
+
+    report_str += """
+### Biological Insights
+
+1. **Diffusion vs. Binding:** Compare apparent diffusion coefficients with expected values for free diffusion
+2. **Molecular Weight Estimates:** Use apparent MW calculations to assess protein complex formation
+3. **Binding Kinetics:** Evaluate k_off values in the context of known protein-DNA binding affinities
+
+---
+
+## Methods Summary
+
+**Curve Fitting:** Multi-component exponential models (1, 2, or 3 components) fitted using least-squares optimization with model selection based on AIC/BIC criteria.
+
+**Dual Interpretation:** Each kinetic rate constant k is interpreted as both:
+- Diffusion coefficient: D = (w² × k) / 4 (CORRECTED FORMULA)
+- Binding dissociation rate: k_off = k
+
+**Quality Control:** Statistical outlier detection using IQR-based filtering to ensure robust population averages.
+
+---
+
+*Report generated by Enhanced FRAP Analysis Platform*
+"""
+
+    return report_str
+
+def import_imagej_roi(roi_data: bytes) -> Optional[Dict[str, Any]]:
+    """
+    Imports ROI data from an ImageJ .roi file.
+
+    This function now uses the `roifile` library to parse .roi files.
+
+    Parameters:
+    -----------
+    roi_data : bytes
+        The .roi file data as bytes.
+
+    Returns:
+    --------
+    dict or None
+        A dictionary containing ROI information, or None if import fails.
+    """
+    try:
+        import roifile
+        import io
+
+        # Read the ROI data from bytes
+        roi = roifile.roiread(io.BytesIO(roi_data))
+
+        # Extract relevant information
+        roi_info = {
+            'name': roi.name,
+            'type': roi.roitype.name,
+            'left': roi.left,
+            'top': roi.top,
+            'right': roi.right,
+            'bottom': roi.bottom,
+            'width': roi.width,
+            'height': roi.height,
+            'coordinates': roi.coordinates().tolist() # Convert numpy array to list
+        }
+
+        logger.info(f"Successfully imported ROI: {roi.name} ({roi.roitype.name})")
+        return roi_info
+
+    except Exception as e:
+        logger.error(f"ImageJ ROI import failed: {e}")
+        st.error(f"Failed to import ROI file: {e}")
+        return None
+
+# --- Session State Initialization ---
+if 'settings' not in st.session_state:
+    st.session_state.settings = {
+        'default_criterion': 'aic', 'default_bleach_radius': 1.0, 'default_pixel_size': 0.3,
+        'default_gfp_diffusion': 25.0, 'default_gfp_rg': 2.82, 'default_gfp_mw': 27.0,
+        'default_scaling_alpha': 1.0, 'default_target_mw': 27.0, 'decimal_places': 2
+    }
+if "data_manager" not in st.session_state:
+    st.session_state.data_manager = None
+if 'selected_group_name' not in st.session_state:
+    st.session_state.selected_group_name = None
+
+# --- Plotting Helper Functions ---
+def plot_all_curves(group_files_data):
+    fig = go.Figure()
+    for file_data in group_files_data.values():
+        fig.add_trace(go.Scatter(x=file_data['time'], y=file_data['intensity'], mode='lines', name=file_data['name']))
+    fig.update_layout(
+        title="All Individual Recovery Curves",
+        xaxis_title="Time (s)",
+        yaxis_title="Normalized Intensity",
+        yaxis=dict(range=[0, None]),  # Start y-axis from zero
+        legend_title="File"
+    )
+    return fig
+
+def plot_average_curve(group_files_data):
+    if not group_files_data:
+        return go.Figure()
+    all_times = np.concatenate([d['time'] for d in group_files_data.values() if d['time'] is not None])
+    if all_times.size == 0:
+        return go.Figure().update_layout(title="Not enough data to generate average curve.")
+    common_time = np.linspace(all_times.min(), all_times.max(), num=200)
+    interpolated_intensities = [np.interp(common_time, fd['time'], fd['intensity'], left=np.nan, right=np.nan) for fd in group_files_data.values()]
+    if not interpolated_intensities:
+        return go.Figure().update_layout(title="Not enough valid data for averaging.")
+    intensities_array = np.array(interpolated_intensities)
+    mean_intensity = np.nanmean(intensities_array, axis=0)
+    std_intensity = np.nanstd(intensities_array, axis=0)
+    upper_bound, lower_bound = mean_intensity + std_intensity, mean_intensity - std_intensity
+    fig = go.Figure([
+        go.Scatter(x=np.concatenate([common_time, common_time[::-1]]), y=np.concatenate([upper_bound, lower_bound[::-1]]), fill='toself', fillcolor='rgba(220,20,60,0.2)', line=dict(color='rgba(255,255,255,0)'), hoverinfo="none", name='Std. Dev.'),
+        go.Scatter(x=common_time, y=mean_intensity, mode='lines', name='Average Recovery', line=dict(color='crimson', width=3))
+    ])
+    fig.update_layout(
+        title="Average FRAP Recovery Curve",
+        xaxis_title="Time (s)",
+        yaxis_title="Normalized Intensity",
+        yaxis=dict(range=[0, None])  # Start y-axis from zero
+    )
+    return fig
+
+# --- Core Analysis and Data Logic ---
+
+def validate_analysis_results(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensures that the analysis results dictionary contains all required keys.
+    Missing keys are added with a value of np.nan.
+    """
+    if params is None:
+        return {}
+
+    required_keys = [
+        'mobile_fraction', 'immobile_fraction', 'rate_constant', 'half_time',
+        'rate_constant_fast', 'rate_constant_medium', 'rate_constant_slow',
+        'half_time_fast', 'half_time_medium', 'half_time_slow',
+        'proportion_of_mobile_fast', 'proportion_of_mobile_medium', 'proportion_of_mobile_slow',
+        'proportion_of_total_fast', 'proportion_of_total_medium', 'proportion_of_total_slow',
+        'model', 'r2'
+    ]
+
+    for key in required_keys:
+        if key not in params:
+            params[key] = np.nan
+
+    return params
+
+class FRAPDataManager:
+    """
+    Manages FRAP data files and groups with lazy loading optimization.
+    
+    Lazy Loading Strategy:
+    ----------------------
+    To improve performance during bulk file uploads, this class implements lazy loading
+    where computationally expensive model fitting is deferred until actually needed:
+    
+    - load_file(fit_models=False): Loads and preprocesses data only
+    - ensure_file_fitted(): Performs model fitting on demand when data is accessed
+    - ensure_group_fitted(): Ensures all files in a group are fitted
+    
+    This reduces initial upload time by 10-50x while maintaining full functionality.
+    Model fitting occurs automatically when:
+    - Viewing individual file details
+    - Running group analysis
+    - Exporting results
+    """
+    def __init__(self):
+        self.files,self.groups = {},{}
+
+    def load_file(self, file_path, file_name, fit_models=True):
+        """
+        Load a FRAP data file.
+        
+        Parameters:
+        -----------
+        file_path : str
+            Path to the file (used as the key in self.files dictionary)
+        file_name : str
+            Name of the file
+        fit_models : bool, default=True
+            If True, performs model fitting immediately (slower but complete).
+            If False, only loads and preprocesses data (faster for bulk uploads).
+            Models can be fitted later using ensure_file_fitted().
+        """
+        try:
+            # Keep the original file_path as the dictionary key
+            original_file_path = file_path
+            
+            # Extract original extension before the hash suffix
+            if '_' in file_path and any(ext in file_path for ext in ['.xls_', '.xlsx_', '.csv_']):
+                # Find the original extension and create a temporary file with correct extension
+                import tempfile
+                import shutil
+                if '.xlsx_' in file_path:
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
+                elif '.xls_' in file_path:
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.xls', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
+                elif '.csv_' in file_path:
+                    temp_file = tempfile.NamedTemporaryFile(suffix='.csv', delete=False)
+                    temp_path = temp_file.name
+                    temp_file.close()
+                else:
+                    temp_path = file_path
+
+                if temp_path != file_path:
+                    shutil.copy2(file_path, temp_path)
+                    # Use temp_path for reading, but keep original_file_path for dictionary key
+                    file_path_to_read = temp_path
+                else:
+                    file_path_to_read = file_path
+            else:
+                file_path_to_read = file_path
+
+            processed_df = CoreFRAPAnalysis.preprocess(CoreFRAPAnalysis.load_data(file_path_to_read))
+            if 'normalized' in processed_df.columns and not processed_df['normalized'].isnull().all():
+                time,intensity = processed_df['time'].values,processed_df['normalized'].values
+
+                # Validate the normalized data
+                if np.any(intensity < 0):
+                    logger.warning(f"Negative intensities found in normalized data for {file_name}")
+                    # Shift to ensure all values are non-negative
+                    intensity = intensity - np.min(intensity)
+
+                # Ensure proper normalization (pre-bleach should be ~1.0)
+                bleach_idx = np.argmin(intensity)
+                if bleach_idx > 0:
+                    pre_bleach_mean = np.mean(intensity[:bleach_idx])
+                    if not np.isclose(pre_bleach_mean, 1.0, rtol=0.1):
+                        logger.warning(f"Pre-bleach intensity not normalized to ~1.0 (got {pre_bleach_mean:.3f}) for {file_name}")
+                        # Re-normalize if necessary
+                        if pre_bleach_mean > 0:
+                            intensity = intensity / pre_bleach_mean
+
+                # Lazy loading: only fit models if requested
+                if fit_models:
+                    fits = CoreFRAPAnalysis.fit_all_models(time,intensity)
+                    best_fit = CoreFRAPAnalysis.select_best_fit(fits,st.session_state.settings['default_criterion'])
+
+                    if best_fit:
+                        params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                        # Validate the analysis results
+                        params = validate_analysis_results(params)
+                    else:
+                        params = None
+                        logger.error(f"No valid fit found for {file_name}")
+                else:
+                    # Store as unfitted - will be fitted on demand
+                    fits = None
+                    best_fit = None
+                    params = None
+
+                # IMPORTANT: Use original_file_path as the dictionary key, not the modified file_path
+                self.files[original_file_path]={
+                    'name':file_name,'data':processed_df,'time':time,'intensity':intensity,
+                    'fits':fits,'best_fit':best_fit,'features':params,
+                    'fitted': fit_models  # Track whether models have been fitted
+                }
+                logger.info(f"Loaded: {file_name} (fitted={fit_models})")
+                return True
+        except Exception as e:
+            st.error(f"Error loading {file_name}: {e}")
+            logger.error(f"Detailed error for {file_name}: {e}", exc_info=True)
+            return False
+
+    def create_group(self,name):
+        if name not in self.groups:
+            self.groups[name]={'name':name,'files':[],'features_df':None}
+
+    def ensure_file_fitted(self, file_path):
+        """
+        Ensures that a file has been fitted with models.
+        If not fitted, performs fitting now.
+        
+        Parameters:
+        -----------
+        file_path : str
+            Path to the file to ensure is fitted
+            
+        Returns:
+        --------
+        bool
+            True if file is fitted (or was just fitted), False on error
+        """
+        logger.info(f"DEBUG ensure_file_fitted: Starting for {file_path}")
+        
+        if file_path not in self.files:
+            logger.error(f"DEBUG ensure_file_fitted: File path not in self.files!")
+            return False
+            
+        file_data = self.files[file_path]
+        logger.info(f"DEBUG ensure_file_fitted: File name: {file_data.get('name', 'UNKNOWN')}")
+        
+        # Check if already fitted
+        if file_data.get('fitted', False):
+            logger.info(f"DEBUG ensure_file_fitted: File already marked as fitted")
+            return True
+            
+        # Need to fit models
+        try:
+            logger.info(f"DEBUG ensure_file_fitted: Attempting to fit models...")
+            time = file_data['time']
+            intensity = file_data['intensity']
+            
+            logger.info(f"DEBUG ensure_file_fitted: Data loaded - time points: {len(time)}, intensity points: {len(intensity)}")
+            
+            fits = CoreFRAPAnalysis.fit_all_models(time, intensity)
+            logger.info(f"DEBUG ensure_file_fitted: fit_all_models returned {len(fits) if fits else 0} fits")
+            
+            best_fit = CoreFRAPAnalysis.select_best_fit(fits, st.session_state.settings['default_criterion'])
+            logger.info(f"DEBUG ensure_file_fitted: select_best_fit returned: {best_fit is not None}")
+            
+            if best_fit:
+                logger.info(f"DEBUG ensure_file_fitted: Best fit model: {best_fit.get('model', 'UNKNOWN')}")
+                params = CoreFRAPAnalysis.extract_clustering_features(best_fit)
+                params = validate_analysis_results(params)
+                logger.info(f"DEBUG ensure_file_fitted: Features extracted successfully")
+            else:
+                params = None
+                logger.warning(f"DEBUG ensure_file_fitted: No valid fit found for {file_data['name']}")
+            
+            # Update file data
+            file_data['fits'] = fits
+            file_data['best_fit'] = best_fit
+            file_data['features'] = params
+            file_data['fitted'] = True
+            
+            logger.info(f"DEBUG ensure_file_fitted: Fitted models for: {file_data['name']}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"DEBUG ensure_file_fitted: ERROR fitting models for {file_data.get('name', 'unknown')}: {e}", exc_info=True)
+            return False
+    
+    def ensure_group_fitted(self, group_name):
+        """
+        Ensures all files in a group have been fitted with models.
+        
+        Parameters:
+        -----------
+        group_name : str
+            Name of the group
+            
+        Returns:
+        --------
+        int
+            Number of files successfully fitted
+        """
+        if group_name not in self.groups:
+            return 0
+            
+        group = self.groups[group_name]
+        fitted_count = 0
+        
+        for file_path in group['files']:
+            if self.ensure_file_fitted(file_path):
+                fitted_count += 1
+                
+        return fitted_count
+
+    def update_group_analysis(self,name,excluded_files=None):
+        if name not in self.groups: return
+        group=self.groups[name]
+        features_list=[]
+        for fp in group['files']:
+            if fp not in (excluded_files or []) and fp in self.files:
+                # Ensure file is fitted before extracting features
+                self.ensure_file_fitted(fp)
+                
+                if self.files[fp]['features']:
+                    ff=self.files[fp]['features'].copy()
+                    ff.update({'file_path':fp,'file_name':self.files[fp]['name']})
+                    features_list.append(ff)
+        group['features_df'] = pd.DataFrame(features_list) if features_list else pd.DataFrame()
+
+    def add_file_to_group(self, group_name, file_path):
+        """
+        Adds a file to an existing group.
+        """
+        if group_name in self.groups and file_path in self.files:
+            if file_path not in self.groups[group_name]['files']:
+                self.groups[group_name]['files'].append(file_path)
+                return True
+        return False
+
+    def collate_group_datasets(self):
+        """Return a DataFrame with all group-linked time series annotated with group metadata."""
+        collated_frames = []
+
+        for group_name, group in self.groups.items():
+            file_paths = group.get('files') or []
+            for file_path in file_paths:
+                file_info = self.files.get(file_path)
+                if not file_info:
+                    continue
+
+                base_df = file_info.get('data')
+                if isinstance(base_df, pd.DataFrame):
+                    export_df = base_df.copy()
+                else:
+                    time_vals = file_info.get('time')
+                    intensity_vals = file_info.get('intensity')
+                    if time_vals is None or intensity_vals is None:
+                        continue
+                    export_df = pd.DataFrame({
+                        'time_seconds': time_vals,
+                        'normalized_intensity': intensity_vals
+                    })
+
+                export_df.insert(0, 'group_name', group_name)
+                export_df.insert(1, 'file_name', file_info.get('name', os.path.basename(file_path)))
+                export_df.insert(2, 'file_path', file_path)
+
+                features = file_info.get('features') or {}
+                best_fit = file_info.get('best_fit') or {}
+
+                export_df['model'] = features.get('model', best_fit.get('model'))
+                export_df['r2'] = features.get('r2', best_fit.get('r2'))
+                export_df['mobile_fraction_percent'] = features.get('mobile_fraction')
+                export_df['immobile_fraction_percent'] = features.get('immobile_fraction')
+                export_df['rate_constant_fast'] = features.get('rate_constant_fast', features.get('rate_constant'))
+                export_df['rate_constant_slow'] = features.get('rate_constant_slow')
+                export_df['rate_constant_medium'] = features.get('rate_constant_medium')
+
+                collated_frames.append(export_df)
+
+        if not collated_frames:
+            return pd.DataFrame()
+
+        combined_df = pd.concat(collated_frames, ignore_index=True)
+        combined_df['group_rank'] = combined_df['group_name'].astype('category').cat.codes
+
+        return combined_df
+
+    def fit_group_models(self, group_name, model='single', excluded_files=None):
+        """
+        Perform global simultaneous fitting for a group with shared kinetic parameters
+        but individual amplitudes.
+
+        Parameters:
+        -----------
+        group_name : str
+            Name of the group to fit
+        model : str
+            Model type ('single', 'double', or 'triple')
+        excluded_files : list, optional
+            List of file paths to exclude from global fitting
+
+        Returns:
+        --------
+        dict
+            Dictionary containing global fit results
+        """
+        if group_name not in self.groups:
+            raise KeyError(f"Group {group_name} not found.")
+
+        group = self.groups[group_name]
+        excluded_files = excluded_files or []
+
+        # Prepare traces for global fitting
+        traces = []
+        file_names = []
+
+        for file_path in group['files']:
+            if file_path not in excluded_files and file_path in self.files:
+                file_data = self.files[file_path]
+                t, y, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                    file_data['time'],
+                    file_data['intensity']
+                )
+                traces.append((t, y))
+                file_names.append(file_data['name'])
+
+        if len(traces) < 2:
+            raise ValueError("Need at least 2 traces for global fitting")
+
+        try:
+            # Perform global fitting using the core analysis function
+            global_fit_result = CoreFRAPAnalysis.fit_group_models(traces, model=model)
+
+            # Add file names for reference
+            global_fit_result['file_names'] = file_names
+            global_fit_result['excluded_files'] = excluded_files
+
+            # Store the result in the group
+            if 'global_fit' not in group:
+                group['global_fit'] = {}
+            group['global_fit'][model] = global_fit_result
+
+            return global_fit_result
+
+        except Exception as e:
+            logger.error(f"Error in global fitting for group {group_name}: {e}")
+            return {
+                'model': model,
+                'success': False,
+                'error': str(e)
+            }
+
+    def load_groups_from_zip_archive(self, zip_file):
+        """
+        Loads files from a ZIP archive containing subfolders, where each subfolder
+        containing data files is treated as a new group. Handles deeply nested structures.
+        """
+        success_count = 0
+        error_count = 0
+        error_details = []
+        groups_created = []
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(zip_file.getbuffer())) as z:
+                        z.extractall(temp_dir)
+                        logger.info(f"Extracted ZIP archive to: {temp_dir}")
+                except zipfile.BadZipFile:
+                    logger.error("Invalid ZIP file format")
+                    st.error("Invalid ZIP file format. Please check that the uploaded file is a valid ZIP archive.")
+                    return False
+                except Exception as e:
+                    logger.error(f"Error extracting ZIP file: {e}")
+                    st.error(f"Error extracting ZIP file: {e}")
+                    return False
+
+                # Walk through ALL directories to find folders containing data files
+                folders_with_data = {}
+                group_name_counts = {}  # Track duplicate folder names
+                
+                for root, dirs, files in os.walk(temp_dir):
+                    # Check if this folder contains data files
+                    data_files = [f for f in files if not f.startswith('.') and 
+                                 os.path.splitext(f)[1].lower() in ['.xls', '.xlsx', '.csv', '.tif', '.tiff']]
+                    
+                    if data_files:
+                        # This folder has data files - it should become a group
+                        folder_name = os.path.basename(root)
+                        
+                        # Skip system folders
+                        if folder_name.startswith('__') or folder_name.startswith('.'):
+                            continue
+                        
+                        # Handle duplicate folder names by adding a suffix
+                        if folder_name in group_name_counts:
+                            group_name_counts[folder_name] += 1
+                            unique_folder_name = f"{folder_name}_{group_name_counts[folder_name]}"
+                        else:
+                            group_name_counts[folder_name] = 1
+                            unique_folder_name = folder_name
+                        
+                        # Store folder info
+                        folders_with_data[root] = {
+                            'name': unique_folder_name,
+                            'files': data_files
+                        }
+
+                # Process each folder with data files
+                total_folders = len(folders_with_data)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for folder_idx, (folder_path, folder_info) in enumerate(folders_with_data.items()):
+                    group_name = folder_info['name']
+                    
+                    # Update progress
+                    progress_pct = (folder_idx + 1) / total_folders
+                    progress_bar.progress(progress_pct)
+                    status_text.text(f"Processing group {folder_idx + 1}/{total_folders}: {group_name}")
+                    
+                    # Create group
+                    self.create_group(group_name)
+                    groups_created.append(group_name)
+                    
+                    # Process each data file in this folder
+                    total_files_in_group = len(folder_info['files'])
+                    for file_idx, file_in_group in enumerate(folder_info['files']):
+                        status_text.text(f"Processing group {folder_idx + 1}/{total_folders}: {group_name} - File {file_idx + 1}/{total_files_in_group}")
+                        
+                        file_path_in_temp = os.path.join(folder_path, file_in_group)
+
+                        if os.path.isfile(file_path_in_temp):
+                            try:
+                                file_ext = os.path.splitext(file_in_group)[1].lower()
+                                file_name = os.path.basename(file_in_group)
+
+                                with open(file_path_in_temp, 'rb') as f:
+                                    file_content = f.read()
+                                if not file_content:
+                                    continue
+
+                                content_hash = hash(file_content)
+
+                                if file_ext in ['.tif', '.tiff']:
+                                    base_name = os.path.splitext(file_name)[0]
+                                    tp = f"data/{base_name}_{content_hash}.csv"
+                                else:
+                                    tp = f"data/{file_name}_{content_hash}"
+
+                                if tp not in self.files:
+                                    os.makedirs(os.path.dirname(tp), exist_ok=True)
+
+                                    if file_ext in ['.tif', '.tiff']:
+                                        analyzer = FRAPImageAnalyzer()
+                                        if not analyzer.load_image_stack(file_path_in_temp):
+                                            raise ValueError("Failed to load image stack.")
+
+                                        settings = st.session_state.settings
+                                        analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
+                                        analyzer.time_interval = settings.get('default_time_interval', 1.0)
+
+                                        bleach_frame, bleach_coords = analyzer.detect_bleach_event()
+                                        if bleach_frame is None or bleach_coords is None:
+                                            raise ValueError("Failed to detect bleach event automatically.")
+
+                                        bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
+                                        analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
+                                        intensity_df = analyzer.extract_intensity_profiles()
+                                        intensity_df = intensity_df.rename(columns={'Time': 'time'})
+                                        intensity_df.to_csv(tp, index=False)
+                                    else:
+                                        shutil.copy(file_path_in_temp, tp)
+
+                                    # Use lazy loading (fit_models=False) for faster bulk upload
+                                    if self.load_file(tp, file_name, fit_models=False):
+                                        if self.add_file_to_group(group_name, tp):
+                                            success_count += 1
+                                        else:
+                                            raise ValueError(f"Failed to add file to group {group_name}")
+                                    else:
+                                        raise ValueError("Failed to load data from file.")
+                                else:
+                                    # File already exists, just add to group
+                                    if self.add_file_to_group(group_name, tp):
+                                        success_count += 1
+                                    else:
+                                        logger.error(f"File already existed but failed to add to group: {file_name} to {group_name}")
+
+                            except Exception as e:
+                                error_count += 1
+                                error_details.append(f"Error processing file {file_in_group} in group {group_name}: {str(e)}")
+                                logger.error(f"Error processing file {file_in_group} in group {group_name}: {str(e)}", exc_info=True)
+                
+                # Clear progress indicators after file loading phase
+                progress_bar.empty()
+                status_text.empty()
+                            
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive with subfolders: {e}")
+            st.error(f"An unexpected error occurred: {e}")
+            return False
+
+        if success_count > 0:
+            # Now fit models for all loaded files with progress feedback
+            st.info("Files loaded successfully. Now analyzing files...")
+            
+            total_files = success_count
+            fit_progress_bar = st.progress(0)
+            fit_status_text = st.empty()
+            
+            fitted_count = 0
+            for group_idx, group_name in enumerate(groups_created):
+                group = self.groups[group_name]
+                group_files = group['files']
+                
+                for file_idx, file_path in enumerate(group_files):
+                    fit_status_text.text(f"Analyzing file {fitted_count + 1}/{total_files}: {self.files[file_path]['name']}")
+                    
+                    if self.ensure_file_fitted(file_path):
+                        fitted_count += 1
+                        fit_progress_bar.progress(fitted_count / total_files)
+                
+                # Update group analysis after all files in group are fitted
+                self.update_group_analysis(group_name)
+            
+            # Clear fitting progress indicators
+            fit_progress_bar.empty()
+            fit_status_text.empty()
+            
+            st.success(f"Successfully loaded and analyzed {success_count} files into {len(groups_created)} groups.")
+            if error_count > 0:
+                st.warning(f"{error_count} files were skipped due to errors.")
+                with st.expander("View Error Details"):
+                    for error in error_details:
+                        st.text(error)
+            return True
+        else:
+            st.error("No files could be processed from the ZIP archive.")
+            return False
+
+    def load_zip_archive_and_create_group(self, zip_file, group_name):
+        """
+        Loads files from a ZIP archive, creates a new group, and adds the files to it.
+        Gracefully handles unreadable files.
+        """
+        success_count = 0
+        error_count = 0
+        error_details = []
+
+        try:
+            self.create_group(group_name)
+            with zipfile.ZipFile(io.BytesIO(zip_file.read())) as z:
+                file_list = z.namelist()
+                for file_in_zip in file_list:
+                    # Ignore directories and hidden files (like __MACOSX)
+                    if not file_in_zip.endswith('/') and '__MACOSX' not in file_in_zip:
+                        try:
+                            # Check if file has valid extension
+                            file_ext = os.path.splitext(file_in_zip)[1].lower()
+                            if file_ext not in ['.xls', '.xlsx', '.csv']:
+                                logger.warning(f"Skipping unsupported file type: {file_in_zip}")
+                                continue
+
+                            file_content = z.read(file_in_zip)
+
+                            # Skip empty files
+                            if len(file_content) == 0:
+                                logger.warning(f"Skipping empty file: {file_in_zip}")
+                                continue
+
+                            file_name = os.path.basename(file_in_zip)
+
+                            # Create a temporary file to use with the existing load_file logic
+                            tp = f"data/{file_name}_{hash(file_content)}"
+                            if tp not in self.files:
+                                with open(tp, "wb") as f:
+                                    f.write(file_content)
+
+                                # Attempt to load the file
+                                if self.load_file(tp, file_name):
+                                    self.add_file_to_group(group_name, tp)
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                                    error_msg = f"Failed to load file: {file_in_zip}"
+                                    error_details.append(error_msg)
+                                    logger.error(error_msg)
+                                    # Clean up failed file
+                                    if os.path.exists(tp):
+                                        os.remove(tp)
+                            else:
+                                # File already exists, just add to group
+                                self.add_file_to_group(group_name, tp)
+                                success_count += 1
+
+                        except Exception as e:
+                            error_count += 1
+                            error_msg = f"Error processing file {file_in_zip}: {str(e)}"
+                            error_details.append(error_msg)
+                            logger.error(error_msg)
+                            continue
+
+            # Update group analysis only if we have successfully loaded files
+            if success_count > 0:
+                self.update_group_analysis(group_name)
+                st.session_state.selected_group_name = group_name
+
+                # Report results
+                logger.info(f"Successfully processed {success_count} files for group {group_name}")
+                if error_count > 0:
+                    logger.warning(f"{error_count} files could not be processed and were skipped")
+                    # Display error details in Streamlit
+                    if hasattr(st, 'warning'):
+                        st.warning(f"Successfully loaded {success_count} files to group '{group_name}'. "
+                                 f"{error_count} files were skipped due to errors.")
+                        if error_details:
+                            with st.expander("⚠️ View Skipped Files Details"):
+                                for error in error_details[:10]:  # Show first 10 errors
+                                    st.text(f"• {error}")
+                                if len(error_details) > 10:
+                                    st.text(f"... and {len(error_details) - 10} more errors")
+                return True
+            else:
+                # No files could be loaded, remove the empty group
+                logger.error(f"No files could be processed for group {group_name}")
+                if group_name in self.groups:
+                    del self.groups[group_name]
+                return False
+
+        except Exception as e:
+            logger.error(f"Error processing ZIP archive for group {group_name}: {e}")
+            # Clean up group if creation failed
+            if group_name in self.groups:
+                del self.groups[group_name]
+            return False
+
+# --- Streamlit UI Application ---
+st.title("🔬 FRAP Analysis Application")
+st.markdown("**Fluorescence Recovery After Photobleaching with Supervised Outlier Removal**")
+
+dm = st.session_state.data_manager = FRAPDataManager() if st.session_state.data_manager is None else st.session_state.data_manager
+
+with st.sidebar:
+    st.header("Data Management")
+
+    # --- New ZIP Uploader for Groups ---
+    st.subheader("Group Upload (from ZIP with subfolders)")
+    st.markdown("""
+    **Expected ZIP Structure:**
+    ```
+    your_archive.zip
+    ├── Group1/
+    │   ├── file1.xls
+    │   └── file2.xls
+    ├── Group2/
+    │   ├── file3.xlsx
+    │   └── file4.csv
+    └── Group3/
+        └── file5.xls
+    ```
+    Each subfolder will become a group, and files within will be added to that group.
+    """)
+    uploaded_zip = st.file_uploader("Upload a .zip file with group subfolders", type=['zip'], key="zip_uploader")
+
+    # Track processed ZIP files to avoid reprocessing on rerun
+    if 'processed_zip_files' not in st.session_state:
+        st.session_state.processed_zip_files = set()
+
+    if uploaded_zip:
+        # Create a unique identifier for this file
+        zip_file_id = f"{uploaded_zip.name}_{uploaded_zip.size}"
+        
+        if st.button(f"Create Groups from '{uploaded_zip.name}'"):
+            # Check if we've already processed this exact file
+            if zip_file_id in st.session_state.processed_zip_files:
+                st.warning(f"This ZIP file has already been processed. Please upload a different file or clear the existing groups first.")
+            else:
+                with st.spinner(f"Processing groups from '{uploaded_zip.name}'..."):
+                    if 'data_manager' in st.session_state:
+                        # Clear any existing progress messages
+                        success = dm.load_groups_from_zip_archive(uploaded_zip)
+                        if success:
+                            # Mark this file as processed
+                            st.session_state.processed_zip_files.add(zip_file_id)
+                            
+                            # Show successful groups
+                            if dm.groups:
+                                st.success("Successfully created {} groups from ZIP archive:".format(len(dm.groups)))
+                                for group_name, group_data in dm.groups.items():
+                                    file_count = len(group_data.get('files', []))
+                                    st.write(f"📁 **{group_name}**: {file_count} files")
+
+
+                                # Show summary of what was processed
+                                total_files = sum(len(group_data.get('files', [])) for group_data in dm.groups.values())
+                                st.info(f"Total files processed: {total_files}")
+
+                                # Show detailed breakdown
+                                with st.expander("📋 View Detailed Breakdown"):
+                                    for group_name, group_data in dm.groups.items():
+                                        st.write(f"**{group_name}**:")
+                                        files_in_group = group_data.get('files', [])
+                                        for file_path in files_in_group:
+                                            if file_path in dm.files:
+                                                file_name = dm.files[file_path]['name']
+                                                st.write(f"  • {file_name}")
+                                            else:
+                                                st.write(f"  • {file_path} (file not found)")
+                            else:
+                                st.warning("ZIP archive was processed but no groups were created.")
+                                st.info("This might happen if:")
+                                st.write("- The ZIP file contains no subfolders")
+                                st.write("- All files were filtered out due to unsupported formats")
+                                st.write("- Files could not be loaded due to format issues")
+                            st.rerun()
+                        else:
+                            st.error("Failed to process ZIP archive with subfolders. Please check the ZIP file structure and file formats.")
+
+    # --- Existing Single File Uploader ---
+    st.subheader("Single File Upload")
+    uploaded_files = st.file_uploader("Upload FRAP files", type=['xls', 'xlsx', 'csv'], accept_multiple_files=True, key="single_file_uploader")
+    if uploaded_files:
+        # ... keep the existing single file upload logic here ...
+        new_files_loaded = False
+        for uf in uploaded_files:
+            tp=f"data/{uf.name}_{hash(uf.getvalue())}"
+            if tp not in dm.files:
+                with open(tp,"wb") as f:
+                    f.write(uf.getbuffer())
+                if dm.load_file(tp,uf.name):
+                    st.success(f"✅ Successfully loaded: {uf.name}")
+                    new_files_loaded = True
+                else:
+                    st.error(f"❌ Failed to load: {uf.name}")
+
+        if new_files_loaded:
+            st.info("📂 Files have been processed and are ready for analysis. Use the 'Add Selected Files' section below to assign them to groups.")
+            if st.button("Refresh Interface", type="primary"):
+                st.rerun()
+
+    st.header("Group Setup")
+    with st.form("new_group_form",clear_on_submit=True):
+        new_group_name=st.text_input("Enter New Group Name")
+        if st.form_submit_button("Create Group") and new_group_name:
+            dm.create_group(new_group_name)
+            st.session_state.selected_group_name=new_group_name
+            st.success(f"Group '{new_group_name}' created!")
+            st.rerun()
+
+    if dm.groups:
+        all_groups=list(dm.groups.keys())
+        if st.session_state.selected_group_name not in all_groups:
+            st.session_state.selected_group_name = all_groups[0] if all_groups else None
+
+        def on_group_change():
+            st.session_state.selected_group_name=st.session_state.group_selector_widget
+
+        st.selectbox(
+            "Select Active Group",all_groups,key="group_selector_widget",on_change=on_group_change,
+            index=all_groups.index(st.session_state.selected_group_name) if st.session_state.selected_group_name in all_groups else 0
+        )
+
+        selected_group_name = st.session_state.selected_group_name
+        if selected_group_name:
+            group = dm.groups[selected_group_name]
+
+            # Enhanced group management UI with two-panel layout
+            st.subheader("Group File Management")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Ungrouped Files**")
+                ungrouped_files = [f for f in dm.files if not any(f in g['files'] for g in dm.groups.values())]
+                if ungrouped_files:
+                    selected_files = st.multiselect(
+                        "Select files to add:",
+                        ungrouped_files,
+                        format_func=lambda p: dm.files[p]['name'],
+                        key=f"add_files_to_{selected_group_name}"
+                    )
+                else:
+                    st.info("No ungrouped files available.")
+                    selected_files = []
+
+            with col2:
+                st.markdown(f"**Group: {selected_group_name}**")
+                if group['files']:
+                    st.write(f"Files in group ({len(group['files'])}):")
+                    for file_path in group['files']:
+                        st.write(f"• {dm.files[file_path]['name']}")
+
+                    files_to_remove = st.multiselect(
+                        "Select files to remove:",
+                        group['files'],
+                        format_func=lambda p: dm.files[p]['name'],
+                        key=f"remove_files_from_{selected_group_name}"
+                    )
+                else:
+                    st.info("No files in this group yet.")
+                    files_to_remove = []
+
+            # Action buttons
+            button_col1, button_col2 = st.columns(2)
+            with button_col1:
+                if st.button("Add Selected Files", disabled=len(selected_files) == 0, key=f"btn_add_{selected_group_name}"):
+                    added_count = 0
+                    for file_path in selected_files:
+                        if dm.add_file_to_group(selected_group_name, file_path):
+                            added_count += 1
+                    dm.update_group_analysis(selected_group_name)
+                    st.success(f"Added {added_count} files to {selected_group_name}")
+                    st.rerun()
+
+            with button_col2:
+                if st.button("Remove Selected Files", disabled=len(files_to_remove) == 0, key=f"btn_rm_{selected_group_name}"):
+                    removed_count = 0
+                    for file_path in files_to_remove:
+                        if file_path in group['files']:
+                            group['files'].remove(file_path)
+                            removed_count += 1
+                    dm.update_group_analysis(selected_group_name)
+                    st.success(f"Removed {removed_count} files from {selected_group_name}")
+                    st.rerun()
+
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📥 Import & Preprocess", "📊 Single File Analysis", "📈 Group Analysis", "📊 Multi-Group Comparison", "🖼️ Image Analysis", "💾 Session Management", "⚙️ Settings", "📚 Reference Database"])
+
+with tab0:
+    st.header("📥 Import & Preprocess Data")
+    st.markdown("### Start here to load and organize your FRAP data files")
+    
+    # Create prominent sections for different upload methods
+    upload_method = st.radio(
+        "Choose your upload method:",
+        ["🚀 Bulk Upload (ZIP with Groups - Recommended)", "📄 Individual Files"],
+        help="Bulk upload allows you to organize files into groups automatically using ZIP folder structure"
+    )
+    
+    st.markdown("---")
+    
+    if upload_method == "🚀 Bulk Upload (ZIP with Groups - Recommended)":
+        st.subheader("📦 Bulk Upload: ZIP File with Group Subfolders")
+        st.success("💡 **Recommended for multiple experiments!** Upload a ZIP file where each subfolder becomes a group automatically.")
+        
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            st.markdown("""
+            **Expected ZIP Structure:**
+            ```
+            your_archive.zip
+            ├── Control_Group/
+            │   ├── cell1.xls
+            │   ├── cell2.xls
+            │   └── cell3.xls
+            ├── Treatment_A/
+            │   ├── cell1.xlsx
+            │   └── cell2.xlsx
+            └── Treatment_B/
+                ├── cell1.csv
+                └── cell2.tif
+            ```
+            **How it works:**
+            - Each subfolder in the ZIP becomes a separate group
+            - All files within a subfolder are automatically added to that group
+            - Files are loaded and preprocessed immediately
+            - Supports: `.xls`, `.xlsx`, `.csv`, `.tif`, `.tiff`
+            """)
+        
+        with col2:
+            st.info("""
+            **✨ Benefits:**
+            - ⚡ Fast bulk processing
+            - 📁 Auto group creation
+            - 🗂️ Preserves organization
+            - 📊 Progress tracking
+            - 🎯 Ready for analysis
+            
+            **Perfect for:**
+            - Multiple experimental groups
+            - Large datasets
+            - Organized workflows
+            """)
+        
+        st.markdown("---")
+        uploaded_zip_main = st.file_uploader(
+            "📂 Select your ZIP file containing grouped FRAP data", 
+            type=['zip'], 
+            key="zip_uploader_main",
+            help="Upload a ZIP archive with subfolders - each subfolder becomes a group"
+        )
+    
+        
+        if uploaded_zip_main:
+            zip_file_id_main = f"{uploaded_zip_main.name}_{uploaded_zip_main.size}"
+            
+            st.info(f"📦 **Selected file:** {uploaded_zip_main.name} ({uploaded_zip_main.size / 1024:.1f} KB)")
+            
+            col_btn1, col_btn2, col_btn3 = st.columns([2, 2, 3])
+            with col_btn1:
+                if st.button(f"🚀 Process ZIP Archive", type="primary", width="stretch"):
+                    if zip_file_id_main in st.session_state.processed_zip_files:
+                        st.warning(f"⚠️ This ZIP file has already been processed. Upload a different file or clear groups first.")
+                    else:
+                        with st.spinner(f"🔄 Processing '{uploaded_zip_main.name}'..."):
+                            success = dm.load_groups_from_zip_archive(uploaded_zip_main)
+                            if success:
+                                st.session_state.processed_zip_files.add(zip_file_id_main)
+                                if dm.groups:
+                                    st.success(f"✅ **Success!** Created {len(dm.groups)} groups from ZIP archive")
+                                    
+                                    # Show groups in an expandable section
+                                    with st.expander("📊 View Created Groups", expanded=True):
+                                        for group_name, group_data in dm.groups.items():
+                                            file_count = len(group_data.get('files', []))
+                                            st.markdown(f"**📁 {group_name}**: {file_count} files")
+                                            
+                                    st.balloons()
+                                    st.info("🎯 **Next steps:** Go to 'Group Analysis' tab to analyze your data!")
+                            else:
+                                st.error("❌ Failed to process ZIP archive. Check file structure and formats.")
+            
+            with col_btn2:
+                if st.button("🔄 Upload Different File", width="stretch"):
+                    st.rerun()
+    
+    else:  # Individual Files mode
+        st.subheader("📄 Individual File Upload")
+        st.markdown("Upload individual FRAP data files one at a time. You'll need to assign them to groups manually.")
+        st.warning("💡 **Tip:** For multiple files, consider using the Bulk Upload (ZIP) method instead - it's faster!")
+        
+        uploaded_files_main = st.file_uploader(
+            "Select FRAP data files to upload", 
+            type=['xls', 'xlsx', 'csv', 'tif', 'tiff'], 
+            accept_multiple_files=True, 
+            key="individual_file_uploader_main",
+            help="You can select multiple files at once"
+        )
+        
+        if uploaded_files_main:
+            st.info(f"📂 **Selected {len(uploaded_files_main)} file(s)** for upload")
+            
+            if st.button("📤 Process Selected Files", type="primary", width="stretch"):
+                progress_bar_main = st.progress(0)
+                status_text_main = st.empty()
+                
+                new_files_loaded = False
+                success_files = []
+                failed_files = []
+                
+                for idx, uf in enumerate(uploaded_files_main):
+                    status_text_main.text(f"Processing {idx + 1}/{len(uploaded_files_main)}: {uf.name}")
+                    progress_bar_main.progress((idx + 1) / len(uploaded_files_main))
+                    
+                    file_ext = os.path.splitext(uf.name)[1].lower()
+                    
+                    if file_ext in ['.tif', '.tiff']:
+                        # Handle image files
+                        try:
+                            # Save temporary file
+                            temp_image_path = f"temp_{uf.name}"
+                            with open(temp_image_path, 'wb') as f:
+                                f.write(uf.getbuffer())
+                            
+                            # Process image
+                            analyzer = FRAPImageAnalyzer()
+                            if analyzer.load_image_stack(temp_image_path):
+                                settings = st.session_state.settings
+                                analyzer.pixel_size = settings.get('default_pixel_size', 0.3)
+                                analyzer.time_interval = settings.get('default_time_interval', 1.0)
+                                
+                                bleach_frame, bleach_coords = analyzer.detect_bleach_event()
+                                if bleach_frame is not None and bleach_coords is not None:
+                                    bleach_radius_pixels = int(settings.get('default_bleach_radius', 1.0) / analyzer.pixel_size)
+                                    analyzer.define_rois(bleach_coords, bleach_radius=bleach_radius_pixels)
+                                    intensity_df = analyzer.extract_intensity_profiles()
+                                    intensity_df = intensity_df.rename(columns={'Time': 'time'})
+                                    
+                                    # Save as CSV
+                                    base_name = os.path.splitext(uf.name)[0]
+                                    csv_path = f"data/{base_name}_{hash(uf.getvalue())}.csv"
+                                    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+                                    intensity_df.to_csv(csv_path, index=False)
+                                    
+                                    if dm.load_file(csv_path, base_name):
+                                        success_files.append(uf.name)
+                                        new_files_loaded = True
+                                    else:
+                                        failed_files.append(uf.name)
+                                else:
+                                    failed_files.append(f"{uf.name} (bleach detection failed)")
+                            else:
+                                failed_files.append(f"{uf.name} (failed to load)")
+                            
+                            # Cleanup
+                            if os.path.exists(temp_image_path):
+                                os.remove(temp_image_path)
+                        except Exception as e:
+                            failed_files.append(f"{uf.name} ({str(e)})")
+                    else:
+                        # Handle tabular files
+                        tp = f"data/{uf.name}_{hash(uf.getvalue())}"
+                        if tp not in dm.files:
+                            os.makedirs(os.path.dirname(tp), exist_ok=True)
+                            with open(tp, "wb") as f:
+                                f.write(uf.getbuffer())
+                            if dm.load_file(tp, uf.name):
+                                success_files.append(uf.name)
+                                new_files_loaded = True
+                            else:
+                                failed_files.append(uf.name)
+                        else:
+                            success_files.append(f"{uf.name} (already loaded)")
+                
+                progress_bar_main.empty()
+                status_text_main.empty()
+                
+                if success_files:
+                    st.success(f"✅ Successfully processed {len(success_files)} file(s)")
+                    with st.expander("View successful files"):
+                        for fname in success_files:
+                            st.write(f"✓ {fname}")
+                
+                if failed_files:
+                    st.error(f"❌ Failed to process {len(failed_files)} file(s)")
+                    with st.expander("View failed files"):
+                        for fname in failed_files:
+                            st.write(f"✗ {fname}")
+                
+                if new_files_loaded:
+                    st.info("📂 **Files loaded!** Assign them to groups using the sidebar, then analyze in other tabs.")
+
+with tab1:
+    st.header("Single File Analysis")
+    if dm.files:
+        selected_file_path = st.selectbox("Select file to analyze", list(dm.files.keys()), format_func=lambda p: dm.files[p]['name'])
+        if selected_file_path and selected_file_path in dm.files:
+            file_data=dm.files[selected_file_path]
+            st.subheader(f"Results for: {file_data['name']}")
+            if file_data['best_fit']:
+                best_fit,features=file_data['best_fit'],file_data['features']
+                t_fit,intensity_fit,_=CoreFRAPAnalysis.get_post_bleach_data(file_data['time'],file_data['intensity'])
+
+                # Enhanced metrics display with validation warnings
+                st.markdown("### Kinetic Analysis Results")
+
+                # Check for problematic results and show warnings
+                mobile_frac = features.get('mobile_fraction', 0)
+                if mobile_frac > 100:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) exceeds 100% - this indicates a problem with the analysis")
+                elif mobile_frac < 0:
+                    st.error(f"⚠️ Warning: Mobile fraction ({mobile_frac:.1f}%) is negative - this indicates a problem with the analysis")
+
+                # Check data quality
+                r2 = best_fit.get('r2', 0)
+                if r2 < 0.8:
+                    st.warning(f"⚠️ Warning: Low R² ({r2:.3f}) indicates poor curve fit quality")
+
+                col1,col2,col3,col4=st.columns(4)
+                with col1:
+                    # Display actual mobile fraction without clamping - important for diagnosing issues
+                    # If plateau is 70%, show 70%, not clamp to some arbitrary range
+                    display_mobile = mobile_frac if np.isfinite(mobile_frac) else 0
+                    
+                    # Check for mobile fraction reliability
+                    reliability = features.get('mobile_fraction_reliability', 'unknown')
+                    flags = features.get('mobile_fraction_flags', [])
+                    
+                    # Color-code based on reliability and values
+                    if np.isfinite(mobile_frac):
+                        if reliability == 'high':
+                            st.metric("Mobile Fraction", f"{display_mobile:.1f}%")
+                        else:
+                            # Show with warning for unreliable values
+                            delta_color = "inverse" if mobile_frac > 100 else "normal"
+                            st.metric("Mobile Fraction", f"{display_mobile:.1f}%", 
+                                     delta=f"⚠️ {reliability} reliability",
+                                     help=f"Issues detected: {', '.join(flags) if flags else 'unknown'}")
+                            
+                            if flags:
+                                flag_messages = {
+                                    'over_recovery': 'Over-recovery (>100%) - normalization issue likely',
+                                    'very_high_mobile': 'Very high mobile fraction - check normalization', 
+                                    'very_low_mobile': 'Very low mobile fraction - incomplete recovery?',
+                                    'plateau_not_reached': 'Plateau not reached - data may be truncated'
+                                }
+                                for flag in flags:
+                                    if flag in flag_messages:
+                                        st.caption(f"⚠️ {flag_messages[flag]}")
+                    else:
+                        st.metric("Mobile Fraction", "N/A", help="Could not calculate mobile fraction")
+                with col2:
+                    half_time = features.get('half_time_fast',features.get('half_time',0))
+                    st.metric("Half-time",f"{half_time:.1f} s" if np.isfinite(half_time) and half_time > 0 else "N/A")
+                with col3:
+                    st.metric("R²",f"{r2:.3f}")
+                with col4:
+                    st.metric("Model",best_fit['model'].title())
+
+                # Additional goodness-of-fit metrics
+                col5,col6,col7,col8=st.columns(4)
+                with col5:
+                    aic_val = best_fit.get('aic', np.nan)
+                    st.metric("AIC",f"{aic_val:.1f}" if np.isfinite(aic_val) else "N/A")
+                with col6:
+                    adj_r2_val = best_fit.get('adj_r2', np.nan)
+                    st.metric("Adj. R²",f"{adj_r2_val:.3f}" if np.isfinite(adj_r2_val) else "N/A")
+                with col7:
+                    bic_val = best_fit.get('bic', np.nan)
+                    st.metric("BIC",f"{bic_val:.1f}" if np.isfinite(bic_val) else "N/A")
+                with col8:
+                    red_chi2_val = best_fit.get('red_chi2', np.nan)
+                    st.metric("Red. χ²",f"{red_chi2_val:.3f}" if np.isfinite(red_chi2_val) else "N/A")
+
+                # Add data quality assessment
+                st.markdown("### Data Quality Assessment")
+
+                # Check normalization
+                bleach_idx = np.argmin(file_data['intensity'])
+                if bleach_idx > 0:
+                    pre_bleach_mean = np.mean(file_data['intensity'][:bleach_idx])
+                    post_bleach_min = np.min(file_data['intensity'][bleach_idx:])
+
+                    col_qual1, col_qual2, col_qual3 = st.columns(3)
+                    with col_qual1:
+                        st.metric("Pre-bleach Level", f"{pre_bleach_mean:.3f}")
+                        if not np.isclose(pre_bleach_mean, 1.0, rtol=0.1):
+                            st.warning("Pre-bleach should be ~1.0")
+
+                    with col_qual2:
+                        st.metric("Bleach Depth", f"{post_bleach_min:.3f}")
+                        if post_bleach_min < 0:
+                            st.error("Negative intensities detected")
+
+                    with col_qual3:
+                        bleach_efficiency = (pre_bleach_mean - post_bleach_min) / pre_bleach_mean * 100
+                        st.metric("Bleach Efficiency", f"{bleach_efficiency:.1f}%")
+                        if bleach_efficiency < 10:
+                            st.warning("Low bleach efficiency (<10%)")
+                        elif bleach_efficiency > 90:
+                            st.warning("Very high bleach efficiency (>90%)")
+
+                # Main recovery curve plot with proper FRAP visualization
+                st.markdown("### FRAP Recovery Curve")
+                
+                try:
+                    fig = go.Figure()
+
+                    # Get the bleach frame index and interpolated bleach time
+                    bleach_idx = np.argmin(file_data['intensity'])
+
+                    # Calculate the interpolated bleach time (same as in get_post_bleach_data)
+                    if bleach_idx > 0:
+                        interpolated_bleach_time = (file_data['time'][bleach_idx-1] + file_data['time'][bleach_idx]) / 2.0
+                    else:
+                        interpolated_bleach_time = file_data['time'][bleach_idx]
+
+                    # Pre-bleach data (shown but not fitted)
+                    pre_bleach_time = file_data['time'][:bleach_idx]
+                    pre_bleach_intensity = file_data['intensity'][:bleach_idx]
+
+                    # Add pre-bleach data (gray markers)
+                    if len(pre_bleach_time) > 0:
+                        fig.add_trace(go.Scatter(
+                            x=pre_bleach_time,
+                            y=pre_bleach_intensity,
+                            mode='markers',
+                            name='Pre-bleach (not fitted)',
+                            marker=dict(color='lightgray', size=6, opacity=0.7),
+                            showlegend=True
+                        ))
+
+                    # Convert fitted timepoints back to original time scale for plotting
+                    # t_fit starts from 0, so we add the interpolated bleach time
+                    t_fit_original_scale = t_fit + interpolated_bleach_time
+
+                    # Add post-bleach data (blue markers) - use the actual fitted data points
+                    fig.add_trace(go.Scatter(
+                        x=t_fit_original_scale,
+                        y=intensity_fit,
+                        mode='markers',
+                        name='Post-bleach (fitted)',
+                        marker=dict(color='blue', size=6),
+                        showlegend=True
+                    ))
+
+                    # Add the fitted curve starting from the interpolated point
+                    # Convert fitted curve timepoints to original scale
+                    fig.add_trace(go.Scatter(
+                        x=t_fit_original_scale,
+                        y=best_fit['fitted_values'],
+                        mode='lines',
+                        name=f"Fit: {best_fit['model'].title()}",
+                        line=dict(color='red', width=3),
+                        showlegend=True
+                    ))
+
+                    # Add a vertical line at the interpolated bleach time
+                    # Use the interpolated bleach time we calculated above
+                    bleach_time = interpolated_bleach_time
+                    min_intensity = 0  # Start y-axis from zero
+                    max_intensity = max(np.max(file_data['intensity']), np.max(intensity_fit))
+
+                    fig.add_shape(
+                        type="line",
+                        x0=bleach_time, y0=min_intensity,
+                        x1=bleach_time, y1=max_intensity,
+                        line=dict(color="orange", width=2, dash="dash"),
+                    )
+
+                    # Add annotation for bleach event
+                    fig.add_annotation(
+                        x=bleach_time,
+                        y=max_intensity * 0.9,
+                        text="Bleach Event",
+                        showarrow=True,
+                        arrowhead=2,
+                        arrowcolor="orange",
+                        font=dict(color="orange")
+                    )
+
+                    # Update layout with proper scaling
+                    fig.update_layout(
+                        title='FRAP Recovery Curve',
+                        xaxis_title='Time (s)',
+                        yaxis_title='Normalized Intensity',
+                        height=450,
+                        yaxis=dict(range=[0, max_intensity * 1.05]),  # Start from 0, add 5% headroom
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+
+                    st.plotly_chart(fig, width="stretch")
+                
+                except Exception as e:
+                    st.error(f"❌ Failed to create FRAP recovery curve plot: {str(e)}")
+                    logger.error(f"Plot error: {e}", exc_info=True)
+        
+        # Add explanation text
+        st.markdown("""
+        **Plot Explanation:**
+        - **Gray points**: Pre-bleach data (shown for context, not included in fitting)
+        - **Blue points**: Post-bleach data starting from interpolated bleach point (used for curve fitting)
+        - **Red curve**: Fitted exponential recovery model aligned with post-bleach timepoints
+        - **Orange dashed line**: Interpolated bleach event (midpoint between last pre-bleach and first post-bleach frames)
+        - **Y-axis**: Starts at zero for proper scaling
+        """)
+
+        # Component-wise recovery analysis for multi-component fits
+        if best_fit['model'] in ['double', 'triple']:
+            st.markdown("### Component-wise Recovery Analysis")
+
+            comp_fig = go.Figure()
+
+            # Add original data
+            comp_fig.add_trace(go.Scatter(
+                x=t_fit, y=intensity_fit, mode='markers', name='Data',
+                marker=dict(color='blue', size=4)
+            ))
+
+            # Add total fit
+            comp_fig.add_trace(go.Scatter(
+                x=t_fit, y=best_fit['fitted_values'], mode='lines', name='Total Fit',
+                line=dict(color='red', width=3)
+            ))
+
+            # Calculate and plot individual components  
+            # Note: Using mathematical formulas directly instead of function references
+            # to support session files that may not contain function objects
+            params = best_fit['params']
+
+            if best_fit['model'] == 'double':
+                A1, k1, A2, k2, C = params
+                comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                    line=dict(dash='dot', color='green')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp2, mode='lines', name=f'Slow (k={k2:.4f})',
+                    line=dict(dash='dot', color='purple')
+                ))
+
+            elif best_fit['model'] == 'triple':
+                A1, k1, A2, k2, A3, k3, C = params
+                comp1 = A1 * (1 - np.exp(-k1 * t_fit)) + C
+                comp2 = A2 * (1 - np.exp(-k2 * t_fit)) + C
+                comp3 = A3 * (1 - np.exp(-k3 * t_fit)) + C
+
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp1, mode='lines', name=f'Fast (k={k1:.4f})',
+                    line=dict(dash='dot', color='green')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp2, mode='lines', name=f'Medium (k={k2:.4f})',
+                    line=dict(dash='dot', color='blue')
+                ))
+                comp_fig.add_trace(go.Scatter(
+                    x=t_fit, y=comp3, mode='lines', name=f'Slow (k={k3:.4f})',
+                    line=dict(dash='dot', color='purple')
+                ))
+
+            comp_fig.update_layout(
+                title="Component-wise Recovery Analysis",
+                xaxis_title="Time (s)",
+                yaxis_title="Normalized Intensity",
+                height=400,
+                yaxis=dict(range=[0, np.max(intensity_fit) * 1.05])
+            )
+            st.plotly_chart(comp_fig, width="stretch")
+
+        # Residuals analysis
+        st.markdown("### Residuals Analysis")
+        st.markdown("Random scatter around zero indicates good fit quality. Patterns suggest model inadequacy.")
+
+        if 'fitted_values' in best_fit:
+            residuals=intensity_fit-best_fit['fitted_values']
+            residual_std=np.std(residuals)
+            residual_mean=np.mean(residuals)
+
+            res_fig=go.Figure()
+            res_fig.add_trace(go.Scatter(
+                x=t_fit,y=residuals,mode='markers',
+                marker=dict(color='orange',size=6),name='Residuals',
+                hovertemplate='Time: %{x:.1f}s<br>Residual: %{y:.4f}<extra></extra>'
+            ))
+            res_fig.add_hline(y=0,line_dash="dash",line_color="gray",annotation_text="Zero")
+            res_fig.add_hline(y=2*residual_std,line_dash="dot",line_color="red",annotation_text="+2σ")
+            res_fig.add_hline(y=-2*residual_std,line_dash="dot",line_color="red",annotation_text="-2σ")
+
+            res_fig.update_layout(
+                title=f"Residuals - {best_fit['model'].title()} Model",
+                xaxis_title="Time (s)",yaxis_title="Residuals",height=350,
+                annotations=[dict(x=0.02,y=0.98,xref="paper",yref="paper",
+                                 text=f"Mean: {residual_mean:.4f}<br>Std: {residual_std:.4f}",
+                                 showarrow=False,bgcolor="white",bordercolor="gray",borderwidth=1)]
+            )
+            st.plotly_chart(res_fig, width="stretch")
+
+            # Biophysical parameters
+            st.markdown("### Biophysical Interpretation")
+
+            # Calculate diffusion coefficient and molecular weight estimates
+            features = file_data.get('features')
+            if features is None:
+                features = {}
+            primary_rate=features.get('rate_constant_fast',features.get('rate_constant',0))
+
+            # More robust validation of rate constant
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
+                bleach_radius=st.session_state.settings.get('default_bleach_radius',1.0)
+                pixel_size=st.session_state.settings.get('default_pixel_size',1.0)
+                effective_radius_um=bleach_radius*pixel_size
+
+                # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                # primary_rate is the fitted exponential rate (primary_rate = 1/tau), not 1/t_half.
+                diffusion_coeff=(effective_radius_um**2*primary_rate)/4.0
+
+                # Binding interpretation: k_off = k
+                k_off=primary_rate
+
+                # Molecular weight estimation (relative to GFP)
+                gfp_d=25.0  # μm²/s
+                gfp_mw=27.0  # kDa
+                apparent_mw=gfp_mw*(gfp_d/diffusion_coeff) if diffusion_coeff>0 else 0
+
+                # Validate calculated values
+                if diffusion_coeff > 100:
+                    st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+                if apparent_mw > 10000:
+                    st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
+
+                col_bio1,col_bio2,col_bio3,col_bio4=st.columns(4)
+                with col_bio1:
+                    st.metric("App. D (μm²/s)",f"{diffusion_coeff:.3f}")
+                with col_bio2:
+                    st.metric("k_off (s⁻¹)",f"{k_off:.4f}")
+                with col_bio3:
+                    st.metric("App. MW (kDa)",f"{apparent_mw:.1f}")
+                with col_bio4:
+                    immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                    st.metric("Immobile (%)",f"{immobile_frac:.1f}")
+
+            else:
+                # More informative error message with diagnostic information
+                debug_info = []
+                if primary_rate is None:
+                    debug_info.append("Rate constant is None")
+                elif np.isnan(primary_rate):
+                    debug_info.append("Rate constant is NaN")
+                elif primary_rate <= 0:
+                    debug_info.append(f"Rate constant is non-positive ({primary_rate:.6f})")
+                elif primary_rate <= 1e-8:
+                    debug_info.append(f"Rate constant is too small ({primary_rate:.2e})")
+
+                st.error(f"Cannot calculate biophysical parameters - invalid rate constant: {'; '.join(debug_info)}")
+
+                # Display available parameters for debugging
+                with st.expander("🔍 Debug Information"):
+                    st.write("**Available parameters:**")
+                    for key, value in features.items():
+                        if 'rate' in key.lower() or 'constant' in key.lower():
+                            st.write(f"- {key}: {value}")
+                    st.write("**Model information:**")
+                    if best_fit:
+                        st.write(f"- Model: {best_fit.get('model', 'Unknown')}")
+                        st.write(f"- R²: {best_fit.get('r2', 'N/A')}")
+                        st.write(f"- Parameters: {best_fit.get('params', 'N/A')}")
+
+                    # Show raw fitting parameters for debugging
+                    if 'params' in best_fit:
+                        st.write("**Raw fitting parameters:**")
+                        model = best_fit.get('model', 'unknown')
+                        params_raw = best_fit['params']
+                        if model == 'single' and len(params_raw) >= 3:
+                            A, k, C = params_raw[:3]
+                            st.write(f"- Amplitude (A): {A}")
+                            st.write(f"- Rate constant (k): {k}")
+                            st.write(f"- Offset (C): {C}")
+                            st.write(f"- Mobile population calc: (1 - (A + C)) * 100 = {(1 - (A + C))*100 if np.isfinite(A) and np.isfinite(C) else 'undefined'}")
+                        elif model == 'double' and len(params_raw) >= 5:
+                            A1, k1, A2, k2, C = params_raw[:5]
+                            st.write(f"- A1: {A1}, k1: {k1}")
+                            st.write(f"- A2: {A2}, k2: {k2}")
+                            st.write(f"- Offset (C): {C}")
+                            total_A = A1 + A2
+                            st.write(f"- Total amplitude: {total_A}")
+                            st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+                        elif model == 'triple' and len(params_raw) >= 6:
+                            A1, k1, A2, k2, A3, k3, C = params_raw[:6]
+                            st.write(f"- A1: {A1}, k1: {k1}")
+                            st.write(f"- A2: {A2}, k2: {k2}")
+                            st.write(f"- A3: {A3}, k3: {k3}")
+                            st.write(f"- Offset (C): {C}")
+                            total_A = A1 + A2 + A3
+                            st.write(f"- Total amplitude: {total_A}")
+                            st.write(f"- Mobile population calc: (1 - (ΣA + C)) * 100 = {(1 - (total_A + C))*100 if np.isfinite(total_A) and np.isfinite(C) else 'undefined'}")
+        
+            # Add Reference Database Comparison Widget
+            st.markdown("---")
+            st.markdown("### 📚 Compare to Reference Database")
+
+            # Extract relevant parameters for comparison
+            mobile_frac = features.get('mobile_fraction', None)
+            primary_rate = features.get('rate_constant_fast', features.get('rate_constant', None))
+
+            # Calculate diffusion coefficient if possible
+            deff = None
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 0:
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                effective_radius_um = bleach_radius * pixel_size
+                # primary_rate is the fitted exponential rate (primary_rate = 1/tau), not 1/t_half.
+                deff = (effective_radius_um**2 * primary_rate) / 4.0
+
+            # Display reference comparison widget
+            display_reference_comparison_widget(
+                experimental_deff=deff,
+                experimental_mf=mobile_frac,
+                compartment="Nucleoplasm"  # Default, can be made configurable
+            )
+        else:
+                st.error("Could not determine a best fit for this file.")
+                logger.error(f"DEBUG: No best_fit for file: {file_data.get('name', 'UNKNOWN')}")
+                logger.error(f"DEBUG: File fitted status: {file_data.get('fitted', False)}")
+                logger.error(f"DEBUG: Number of fits attempted: {len(file_data.get('fits', [])) if file_data.get('fits') else 0}")
+
+                # Show debugging information for failed fits
+                if file_data.get('fits'):
+                    st.markdown("### Available Fits (Debug)")
+                    for i, fit in enumerate(file_data['fits']):
+                        st.write(f"**Fit {i+1} ({fit.get('model', 'unknown')}):**")
+                        st.write(f"- R²: {fit.get('r2', 'N/A')}")
+                        st.write(f"- AIC: {fit.get('aic', 'N/A')}")
+                        st.write(f"- Parameters: {fit.get('params', 'N/A')}")
+                else:
+                    st.warning("No fit attempts were made. This might indicate a data loading issue.")
+
+                # Show raw data info
+                st.markdown("### Raw Data Info")
+                st.write(f"- Time points: {len(file_data.get('time', []))}")
+                st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+                if len(file_data.get('time', [])) > 0:
+                    st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+                if len(file_data.get('intensity', [])) > 0:
+                    st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
+
+        # Add biophysical parameters section for successful fits
+        if best_fit:
+            # Biophysical parameters
+            st.markdown("### Biophysical Interpretation")
+
+            # Calculate diffusion coefficient and molecular weight estimates
+            features = file_data.get('features', {})
+            primary_rate = features.get('rate_constant_fast', features.get('rate_constant', 0))
+
+            # More robust validation of rate constant
+            if primary_rate is not None and np.isfinite(primary_rate) and primary_rate > 1e-8:
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                effective_radius_um = bleach_radius * pixel_size
+
+                # Diffusion interpretation: D = (r² × k) / 4 (CORRECTED FORMULA)
+                # primary_rate is the fitted exponential rate (primary_rate = 1/tau), not 1/t_half.
+                diffusion_coeff = (effective_radius_um**2 * primary_rate) / 4.0
+
+                # Binding interpretation: k_off = k
+                k_off = primary_rate
+
+                # Molecular weight estimation (relative to GFP)
+                gfp_d = 25.0  # μm²/s
+                gfp_mw = 27.0  # kDa
+                apparent_mw = gfp_mw * (gfp_d / diffusion_coeff) if diffusion_coeff > 0 else 0
+
+                # Validate calculated values
+                if diffusion_coeff > 100:
+                    st.warning("⚠️ Very high apparent diffusion coefficient - check bleach spot size")
+                if apparent_mw > 10000:
+                    st.warning("⚠️ Very high apparent molecular weight - may indicate aggregation")
+
+                col_bio1, col_bio2, col_bio3, col_bio4 = st.columns(4)
+                with col_bio1:
+                    st.metric("App. D (μm²/s)", f"{diffusion_coeff:.3f}")
+                with col_bio2:
+                    st.metric("k_off (s⁻¹)", f"{k_off:.4f}")
+                with col_bio3:
+                    st.metric("App. MW (kDa)", f"{apparent_mw:.1f}")
+                with col_bio4:
+                    immobile_frac = features.get('immobile_fraction', 100 - display_mobile)
+                    st.metric("Immobile (%)", f"{immobile_frac:.1f}")
+
+                # Extract relevant parameters for reference comparison
+                mobile_frac = features.get('mobile_fraction', None)
+
+                # Display reference comparison widget
+                try:
+                    display_reference_comparison_widget(
+                        experimental_deff=diffusion_coeff,
+                        experimental_mf=mobile_frac,
+                        compartment="Nucleoplasm"  # Default, can be made configurable
+                    )
+                except Exception as e:
+                    logger.warning(f"Reference comparison widget error: {e}")
+                    # Gracefully handle missing reference database functionality
+                    pass
+
+            else:
+                st.error("Cannot calculate biophysical parameters - invalid rate constant")
+            # Show raw data info
+            st.markdown("### Raw Data Info")
+            st.write(f"- Time points: {len(file_data.get('time', []))}")
+            st.write(f"- Intensity points: {len(file_data.get('intensity', []))}")
+            if len(file_data.get('time', [])) > 0:
+                st.write(f"- Time range: {file_data['time'][0]:.2f} - {file_data['time'][-1]:.2f} s")
+            if len(file_data.get('intensity', [])) > 0:
+                st.write(f"- Intensity range: {file_data['intensity'].min():.4f} - {file_data['intensity'].max():.4f}")
+    else:
+        st.info("Upload files using the sidebar to begin.")
+
+with tab2:
+    st.header("Group Analysis")
+    selected_group_name = st.session_state.get('selected_group_name')
+    if selected_group_name and selected_group_name in dm.groups:
+        st.subheader(f"Analysis for Group: {selected_group_name}")
+        group = dm.groups[selected_group_name]
+        if not group['files']:
+            st.warning("This group is empty. Add files from the sidebar.")
+        else:
+            st.markdown("---")
+            st.markdown("### Step 1: Statistical Outlier Removal")
+            dm.update_group_analysis(selected_group_name)
+            features_df=group.get('features_df')
+            excluded_paths=[]
+
+            if features_df is not None and not features_df.empty:
+                # Show automatic outlier detection results
+                auto_outliers = group.get('auto_outliers', [])
+                if auto_outliers:
+                    st.info(f"🤖 **Automatic outlier detection** identified {len(auto_outliers)} potential outliers based on half-time analysis")
+                    with st.expander("View auto-detected outliers"):
+                        for outlier_path in auto_outliers:
+                            if outlier_path in dm.files:
+                                st.write(f"• {dm.files[outlier_path]['name']}")
+
+                # Manual outlier selection with auto-outliers pre-selected
+                opts=[c for c in features_df.select_dtypes(include=np.number).columns if 'fraction' in c or 'rate' in c]
+                defaults=[c for c in ['mobile_fraction','immobile_fraction'] if c in opts]
+
+                col_outlier1, col_outlier2 = st.columns(2)
+                with col_outlier1:
+                    outlier_check_features=st.multiselect("Check for outliers based on:",options=opts,default=defaults)
+                with col_outlier2:
+                    iqr_multiplier=st.slider("Outlier Sensitivity",1.0,3.0,1.5,0.1,help="Lower value = more sensitive.")
+
+                # Combine automatic and manual outlier detection
+                manual_identified = CoreFRAPAnalysis.identify_outliers(features_df,outlier_check_features,iqr_multiplier)
+                all_identified = list(set(auto_outliers + manual_identified))
+
+                excluded_paths=st.multiselect(
+                    "Select files to EXCLUDE (auto-detected outliers are pre-selected):",
+                    options=group['files'],
+                    default=all_identified,
+                    format_func=lambda p:dm.files[p]['name'],
+                    help="Auto-detected outliers are pre-selected. You can add or remove files as needed."
+                )
+
+            dm.update_group_analysis(selected_group_name,excluded_files=excluded_paths)
+            filtered_df=group.get('features_df')
+
+            st.markdown("---")
+            st.markdown("### Step 2: View Group Results")
+            if filtered_df is not None and not filtered_df.empty:
+                st.success(f"Displaying results for **{len(filtered_df)}** of {len(group['files'])} files.")
+                mean_vals=filtered_df.mean(numeric_only=True)
+                st.markdown("#### Overall Fractions")
+                col1,col2=st.columns(2)
+                col1.metric("Average Mobile Fraction",f"{mean_vals.get('mobile_fraction',0):.2f}%")
+                col2.metric("Average Immobile Fraction",f"{mean_vals.get('immobile_fraction',0):.2f}%")
+
+                st.markdown("#### Kinetic Parameters: Dual Interpretation Analysis")
+                st.markdown("Each kinetic rate can represent either diffusion or binding processes:")
+
+                # Get experimental parameters for interpretation
+                bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                effective_radius_um = bleach_radius * pixel_size
+
+                summary_data=[]
+                for name in ['fast','medium','slow']:
+                    prop_mobile_key = f'proportion_of_mobile_{name}'
+                    prop_total_key = f'proportion_of_total_{name}'
+                    rate_key = f'rate_constant_{name}'
+
+                    if prop_mobile_key in mean_vals and not pd.isna(mean_vals.get(prop_mobile_key)):
+                        k_val = mean_vals.get(rate_key, 0)
+
+                        # Get dual interpretation
+                        kinetic_interp = interpret_kinetics(
+                            k_val,
+                            bleach_radius_um=effective_radius_um,
+                            gfp_d=25.0,  # GFP reference
+                            gfp_mw=27.0
+                        )
+
+                        summary_data.append([
+                            name.capitalize(),
+                            mean_vals.get(prop_mobile_key),
+                            mean_vals.get(prop_total_key),
+                            k_val,
+                            mean_vals.get(f'half_time_{name}'),
+                            kinetic_interp['k_off'],
+                            kinetic_interp['diffusion_coefficient'],
+                            kinetic_interp['apparent_mw'],
+                            kinetic_interp['half_time_binding'],
+                            kinetic_interp['half_time_diffusion']
+                        ])
+
+                summary_df = pd.DataFrame(summary_data, columns=[
+                    'Component', 'Of Mobile Pool (%)', 'Of Total Pop. (%)',
+                    'Rate (k)', 'Half-time (s)',
+                    'k_off (1/s)', 'App. D (μm²/s)', 'App. MW (kDa)',
+                    't½ Binding (s)', 't½ Diffusion (s)'
+                ])
+
+                # Display with enhanced formatting
+                st.dataframe(summary_df.set_index('Component').style.format({
+                    'Of Mobile Pool (%)': '{:.1f}%',
+                    'Of Total Pop. (%)': '{:.1f}%',
+                    'Rate (k)': '{:.4f}',
+                    'Half-time (s)': '{:.2f}',
+                    'k_off (1/s)': '{:.4f}',
+                    'App. D (μm²/s)': '{:.3f}',
+                    'App. MW (kDa)': '{:.1f}',
+                    't½ Binding (s)': '{:.2f}',
+                    't½ Diffusion (s)': '{:.2f}'
+                }, na_rep="-"))
+
+                # Add interpretation guide
+                with st.expander("📖 Interpretation Guide"):
+                    st.markdown("""
+                    **Diffusion Interpretation:**
+                    - **App. D**: Apparent diffusion coefficient if recovery is purely diffusion-limited
+                    - **App. MW**: Estimated molecular weight based on diffusion relative to GFP
+                    - **t½ Diffusion**: Half-time for diffusion across the bleach spot
+
+                    **Binding Interpretation:**
+                    - **k_off**: Dissociation rate constant if recovery is binding-limited
+                    - **t½ Binding**: Half-time for molecular dissociation and rebinding
+
+                    **Experimental Parameters Used:**
+                    - Bleach radius: {:.2f} μm
+                    - Pixel size: {:.2f} μm/pixel
+                    - Reference: GFP (D = 25 μm²/s, MW = 27 kDa)
+                    """.format(effective_radius_um, pixel_size))
+
+                # Add comparison metrics
+                st.markdown("#### Biological Interpretation Metrics")
+                if summary_data:
+                    col_interp1, col_interp2, col_interp3 = st.columns(3)
+
+                    # Calculate average diffusion coefficient
+                    avg_d = np.nanmean([row[6] for row in summary_data if not np.isnan(row[6])])
+                    avg_mw = np.nanmean([row[7] for row in summary_data if not np.isnan(row[7])])
+                    avg_koff = np.nanmean([row[5] for row in summary_data if not np.isnan(row[5])])
+
+                    with col_interp1:
+                        st.metric(
+                            "Avg. Apparent D",
+                            f"{avg_d:.3f} μm²/s" if not np.isnan(avg_d) else "N/A",
+                            help="Average diffusion coefficient across all components"
+                        )
+
+                    with col_interp2:
+                        st.metric(
+                            "Avg. Apparent MW",
+                            f"{avg_mw:.1f} kDa" if not np.isnan(avg_mw) else "N/A",
+                            help="Average molecular weight estimate"
+                        )
+
+                    with col_interp3:
+                        st.metric(
+                            "Avg. k_off",
+                            f"{avg_koff:.4f} s⁻¹" if not np.isnan(avg_koff) else "N/A",
+                            help="Average dissociation rate constant"
+                        )
+
+                st.markdown("---")
+                st.markdown("### Step 3: Individual Curve Analysis")
+
+                # Ensure all files in the group are fitted before plotting
+                with st.spinner("Analyzing all curves for plotting..."):
+                    try:
+                        dm.ensure_group_fitted(selected_group_name)
+                        logger.info(f"All files in group '{selected_group_name}' are ensured to be fitted before plotting.")
+                    except AttributeError:
+                        # Fallback if ensure_group_fitted is not available
+                        logger.info(f"Plotting analysis for group '{selected_group_name}'.")
+
+                # Enhanced plot of all individual curves with outliers highlighted
+                st.markdown("#### All Individual Curves (Outliers Highlighted)")
+                fig_indiv = go.Figure()
+
+                group_files_data = {path: dm.files[path] for path in group['files']}
+                logger.info(f"Plotting {len(group_files_data)} total curves for group '{selected_group_name}'.")
+                logger.info(f"{len(excluded_paths)} curves will be highlighted as outliers.")
+
+                for path, file_data in group_files_data.items():
+                    is_outlier = path in excluded_paths
+                    line_color = "rgba(255, 0, 0, 0.7)" if is_outlier else "rgba(100, 100, 100, 0.4)"
+                    line_width = 2 if is_outlier else 1
+
+                    fig_indiv.add_trace(go.Scatter(
+                        x=file_data['time'],
+                        y=file_data['intensity'],
+                        mode='lines',
+                        name=file_data['name'],
+                        line=dict(color=line_color, width=line_width),
+                        legendgroup="outlier" if is_outlier else "included",
+                        showlegend=False,
+                        hovertemplate=f"<b>{file_data['name']}</b><br>" +
+                                    f"Status: {'Outlier' if is_outlier else 'Included'}<br>" +
+                                    "Time: %{x:.2f}s<br>" +
+                                    "Intensity: %{y:.3f}<extra></extra>"
+                    ))
+
+                # Add legend entries manually
+                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+                                             line=dict(color="rgba(100, 100, 100, 0.8)", width=2),
+                                             name="Included", showlegend=True))
+                fig_indiv.add_trace(go.Scatter(x=[None], y=[None], mode='lines',
+                                             line=dict(color="rgba(255, 0, 0, 0.8)", width=2),
+                                             name="Outliers", showlegend=True))
+
+                fig_indiv.update_layout(
+                    title="All Individual Recovery Curves in Group",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Normalized Intensity",
+                    legend_title="File Status",
+                    height=500,
+                    yaxis=dict(range=[0, None])  # Ensure y-axis starts from zero for consistency
+                )
+                st.plotly_chart(fig_indiv, width="stretch")
+
+                # Detailed table of individual kinetics
+                st.markdown("#### Kinetic Parameters for Each File")
+
+                all_features_df = group.get('features_df')
+                if all_features_df is not None and not all_features_df.empty:
+                    # Create a complete dataframe with all files (before filtering)
+                    all_files_data = []
+                    for path in group['files']:
+                        file_data = dm.files[path]
+                        features = file_data.get('features')
+                        
+                        # Handle case where features is None (file not fitted or fitting failed)
+                        if features is None:
+                            features = {}
+
+                        # Get dual interpretation for each file
+                        bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                        pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                        effective_radius_um = bleach_radius * pixel_size
+
+                        # For the primary rate constant (usually fast component)
+                        primary_rate = features.get('rate_constant_fast', features.get('rate_constant', 0))
+                        kinetic_interp = interpret_kinetics(
+                            primary_rate,
+                            bleach_radius_um=effective_radius_um,
+                            gfp_d=25.0,
+                            gfp_mw=27.0
+                        )
+
+                        all_files_data.append({
+                            'File Name': file_data['name'],
+                            'Status': 'Outlier' if path in excluded_paths else 'Included',
+                            'Mobile (%)': features.get('mobile_fraction', np.nan),
+                            'Immobile (%)': features.get('immobile_fraction', np.nan),
+                            'Primary Rate (k)': primary_rate,
+                            'Half-time (s)': features.get('half_time_fast', features.get('half_time', np.nan)),
+                            'k_off (1/s)': kinetic_interp['k_off'],
+                            'App. D (μm²/s)': kinetic_interp['diffusion_coefficient'],
+                            'App. MW (kDa)': kinetic_interp['apparent_mw'],
+                            'Model': features.get('model', 'Unknown'),
+                            'R²': features.get('r2', np.nan)
+                        })
+
+                    detailed_df = pd.DataFrame(all_files_data)
+
+                    # Style the dataframe with outliers highlighted
+                    def highlight_outliers(row):
+                        return ['background-color: #ffcccc' if row['Status'] == 'Outlier' else '' for _ in row]
+
+                    with st.expander("📊 Show Detailed Kinetics Table", expanded=True):
+                        st.dataframe(
+                            detailed_df.style.apply(highlight_outliers, axis=1).format({
+                                'Mobile (%)': '{:.1f}',
+                                'Immobile (%)': '{:.1f}',
+                                'Primary Rate (k)': '{:.4f}',
+                                'Half-time (s)': '{:.2f}',
+                                'k_off (1/s)': '{:.4f}',
+                                'Apparent D (μm²/s)': '{:.3f}',
+                                'Apparent MW (kDa)': '{:.1f}',
+                                'R²': '{:.3f}'
+                            }, na_rep="-"),
+                            width="stretch"
+                        )
+
+                        # Summary statistics
+                        included_data = detailed_df[detailed_df['Status'] == 'Included']
+                        st.markdown("##### Summary Statistics (Included Files Only)")
+
+                        # Add report generation section
+                        st.markdown("---")
+                        st.markdown("### Step 4: Generate Analysis Report")
+                        col_report1, col_report2 = st.columns(2)
+
+                with col_report1:
+                    st.markdown("Generate a detailed analysis report including:")
+                    st.markdown("- Executive summary with outlier analysis")
+                    st.markdown("- Dual-interpretation kinetics results")
+                    st.markdown("- Individual file details with quality assessment")
+                    st.markdown("- Experimental recommendations")
+
+                with col_report2:
+                    if st.button("📄 Generate Report", type="primary"):
+                        try:
+                            # Generate comprehensive report
+                            report_content = generate_markdown_report(
+                                group_name=selected_group_name,
+                                settings=st.session_state.settings,
+                                summary_df=summary_df,
+                                detailed_df=detailed_df,
+                                excluded_count=len(excluded_paths),
+                                total_count=len(group['files'])
+                            )
+
+                            # Provide download button
+                            st.download_button(
+                                label="⬇️ Download Report",
+                                data=report_content,
+                                file_name=f"FRAP_Report_{selected_group_name}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
+                                mime="text/markdown",
+                                help="Download comprehensive analysis report as Markdown file"
+                            )
+
+                            st.success("Report generated successfully! Click Download Report to save.")
+
+                        except Exception as e:
+                            st.error(f"Error generating report: {e}")
+
+                st.markdown("---")
+                st.markdown("### Step 5: Parameter Distribution Analysis")
+
+                # Parameter distribution visualization
+                numeric_cols = [col for col in filtered_df.select_dtypes(include=[np.number]).columns
+                               if col not in ['file_path'] and not filtered_df[col].isna().all()]
+
+                if numeric_cols:
+                    selected_param = st.selectbox(
+                        "Select parameter for distribution analysis:",
+                        numeric_cols,
+                        index=numeric_cols.index('mobile_fraction') if 'mobile_fraction' in numeric_cols else 0
+                    )
+
+                    if selected_param:
+                        # Create parameter distribution plot
+                        param_data = filtered_df.dropna(subset=[selected_param])
+
+                        if len(param_data) > 0:
+                            # Create combined histogram and box plot
+                            from plotly.subplots import make_subplots
+
+                            fig = make_subplots(
+                                rows=2, cols=1,
+                                row_heights=[0.8, 0.2],
+                                subplot_titles=[f"Distribution of {selected_param.replace('_', ' ').title()}", "Box Plot"],
+                                vertical_spacing=0.1
+                            )
+
+                            # Histogram
+                            fig.add_trace(
+                                go.Histogram(
+                                    x=param_data[selected_param],
+                                    nbinsx=min(20, len(param_data)//2 + 1),
+                                    name="Distribution",
+                                    marker_color="teal",
+                                    opacity=0.7
+                                ),
+                                row=1, col=1
+                            )
+
+                            # Box plot
+                            fig.add_trace(
+                                go.Box(
+                                    x=param_data[selected_param],
+                                    name="Statistics",
+                                    marker_color="orange",
+                                    boxpoints="all",
+                                    jitter=0.3,
+                                    pointpos=-1.8
+                                ),
+                                row=2, col=1
+                            )
+
+                            # Add statistics
+                            mean_val = param_data[selected_param].mean()
+                            std_val = param_data[selected_param].std()
+                            median_val = param_data[selected_param].median()
+                            cv_val = (std_val / mean_val) * 100 if mean_val != 0 else 0
+
+                            fig.add_annotation(
+                                x=0.02, y=0.98,
+                                xref="paper", yref="paper",
+                                text=f"Mean: {mean_val:.4f}<br>Std: {std_val:.4f}<br>Median: {median_val:.4f}<br>CV: {cv_val:.1f}%<br>N: {len(param_data)}",
+                                showarrow=False,
+                                bgcolor="white",
+                                bordercolor="gray",
+                                borderwidth=1
+                            )
+
+                            fig.update_layout(
+                                height=500,
+                                showlegend=False
+                            )
+
+                            st.plotly_chart(fig, width="stretch")
+
+                            # Parameter statistics table
+                            stats_data = {
+                                'Statistic': ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Median', 'CV (%)'],
+                                'Value': [
+                                    float(len(param_data)),
+                                    float(mean_val),
+                                    float(std_val),
+                                    float(param_data[selected_param].min()),
+                                    float(param_data[selected_param].max()),
+                                    float(median_val),
+                                    float(cv_val)
+                                ]
+                            }
+
+                            stats_df = pd.DataFrame(stats_data)
+                            # Display with proper formatting
+                            st.dataframe(stats_df, width="stretch")
+                        else:
+                            st.warning("No valid data for selected parameter")
+
+                st.markdown("---")
+                st.markdown("### Step 6: Global Simultaneous Fitting")
+                st.markdown("Perform global fitting with shared kinetic parameters across all traces in the group")
+
+                with st.expander("🌐 Global Simultaneous Fit", expanded=False):
+                    st.markdown("""
+                    **Global fitting** constrains kinetic rate constants to be identical across all traces
+                    while allowing individual amplitudes and offsets. This approach:
+                    - Increases statistical power by pooling data
+                    - Provides more robust parameter estimates
+                    - Enables direct comparison of amplitudes between conditions
+                    """)
+
+                    col_global1, col_global2 = st.columns(2)
+
+                    with col_global1:
+                        global_model = st.selectbox(
+                            "Select model for global fitting:",
+                            ["single", "double", "triple"],
+                            format_func=lambda x: f"{x.title()}-component exponential",
+                            help="Choose the kinetic model for global fitting"
+                        )
+
+                        include_outliers_global = st.checkbox(
+                            "Include outliers in global fit",
+                            value=False,
+                            help="Whether to include previously excluded outliers in global fitting"
+                        )
+
+                    with col_global2:
+                        if st.button("🚀 Run Global Fit", type="primary"):
+                            try:
+                                with st.spinner(f"Performing global {global_model}-component fitting..."):
+                                    # Determine which files to exclude
+                                    files_to_exclude = [] if include_outliers_global else excluded_paths
+
+                                    # Perform global fitting directly using the main data manager
+                                    global_result = dm.fit_group_models(
+                                        selected_group_name,
+                                        model=global_model,
+                                        excluded_files=files_to_exclude
+                                    )
+
+                                    if global_result.get('success', False):
+                                        st.success("✅ Global fitting completed successfully!")
+
+                                        # Display global fit results
+                                        st.markdown("#### Global Fit Results")
+
+                                        # Shared parameters
+                                        shared_params = global_result['shared_params']
+                                        col_param1, col_param2, col_param3 = st.columns(3)
+
+                                        if global_model == 'single':
+                                            with col_param1:
+                                                st.metric("Shared Rate (k)", f"{shared_params['k']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+                                            with col_param3:
+                                                st.metric("Global AIC", f"{global_result['aic']:.1f}")
+
+                                        elif global_model == 'double':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Slow Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Mean R²", f"{global_result['mean_r2']:.3f}")
+
+                                        elif global_model == 'triple':
+                                            with col_param1:
+                                                st.metric("Fast Rate (k₁)", f"{shared_params['k1']:.4f} s⁻¹")
+                                            with col_param2:
+                                                st.metric("Medium Rate (k₂)", f"{shared_params['k2']:.4f} s⁻¹")
+                                            with col_param3:
+                                                st.metric("Slow Rate (k₃)", f"{shared_params['k3']:.4f} s⁻¹")
+
+                                        # Individual amplitudes table
+                                        st.markdown("#### Individual File Amplitudes")
+                                        individual_data = []
+                                        for i, (file_name, params, r2) in enumerate(zip(
+                                            global_result['file_names'],
+                                            global_result['individual_params'],
+                                            global_result['r2_values']
+                                        )):
+                                            row_data = {'File': file_name, 'R²': r2}
+
+                                            if global_model == 'single':
+                                                row_data['Amplitude (A)'] = params['A']
+                                            elif global_model == 'double':
+                                                row_data['Fast Amplitude (A₁)'] = params['A1']
+                                                row_data['Slow Amplitude (A₂)'] = params['A2']
+                                                row_data['Total Amplitude'] = params['A1'] + params['A2']
+                                            elif global_model == 'triple':
+                                                row_data['Fast Amplitude (A₁)'] = params['A1']
+                                                row_data['Medium Amplitude (A₂)'] = params['A2']
+                                                row_data['Slow Amplitude (A₃)'] = params['A3']
+                                                row_data['Total Amplitude'] = params['A1'] + params['A2'] + params['A3']
+
+                                            individual_data.append(row_data)
+
+                                        individual_df = pd.DataFrame(individual_data)
+                                        st.dataframe(individual_df.style.format({
+                                            col: '{:.4f}' for col in individual_df.columns if col not in ['File']
+                                        }), width="stretch")
+
+                                        # Global fit visualization
+                                        st.markdown("#### Global Fit Visualization")
+
+                                        # Create plot showing all traces with global fit
+                                        fig_global = go.Figure()
+
+                                        # Plot individual data and fits
+                                        fitted_curves = global_result['fitted_curves']
+                                        common_time = global_result['common_time']
+
+                                        for i, (file_name, fitted_curve) in enumerate(zip(global_result['file_names'], fitted_curves)):
+                                            # Find original file data
+                                            file_path = None
+                                            for fp in group['files']:
+                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
+                                                    file_path = fp
+                                                    break
+
+                                            if file_path:
+                                                file_data = dm.files[file_path]
+                                                t_post, i_post, _ = CoreFRAPAnalysis.get_post_bleach_data(
+                                                    file_data['time'], file_data['intensity']
+                                                )
+
+                                                # Plot original data
+                                                fig_global.add_trace(go.Scatter(
+                                                    x=t_post, y=i_post,
+                                                    mode='markers',
+                                                    name=f"{file_name} (data)",
+                                                    marker=dict(size=4, opacity=0.6),
+                                                    showlegend=False
+                                                ))
+
+                                                # Plot global fit
+                                                fig_global.add_trace(go.Scatter(
+                                                    x=common_time, y=fitted_curve,
+                                                    mode='lines',
+                                                    name=f"{file_name} (global fit)",
+                                                    line=dict(width=2),
+                                                    showlegend=False
+                                                ))
+
+                                        fig_global.update_layout(
+                                            title=f"Global {global_model.title()}-Component Fit Results",
+                                            xaxis_title="Time (s)",
+                                            yaxis_title="Normalized Intensity",
+                                            height=500
+                                        )
+                                        st.plotly_chart(fig_global, width="stretch")
+
+                                        # Comparison with individual fits
+                                        st.markdown("#### Comparison with Individual Fits")
+                                        comparison_data = []
+
+                                        for file_name in global_result['file_names']:
+                                            # Find corresponding individual fit
+                                            file_path = None
+                                            for fp in group['files']:
+                                                if fp not in files_to_exclude and dm.files[fp]['name'] == file_name:
+                                                    file_path = fp
+                                                    break
+
+                                            if file_path and file_path in dm.files:
+                                                file_data = dm.files[file_path]
+                                                individual_fit = file_data.get('best_fit')
+
+                                                if individual_fit and individual_fit['model'] == global_model:
+                                                    individual_r2 = individual_fit.get('r2', np.nan)
+                                                    global_r2 = global_result['r2_values'][global_result['file_names'].index(file_name)]
+
+                                                    comparison_data.append({
+                                                        'File': file_name,
+                                                        'Individual R²': individual_r2,
+                                                        'Global R²': global_r2,
+                                                        'Δ R²': global_r2 - individual_r2
+                                                    })
+
+                                        if comparison_data:
+                                            comparison_df = pd.DataFrame(comparison_data)
+                                            st.dataframe(comparison_df.style.format({
+                                                'Individual R²': '{:.4f}',
+                                                'Global R²': '{:.4f}',
+                                                'Δ R²': '{:.4f}'
+                                            }), width="stretch")
+
+                                            avg_improvement = comparison_df['Δ R²'].mean()
+                                            if avg_improvement > 0:
+                                                st.success(f"Global fitting improved average R² by {avg_improvement:.4f}")
+                                            else:
+                                                st.info(f"Individual fits performed better on average (Δ R² = {avg_improvement:.4f})")
+
+                                    else:
+                                        st.error(f"❌ Global fitting failed: {global_result.get('error', 'Unknown error')}")
+
+                            except Exception as e:
+                                st.error(f"Error during global fitting: {e}")
+
+                st.markdown("---")
+                st.markdown("### Step 7: Group Recovery Plots")
+                plot_data={path:dm.files[path] for path in filtered_df['file_path'].tolist()}
+                st.markdown("##### Average Recovery Curve")
+                avg_fig = plot_average_curve(plot_data)
+                st.plotly_chart(avg_fig, width="stretch")
+            else:
+                st.warning("No data to display. All files may have been excluded as outliers.")
+    else:
+        st.info("Create and/or select a group from the sidebar to begin analysis.")
+
+with tab3:
+    st.header("📊 Multi-Group Statistical Comparison")
+    st.markdown("Compare kinetic parameters across multiple experimental conditions")
+
+    if len(dm.groups) < 2:
+        st.warning("You need at least 2 groups to perform statistical comparisons.")
+        st.info("Create groups in the sidebar to enable multi-group analysis.")
+    else:
+        # Combine data from all groups
+        all_group_data = []
+        for group_name, group_info in dm.groups.items():
+            if group_info.get('files'):
+                dm.update_group_analysis(group_name)
+                features_df = group_info.get('features_df')
+                if features_df is not None and not features_df.empty:
+                    temp_df = features_df.copy()
+                    temp_df['group'] = group_name
+                    all_group_data.append(temp_df)
+
+        if not all_group_data:
+            st.warning("No processed groups available for comparison.")
+        else:
+            combined_df = pd.concat(all_group_data, ignore_index=True)
+
+            st.markdown("### Parameter Visualization")
+
+            # Parameter selection
+            available_params = [col for col in combined_df.select_dtypes(include=[np.number]).columns
+                              if col not in ['file_path'] and not combined_df[col].isna().all()]
+
+            col_vis1, col_vis2 = st.columns(2)
+            with col_vis1:
+                param_to_plot = st.selectbox(
+                    "Select Parameter for Visualization:",
+                    available_params,
+                    index=available_params.index('mobile_fraction') if 'mobile_fraction' in available_params else 0
+                )
+
+            with col_vis2:
+                plot_type = st.selectbox("Visualization Type:", ["Box Plot", "Violin Plot", "Bar Plot (Mean ± SEM)"])
+
+            # Create visualization
+            if plot_type == "Box Plot":
+                fig = px.box(
+                    combined_df, x='group', y=param_to_plot, color='group',
+                    title=f'Distribution of {param_to_plot} Across Groups',
+                    points="all"
+                )
+            elif plot_type == "Violin Plot":
+                fig = px.violin(
+                    combined_df, x='group', y=param_to_plot, color='group',
+                    title=f'Distribution of {param_to_plot} Across Groups',
+                    box=True, points="all"
+                )
+            else:  # Bar Plot
+                group_stats = combined_df.groupby('group')[param_to_plot].agg(['mean', 'sem']).reset_index()
+                fig = px.bar(
+                    group_stats, x='group', y='mean', color='group',
+                    error_y='sem',
+                    title=f'Mean {param_to_plot} Across Groups (±SEM)'
+                )
+
+            fig.update_xaxes(title="Experimental Group")
+            fig.update_yaxes(title=param_to_plot.replace('_', ' ').title())
+            fig.update_layout(showlegend=False, height=500)
+            st.plotly_chart(fig, width="stretch")
+
+            st.markdown("### Statistical Testing")
+
+            # Statistical comparison options
+            col_stat1, col_stat2 = st.columns(2)
+
+            with col_stat1:
+                if len(dm.groups) == 2:
+                    st.markdown("**Two-Group Comparison**")
+                    group_names = list(dm.groups.keys())
+                    group1_name = st.selectbox("Group 1:", group_names, key="stat_group1")
+                    group2_name = st.selectbox("Group 2:", group_names,
+                                             index=1 if len(group_names) > 1 else 0, key="stat_group2")
+
+                    if st.button("Perform t-test"):
+                        if group1_name != group2_name:
+                            try:
+                                data1 = combined_df[combined_df['group'] == group1_name][param_to_plot].dropna()
+                                data2 = combined_df[combined_df['group'] == group2_name][param_to_plot].dropna()
+
+                                if len(data1) > 1 and len(data2) > 1:
+                                    # Perform Shapiro-Wilk test for normality
+                                    from scipy import stats
+                                    _, p_norm1 = stats.shapiro(data1) if len(data1) <= 5000 else (None, 0.05)
+                                    _, p_norm2 = stats.shapiro(data2) if len(data2) <= 5000 else (None, 0.05)
+
+                                    # Choose appropriate test
+                                    if p_norm1 > 0.05 and p_norm2 > 0.05:
+                                        t_stat, p_value = stats.ttest_ind(data1, data2)
+                                        test_used = "Student's t-test"
+                                    else:
+                                        t_stat, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+                                        test_used = "Mann-Whitney U test"
+
+                                    st.success(f"**{test_used} Results:**")
+                                    st.metric("P-value", f"{p_value:.6f}")
+                                    st.metric("Test Statistic", f"{t_stat:.4f}")
+
+                                    if p_value < 0.001:
+                                        st.success("Highly significant difference (p < 0.001)")
+                                    elif p_value < 0.01:
+                                        st.success("Very significant difference (p < 0.01)")
+                                    elif p_value < 0.05:
+                                        st.success("Significant difference (p < 0.05)")
+                                    else:
+                                        st.info("No significant difference (p ≥ 0.05)")
+                                else:
+                                    st.error("Insufficient data for statistical testing")
+                            except Exception as e:
+                                st.error(f"Error performing statistical test: {e}")
+                        else:
+                            st.error("Please select different groups")
+
+                else:
+                    st.markdown("**Multi-Group Comparison**")
+                    if st.button("Perform ANOVA"):
+                        groups_data = []
+                        group_labels = []
+
+                        for group_name in dm.groups.keys():
+                            group_data = combined_df[combined_df['group'] == group_name][param_to_plot].dropna()
+                            if len(group_data) > 1:
+                                groups_data.append(group_data)
+                                group_labels.append(group_name)
+
+                        if len(groups_data) >= 2:
+                            from scipy import stats
+
+                            # Perform ANOVA
+                            f_stat, p_anova = stats.f_oneway(*groups_data)
+
+                            st.success("**ANOVA Results:**")
+                            st.metric("F-statistic", f"{f_stat:.4f}")
+                            st.metric("P-value", f"{p_anova:.6f}")
+
+                            if p_anova < 0.05:
+                                st.success("Significant group differences detected (p < 0.05)")
+
+                                # Post-hoc pairwise comparisons
+                                st.markdown("**Post-hoc Pairwise Comparisons:**")
+                                pairwise_results = []
+
+                                for i in range(len(groups_data)):
+                                    for j in range(i+1, len(groups_data)):
+                                        _, p_pair = stats.ttest_ind(groups_data[i], groups_data[j])
+                                        # Bonferroni correction
+                                        n_comparisons = len(groups_data) * (len(groups_data) - 1) // 2
+                                        p_corrected = min(p_pair * n_comparisons, 1.0)
+
+                                        pairwise_results.append({
+                                            'Group 1': group_labels[i],
+                                            'Group 2': group_labels[j],
+                                            'P-value': p_pair,
+                                            'P-corrected': p_corrected,
+                                            'Significant': 'Yes' if p_corrected < 0.05 else 'No'
+                                        })
+
+                                pairwise_df = pd.DataFrame(pairwise_results)
+                                st.dataframe(pairwise_df.style.format({
+                                    'P-value': '{:.6f}',
+                                    'P-corrected': '{:.6f}'
+                                }))
+                            else:
+                                st.info("No significant group differences detected (p ≥ 0.05)")
+                        else:
+                            st.error("Need at least 2 groups with sufficient data")
+
+            with col_stat2:
+                st.markdown("**Effect Size Analysis**")
+                if len(dm.groups) >= 2:
+                    group_summary = combined_df.groupby('group')[param_to_plot].agg(['count', 'mean', 'std']).round(4)
+                    st.dataframe(group_summary)
+
+                    # Calculate Cohen's d for two-group comparison
+                    if len(dm.groups) == 2:
+                        groups = list(dm.groups.keys())
+                        data1 = combined_df[combined_df['group'] == groups[0]][param_to_plot].dropna()
+                        data2 = combined_df[combined_df['group'] == groups[1]][param_to_plot].dropna()
+
+                        if len(data1) > 1 and len(data2) > 1:
+                            # Cohen's d calculation
+                            pooled_std = np.sqrt(((len(data1)-1)*data1.var() + (len(data2)-1)*data2.var()) / (len(data1)+len(data2)-2))
+                            cohens_d = (data1.mean() - data2.mean()) / pooled_std
+
+                            st.metric("Cohen's d", f"{cohens_d:.3f}")
+
+                            if abs(cohens_d) < 0.2:
+                                effect_size = "Small"
+                            elif abs(cohens_d) < 0.8:
+                                effect_size = "Medium"
+                            else:
+                                effect_size = "Large"
+
+
+                            st.info(f"Effect size: {effect_size}")
+
+            st.markdown("### Summary Statistics Table")
+            summary_stats = combined_df.groupby('group')[available_params].agg(['count', 'mean', 'std', 'sem']).round(4)
+            st.dataframe(summary_stats)
+
+            st.markdown("---")
+            st.markdown("### Automated PDF Report Generation")
+
+            col_pdf1, col_pdf2 = st.columns([2, 1])
+
+            with col_pdf1:
+                st.markdown("Generate a comprehensive statistical analysis report including:")
+                st.markdown("- Executive summary with group comparisons")
+                st.markdown("- Statistical test results (t-tests, ANOVA, effect sizes)")
+                st.markdown("- Publication-ready visualizations and tables")
+                st.markdown("- Detailed results for each experimental group")
+
+            with col_pdf2:
+                # Group selection for PDF report
+                selected_groups_pdf = st.multiselect(
+                    "Select groups for PDF report:",
+                    options=list(dm.groups.keys()),
+                    default=list(dm.groups.keys()),
+                    help="Choose which groups to include in the comprehensive report"
+                )
+
+                if st.button("📄 Generate PDF Report", type="primary", disabled=len(selected_groups_pdf) < 2):
+                    if len(selected_groups_pdf) >= 2:
+                        try:
+                            with st.spinner("Generating comprehensive PDF report..."):
+                                # Generate the PDF report
+                                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                                pdf_filename = f"FRAP_Statistical_Report_{timestamp}.pdf"
+
+                                # Call the PDF report generator
+                                output_file = generate_pdf_report(
+                                    data_manager=dm,
+                                    groups_to_compare=selected_groups_pdf,
+                                    output_filename=pdf_filename,
+                                    settings=st.session_state.settings
+                                )
+
+                                # Read the generated PDF file
+                                with open(output_file, 'rb') as pdf_file:
+                                    pdf_data = pdf_file.read()
+
+                                # Provide download button
+                                st.download_button(
+                                    label="⬇️ Download PDF Report",
+                                    data=pdf_data,
+                                    file_name=pdf_filename,
+                                    mime="application/pdf",
+                                    help="Download comprehensive statistical analysis report"
+                                )
+
+                                st.success("PDF report generated successfully!")
+                                st.info(f"Report includes {len(selected_groups_pdf)} groups with comprehensive statistical analysis")
+
+                                # Clean up temporary file
+                                os.remove(output_file)
+
+                        except Exception as e:
+                            st.error(f"Error generating PDF report: {e}")
+                            st.error("Please ensure all selected groups have processed data")
+                    else:
+                        st.warning("Select at least 2 groups for statistical comparison")
+
+with tab4:
+    # Use the comprehensive image analysis interface
+    create_image_analysis_interface(dm)
+
+with tab5:
+    st.header("💾 Session Management & Data Export")
+    st.markdown("Save your analysis session and export results to various formats")
+
+    col_session1, col_session2 = st.columns(2)
+
+    with col_session1:
+        st.subheader("Session Management")
+
+        # Session save functionality
+        if st.button("💾 Save Current Session", type="primary"):
+            try:
+                import pickle
+                from datetime import datetime
+
+                def sanitize_for_pickle(data):
+                    """Remove unpickleable objects like function references"""
+                    if isinstance(data, dict):
+                        sanitized = {}
+                        for key, value in data.items():
+                            if key == 'func':  # Skip function objects
+                                continue
+                            elif callable(value):  # Skip any callable objects
+                                continue
+                            else:
+                                sanitized[key] = sanitize_for_pickle(value)
+                        return sanitized
+                    elif isinstance(data, list):
+                        return [sanitize_for_pickle(item) for item in data]
+                    elif isinstance(data, tuple):
+                        return tuple(sanitize_for_pickle(item) for item in data)
+                    else:
+                        return data
+
+                # Sanitize the data to remove unpickleable objects
+                sanitized_files = sanitize_for_pickle(dm.files)
+                sanitized_groups = sanitize_for_pickle(dm.groups)
+
+                session_data = {
+                    'files': sanitized_files,
+                    'groups': sanitized_groups,
+                    'settings': st.session_state.settings,
+                    'timestamp': datetime.now().isoformat(),
+                    'version': '1.0'
+                }
+
+                session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                session_bytes = pickle.dumps(session_data)
+
+                st.download_button(
+                    label="⬇️ Download Session File",
+                    data=session_bytes,
+                    file_name=session_filename,
+                    mime="application/octet-stream",
+                    help="Save current analysis session for later"
+                )
+
+                st.success(f"Session prepared for download: {len(dm.files)} files, {len(dm.groups)} groups")
+
+            except Exception as e:
+                st.error(f"Error saving session: {e}")
+
+        # Session load functionality
+        st.markdown("### Load Previous Session")
+        uploaded_session = st.file_uploader(
+            "Upload session file (.pkl)",
+            type=['pkl'],
+            help="Load a previously saved analysis session"
+        )
+
+        if uploaded_session is not None:
+            if st.button("📂 Load Session", type="secondary"):
+                try:
+                    import pickle
+                    session_data = pickle.load(uploaded_session)
+
+                    # Validate session data
+                    required_keys = ['files', 'groups', 'settings']
+                    if all(key in session_data for key in required_keys):
+                        # Load session data
+                        new_dm = FRAPDataManager()
+                        new_dm.files = session_data['files']
+                        new_dm.groups = session_data['groups']
+
+                        st.session_state.data_manager = new_dm
+                        st.session_state.settings.update(session_data['settings'])
+
+                        st.success(f"Session loaded successfully!")
+                        st.info(f"Loaded: {len(new_dm.files)} files, {len(new_dm.groups)} groups")
+                        st.info(f"Session from: {session_data.get('timestamp', 'Unknown')}")
+                        st.rerun()
+                    else:
+                        st.error("Invalid session file format")
+
+                except Exception as e:
+                    st.error(f"Error loading session: {e}")
+
+    with col_session2:
+        st.subheader("Data Export")
+
+        if dm.groups:
+            # Excel export functionality
+            if st.button("📊 Export to Excel", type="primary"):
+                try:
+                    import io
+
+                    # Create comprehensive export data
+                    export_data = []
+
+                    # Summary sheet data
+                    summary_data = {
+                        'Analysis_Summary': {
+                            'Generated': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'Total_Groups': len(dm.groups),
+                            'Total_Files': len(dm.files)
+                        }
+                    }
+
+                    # Group data
+                    for group_name, group_info in dm.groups.items():
+                        if group_info.get('files'):
+                            dm.update_group_analysis(group_name)
+                            features_df = group_info.get('features_df')
+                            if features_df is not None and not features_df.empty:
+                                group_export = []
+
+                                for _, row in features_df.iterrows():
+                                    file_path = row.get('file_path', '')
+                                    file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+
+                                    # Get dual interpretation
+                                    primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                    bleach_radius = st.session_state.settings.get('default_bleach_radius', 1.0)
+                                    pixel_size = st.session_state.settings.get('default_pixel_size', 1.0)
+                                    effective_radius_um = bleach_radius * pixel_size
+
+                                    kinetic_interp = interpret_kinetics(
+                                        primary_rate,
+                                        bleach_radius_um=effective_radius_um,
+                                        gfp_d=25.0,
+                                        gfp_mw=27.0
+                                    )
+
+                                    group_export.append({
+                                        'File_Name': file_name,
+                                        'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                        'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                        'Rate_Constant_k': primary_rate,
+                                        'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                        'k_off_per_second': kinetic_interp['k_off'],
+                                        'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                        'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                        'Model': row.get('model', 'Unknown'),
+                                        'R²': row.get('r2', np.nan)
+                                    })
+
+                                summary_data[f'Group_{group_name}'] = group_export
+
+                    # Create Excel file using pandas
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        # Summary sheet
+                        summary_df = pd.DataFrame([summary_data['Analysis_Summary']])
+                        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+
+                        # Individual group sheets
+                        for sheet_name, data in summary_data.items():
+                            if sheet_name.startswith('Group_'):
+                                group_df = pd.DataFrame(data)
+                                group_df.to_excel(writer, sheet_name=sheet_name[:31], index=False)  # Excel sheet name limit
+
+                        # Settings sheet
+                        settings_df = pd.DataFrame(list(st.session_state.settings.items()),
+                                                 columns=['Parameter', 'Value'])
+                        settings_df.to_excel(writer, sheet_name='Settings', index=False)
+
+                    excel_buffer.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Excel File",
+                        data=excel_buffer.getvalue(),
+                        file_name=f"FRAP_Analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        help="Download complete analysis results as Excel workbook"
+                    )
+
+                    st.success("Excel export prepared for download!")
+
+                except Exception as e:
+                    st.error(f"Error creating Excel export: {e}")
+
+            st.markdown("### Export Collated Datasets")
+            collated_df = dm.collate_group_datasets()
+            if collated_df.empty:
+                st.info("No collated datasets available yet. Add files to groups to enable export.")
+            else:
+                collated_csv = collated_df.to_csv(index=False)
+                st.download_button(
+                    label="⬇️ Download Collated Dataset (CSV)",
+                    data=collated_csv,
+                    file_name=f"FRAP_All_Groups_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    help="Download all group-associated recovery curves in a single CSV file"
+                )
+                st.caption("Each row represents a timepoint from a recovery curve and includes group and fit metadata.")
+
+            # CSV export for individual groups
+            st.markdown("### Export Individual Groups")
+            if dm.groups:
+                selected_export_group = st.selectbox("Select group to export as CSV:", list(dm.groups.keys()))
+
+                if st.button("📄 Export Group as CSV"):
+                    group_info = dm.groups[selected_export_group]
+                    if group_info.get('files'):
+                        features_df = group_info.get('features_df')
+                        if features_df is not None and not features_df.empty:
+                            # Prepare CSV data with dual interpretation
+                            export_data = []
+                            for _, row in features_df.iterrows():
+                                file_path = row.get('file_path', '')
+                                file_name = dm.files.get(file_path, {}).get('name', 'Unknown')
+
+                                primary_rate = row.get('rate_constant_fast', row.get('rate_constant', 0))
+                                kinetic_interp = interpret_kinetics(
+                                    primary_rate,
+                                    bleach_radius_um=st.session_state.settings.get('default_bleach_radius', 1.0) *
+                                                   st.session_state.settings.get('default_pixel_size', 1.0),
+                                    gfp_d=25.0,
+                                    gfp_mw=27.0
+                                )
+
+                                export_data.append({
+                                    'File_Name': file_name,
+                                    'Mobile_Fraction_Percent': row.get('mobile_fraction', np.nan),
+                                    'Immobile_Fraction_Percent': row.get('immobile_fraction', np.nan),
+                                    'Rate_Constant_k': primary_rate,
+                                    'Half_Time_seconds': row.get('half_time_fast', row.get('half_time', np.nan)),
+                                    'k_off_per_second': kinetic_interp['k_off'],
+                                    'Apparent_D_um2_per_s': kinetic_interp['diffusion_coefficient'],
+                                    'Apparent_MW_kDa': kinetic_interp['apparent_mw'],
+                                    'Model': row.get('model', 'Unknown'),
+                                    'R_squared': row.get('r2', np.nan)
+                                })
+
+                            export_df = pd.DataFrame(export_data)
+                            csv_data = export_df.to_csv(index=False)
+
+                            st.download_button(
+                                label="⬇️ Download CSV",
+                                data=csv_data,
+                                file_name=f"FRAP_{selected_export_group}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                help="Download group data as CSV file"
+                            )
+
+                            st.success(f"CSV export for {selected_export_group} prepared!")
+                        else:
+                            st.warning("No data available for export in selected group")
+                    else:
+                        st.warning("Selected group is empty")
+        else:
+            st.info("No groups available for export. Create and analyze groups first.")
+
+    st.markdown("---")
+    st.markdown("### Current Session Status")
+
+    col_status1, col_status2, col_status3 = st.columns(3)
+
+    with col_status1:
+        st.metric("Loaded Files", len(dm.files))
+
+    with col_status2:
+        st.metric("Created Groups", len(dm.groups))
+
+    with col_status3:
+        total_processed = sum(1 for group in dm.groups.values()
+                            if group.get('features_df') is not None and not group['features_df'].empty)
+        st.metric("Processed Groups", total_processed)
+
+    st.markdown("---")
+    # st.markdown("### Debug Package Generation")
+    # st.markdown("Create a comprehensive package for external debugging and deployment")
+
+    # col_debug1, col_debug2 = st.columns([2, 1])
+
+    # with col_debug1:
+    #     st.markdown("**Debug package includes:**")
+    #     st.markdown("- Complete source code and documentation")
+    #     st.markdown("- Installation scripts for Windows and Unix")
+    #     st.markdown("- Sample data files and test suite")
+    #     st.markdown("- Docker configuration for containerized deployment")
+    #     st.markdown("- Streamlit configuration files")
+
+    # with col_debug2:
+    #     if st.button("📦 Create Debug Package", type="primary"):
+    #         try:
+    #             with st.spinner("Creating comprehensive debug package..."):
+    #                 # Import and run the debug package creator
+    #                 from create_debug_package import create_debug_package
+    #                 package_file, summary = create_debug_package()
+
+    #                 # Read the package file
+    #                 with open(package_file, 'rb') as f:
+    #                     package_data = f.read()
+
+    #                 # Provide download button
+    #                 st.download_button(
+    #                     label="⬇️ Download Debug Package",
+    #                     data=package_data,
+    #                     file_name=package_file,
+    #                     mime="application/zip",
+    #                     help="Download complete debug package with all source code and documentation"
+    #                 )
+
+    #                 st.success("Debug package created successfully!")
+    #                 st.info(f"Package size: {len(package_data) / 1024 / 1024:.1f} MB")
+
+    #                 # Clean up temporary file
+    #                 os.remove(package_file)
+    #         except Exception as e:
+    #             st.error(f"Error creating debug package: {e}")
+    #             st.error("Please contact support for assistance")
+
+with tab6:
+    st.subheader("Application Settings")
+    st.markdown("### General Settings")
+    col_gen1,col_gen2=st.columns(2)
+    with col_gen1:
+        default_criterion=st.selectbox(
+            "Default Model Selection Criterion",['aic','r2'],
+            index=['aic','r2'].index(st.session_state.settings['default_criterion']),
+            format_func=lambda x:{'aic':'Akaike Information Criterion (AIC)','r2':'R-squared'}[x]
+        )
+        decimal_places=st.number_input("Decimal Places in Results",value=st.session_state.settings['decimal_places'],min_value=0,max_value=6,step=1)
+    with col_gen2:
+        default_gfp_diffusion=st.number_input("Default GFP Diffusion (μm²/s)",value=st.session_state.settings['default_gfp_diffusion'],min_value=1.0,step=1.0)
+        default_gfp_rg=st.number_input("Default GFP Radius of Gyration (nm)",value=st.session_state.settings['default_gfp_rg'],min_value=0.1,step=0.01)
+
+    st.markdown("### Experimental Parameters")
+    st.markdown("Configure physical parameters for dual-interpretation kinetics analysis:")
+
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        default_bleach_radius=st.number_input("Bleach Radius (pixels)",value=st.session_state.settings['default_bleach_radius'],min_value=0.1,step=0.1,help="Radius of photobleached region")
+        default_pixel_size=st.number_input("Pixel Size (μm/pixel)",value=st.session_state.settings['default_pixel_size'],min_value=0.01,step=0.01,help="Physical size of camera pixel")
+        default_target_mw=st.number_input("Target Protein MW (kDa)",value=st.session_state.settings['default_target_mw'],min_value=1.0,step=1.0,help="Expected molecular weight for comparison")
+    with col_exp2:
+        default_scaling_alpha=st.number_input("Scaling Factor (α)",value=st.session_state.settings['default_scaling_alpha'],min_value=0.1,step=0.1,help="Correction factor for diffusion calculations")
+        effective_bleach_size = default_bleach_radius * default_pixel_size
+        st.metric("Effective Bleach Size", f"{effective_bleach_size:.2f} μm", help="Physical size of bleach spot")
+
+        # Reference protein parameters
+        st.markdown("**Reference Protein (GFP):**")
+        st.text(f"D = {st.session_state.settings['default_gfp_diffusion']:.1f} μm²/s")
+        st.text("MW = 27 kDa")
+
+    st.markdown("### Advanced Curve Fitting Options")
+    col_fit1, col_fit2 = st.columns(2)
+
+    with col_fit1:
+        # fitting_method = st.selectbox(
+        #     "Curve Fitting Method",
+        #     ["least_squares", "robust", "bayesian"],
+        #     index=0,
+        #     format_func=lambda x: {
+        #         "least_squares": "Standard Least Squares",
+        #         "robust": "Robust Fitting (outlier resistant)",
+        #         "bayesian": "Bayesian MCMC (full uncertainty)"
+        #     }[x],
+        #     help="Choose fitting algorithm for kinetic analysis"
+        # )
+        st.info("Advanced fitting methods (Robust, Bayesian) are planned for a future release.")
+        fitting_method = "least_squares" # Hardcode to the only implemented method
+
+        max_iterations = st.number_input(
+            "Max Fitting Iterations",
+            value=2000,
+            min_value=100,
+            max_value=10000,
+            step=100,
+            help="Maximum iterations for curve fitting convergence"
+        )
+
+    with col_fit2:
+        parameter_bounds = st.checkbox(
+            "Use Parameter Bounds",
+            value=True,
+            help="Constrain parameters to physically reasonable ranges"
+        )
+
+    # confidence_intervals = st.checkbox(
+    #     "Calculate Confidence Intervals",
+    #     value=False,
+    #     help="Calculate confidence intervals for fitted parameters (computationally intensive)"
+    # )
+
+    # bootstrap_samples = st.number_input(
+    #     "Bootstrap Samples for CI",
+    #     value=1000,
+    #     min_value=100,
+    #     max_value=10000,
+    #     step=100,
+    #     help="Number of bootstrap samples for confidence interval calculation",
+    #     disabled=not confidence_intervals
+    # )
+    confidence_intervals = False # Hardcode to false
+    bootstrap_samples = 1000
+
+if st.button("Apply Settings", type="primary"):
+    st.session_state.settings.update({
+        'default_criterion': default_criterion, 'default_gfp_diffusion': default_gfp_diffusion, 'default_gfp_rg': default_gfp_rg,
+        'default_bleach_radius': default_bleach_radius, 'default_pixel_size': default_pixel_size,
+        'default_scaling_alpha': default_scaling_alpha, 'default_target_mw': default_target_mw, 'decimal_places': decimal_places,
+        'fitting_method': fitting_method, 'max_iterations': max_iterations,
+        'parameter_bounds': parameter_bounds, 'confidence_intervals': confidence_intervals,
+        'bootstrap_samples': bootstrap_samples
+    })
+    st.success("Settings applied successfully.")
+    st.rerun()
+
+    st.markdown("### Data Management")
+    if st.checkbox("I understand that this will DELETE all loaded data and groups."):
+        if st.button("Clear All Data", type="secondary"):
+            st.session_state.data_manager = FRAPDataManager()
+            st.session_state.selected_group_name = None
+            st.success("All data cleared successfully.")
+            st.rerun()
+
+with tab7:
+    # Reference Database Tab
+    try:
+        display_reference_database_ui()
+    except Exception as e:
+        st.error(f"Reference database functionality not available: {e}")
+        st.info("This feature provides access to a comprehensive database of protein mobility values for comparison with experimental results.")

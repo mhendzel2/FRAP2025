@@ -9,6 +9,7 @@ output/
 # Debug and logs
 debug.log
 *.log
+.coverage*
 
 # Version markers
 0.3.1
@@ -33,9 +34,11 @@ ENV/
 *.nd2
 *.lif
 *.czi
+!sample_data/*.tif
+!sample_data/*.tiff
 
 # Data policy
-data/
+data/*
 !data/README.md
 
 # IDE / tool artifacts
@@ -57,3 +60,6 @@ Thumbs.db
 callgraph_inventory.json
 markdown_index.json
 
+# Dev script outputs
+scripts/dev/output/
+scripts/dev/*.tmp

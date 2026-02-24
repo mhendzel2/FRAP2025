@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software in published research, please cite it."
+title: "FRAP2025: A Fluorescence Recovery After Photobleaching Analysis Platform"
+version: 0.3.1
+authors:
+  - family-names: Hendzel
+    given-names: Michael
+    affiliation: "Department of Oncology, University of Alberta"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+repository-code: "https://github.com/mhendzel2/FRAP2025"
+license: MIT
+keywords:
+  - FRAP
+  - fluorescence microscopy
+  - chromatin dynamics
+  - nuclear biology
+  - biophysics
+  - cell biology

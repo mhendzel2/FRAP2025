@@ -1,36 +1,25 @@
-matplotlib>=3.7.0
-numpy>=1.24.0
-opencv-python>=4.8.0
-openpyxl>=3.1.0
-pandas>=2.0.0
-plotly>=5.15.0
-psycopg2-binary>=2.9.0
-reportlab>=4.0.0
-pillow>=10.0.0
-roifile>=2023.1.26
-scikit-image>=0.21.0
-scikit-learn>=1.3.0
-scipy>=1.10.0
-seaborn>=0.12.0
-sqlalchemy>=2.0.0
-streamlit==1.28.0  # Pinned: v1.50+ has compatibility issues with tornado and typing modules
-tornado==6.4.1  # Pinned: v6.1 has typing issues, v6.5+ has WebSocketHandler init signature changes
-tifffile>=2023.7.0
-xlrd>=2.0.1
-xlsxwriter>=3.1.0
-markdown>=3.3.0
-kaleido>=0.2.1
-statsmodels>=0.14.0
-pingouin>=0.5.3
-jinja2>=3.1.0
-lmfit>=1.2.2
-streamlit-sortables>=0.3.1
-# Single-cell analysis extensions
-dabest>=2023.2.14
-joblib>=1.3.0
-filterpy>=1.4.5
-pymc>=5.10.0
-pytest>=7.4.0
-pyarrow>=14.0.0
-emcee>=3.1.4  # MCMC sampler for Bayesian fitting
-corner>=2.2.2  # Corner plots for MCMC visualization
+# Pinned runtime requirements generated from pyproject.toml
+streamlit==1.28.0
+pandas==2.0.0
+numpy==1.25.0
+scipy==1.11.0
+matplotlib==3.8.0
+plotly==5.17.0
+seaborn==0.13.0
+scikit-image==0.22.0
+opencv-python==4.8.0.76
+tifffile==2023.7.10
+openpyxl==3.1.0
+xlsxwriter==3.1.0
+scikit-learn==1.3.0
+sqlalchemy==2.0.0
+reportlab==4.0.0
+PyYAML==6.0.1
+
+# Optional advanced stack (install manually as needed):
+# torch>=2.3
+# torchvision>=0.18
+# POT>=0.9.4
+# pyro-ppl>=1.9
+# scikit-image>=0.23
+# scipy>=1.13

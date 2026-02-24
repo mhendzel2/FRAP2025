@@ -1,46 +1,47 @@
-# Changelog - FRAP Analysis Platform
+# Changelog
 
-## Version: Corrected Release
+## [0.3.1] - 2026-02-23
 
-### Critical Fixes
-- **FIXED**: Diffusion coefficient calculation now uses correct formula D = (w² × k) / 4
-- **REMOVED**: Erroneous np.log(2) factor from diffusion calculations
-- **UNIFIED**: All modules now use centralized kinetics interpretation function
-- **VERIFIED**: Mathematical accuracy against published literature
+### Added
 
-### Dependency Updates
-- Added missing dependencies: scikit-learn, sqlalchemy, psycopg2-binary
-- Updated requirements.txt with specific version ranges
-- Fixed installation scripts for cross-platform compatibility
+- New package namespace `frap2025/` with structured subpackages:
+  - `core`, `io`, `image`, `stats`, `reports`, `database`, `calibration`, `ui`
+- Physics validation suite under `tests/`:
+  - `tests/test_physics.py` (includes `verify_diffusion_formula()`)
+  - `tests/test_fitting.py`, `tests/test_normalization.py`, `tests/test_statistics.py`
+- Formula audit report:
+  - `FORMULA_AUDIT_RESULT.md`
+  - `docs/development/formula_audit.md`
+- CI workflow:
+  - `.github/workflows/ci.yml`
+- Citation/release metadata:
+  - `CITATION.cff`, `.zenodo.json`, `.github/workflows/release.yml`
 
-### Code Quality Improvements
-- Eliminated code duplication in kinetics interpretation
-- Centralized mathematical functions in frap_core_corrected.py.py
-- Enhanced error handling and validation
-- Improved documentation and comments
+### Changed
 
-### Scientific Accuracy
-- Diffusion coefficient calculations now publication-ready
-- Molecular weight estimations corrected
-- Kinetic interpretations mathematically consistent
-- All formulas verified against FRAP literature
+- Corrected packaging backend in `pyproject.toml` to `setuptools.build_meta`.
+- Implemented audited fitting engine in `frap2025/core/frap_fitting.py`:
+  - single, double, triple, Soumpasis, and reaction-diffusion fits
+  - `FRAPFitResult` dataclass with uncertainty fields
+  - explicit diffusion-conversion convention comments (`k_s = 1/tau_s`)
+- Added explicit normalization entrypoint in `frap2025/core/frap_core.py`:
+  - `normalize_frap_curve(..., mode="simple"|"double"|"full_scale")`
+- Implemented model ranking in `frap2025/core/frap_advanced_fitting.py` with AIC/BIC and ΔAIC interpretation.
+- Added BH FDR implementation and automatic test selection in `frap2025/stats/frap_group_stats.py`.
+- Added image-analysis helpers for bleach radius, drift correction, pre-bleach photobleaching detection, and multi-ROI extraction.
 
-### Files Modified
-- streamlit_frap_final.py: Updated kinetics interpretation
-- frap_core_corrected.py.py: Added centralized kinetics function
-- frap_pdf_reports.py: Uses centralized kinetics function
-- All installation scripts: Updated dependencies
+### Fixed
 
-### Testing
-- Mathematical formulas verified
-- Cross-platform installation tested
-- Sample data analysis validated
-- Report generation confirmed
+- Diffusion formula audit validated by synthetic, noise-free fits.
+- Build/install blocker (`setuptools.backends.legacy`) resolved.
+- Generated reports/log/version marker files are now ignored and untracked from git.
 
-### Mobile/Immobile Fraction Correction (Unreleased)
-- Corrected definitions: mobile fraction now equals plateau (final normalized recovery) × 100; immobile fraction = 100 − mobile.
-- Added `plateau_reached` flag; if late-curve slope > 0.01 (still recovering), both fractions suppressed (NaN) and UI shows warning.
-- Updated PDF/HTML reporting and Streamlit single-file metrics to reflect new logic.
+### Repository Hygiene
 
----
-Release Date: 2025-08-20 (auto-generated earlier; update on cut release)
+- `.github/instructions/` removed from tracked content and ignored.
+- Debug scripts moved to `scripts/dev/`.
+- Added data policy docs for `sample_data/` and `data/`.
+
+### Notes
+
+- Legacy root modules and historical markdown files are still present for compatibility/reference and are being consolidated into `docs/` over subsequent cleanup iterations.
