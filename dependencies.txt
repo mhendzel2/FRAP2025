@@ -1,11 +1,23 @@
-# Dependency groups for FRAP2025
-# Base runtime: pip install -r requirements.txt
-# Advanced methods: pip install "frap2025[advanced]"
+# FRAP2025 installation matrix
+# Canonical dependency source: pyproject.toml ([project.dependencies] + [project.optional-dependencies])
+
+[base-runtime]
+pip install -e .
+
+[dev]
+pip install -e .[dev]
 
 [advanced]
+pip install -e .[advanced]
+
+[full]
+pip install -e .[dev,db,viz,advanced]
+
+[pinned-runtime]
+pip install -r requirements.txt
+
+[advanced-packages]
 torch>=2.3
 torchvision>=0.18
 POT>=0.9.4
 pyro-ppl>=1.9
-scikit-image>=0.23
-scipy>=1.13

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0] - 2026-02-24
+
+### Added
+
+- Advanced analysis modules:
+  - `frap2025/population_analysis.py` with multivariate Wasserstein comparison and permutation testing.
+  - `frap2025/material_mechanics.py` with capillary-wave spectroscopy and equipartition-based tension estimation.
+  - `frap2025/spt_models/bayesian.py` with `HDPHMM_Analyzer` (Pyro backend + fallback).
+  - `frap2025/frap_fitting/fit_pinn.py` with `FRAP_PINN` and `fit_frap_pinn` (torch backend + fallback).
+  - `frap2025/optical_flow_analysis.py` with backend-switchable deformation field computation (`farneback` / `raft`).
+- New advanced test coverage in `tests/test_advanced_methods.py`.
+
+### Changed
+
+- Consolidated installation and dependency guidance across:
+  - `pyproject.toml`, `requirements.txt`, `dependencies.txt`, `INSTALLATION.md`, and `README.md`.
+- Added optional `advanced` installation path documentation (`pip install -e .[advanced]`).
+- Aligned base image-processing dependencies to current floors:
+  - `scipy>=1.13`, `scikit-image>=0.23`.
+
+### Metadata
+
+- Version bumped to `0.4.0` in package and citation metadata.
+- Updated `.zenodo.json` software description/keywords to reflect advanced biophysics methods.
+
 ## [0.3.1] - 2026-02-23
 
 ### Added

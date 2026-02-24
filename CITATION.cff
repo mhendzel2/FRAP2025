@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software in published research, please cite it."
 title: "FRAP2025: A Fluorescence Recovery After Photobleaching Analysis Platform"
-version: 0.3.1
+version: 0.4.0
 authors:
   - family-names: Hendzel
     given-names: Michael

@@ -1,6 +1,6 @@
 {
   "title": "FRAP2025: A Fluorescence Recovery After Photobleaching Analysis Platform",
-  "description": "Streamlit and Python toolkit for quantitative FRAP analysis with physics-validated fitting, normalization, and statistical comparison workflows.",
+  "description": "Streamlit and Python toolkit for quantitative FRAP and image biophysics with physics-validated fitting, capillary-wave spectroscopy, PINN-based recovery inference, Bayesian SPT state modeling, and optimal-transport population statistics.",
   "creators": [
     {
       "name": "Hendzel, Michael",
@@ -14,7 +14,11 @@
     "fluorescence microscopy",
     "biophysics",
     "cell biology",
-    "quantitative imaging"
+    "quantitative imaging",
+    "physics-informed neural networks",
+    "optimal transport",
+    "single-particle tracking",
+    "optical flow"
   ],
   "access_right": "open"
 }

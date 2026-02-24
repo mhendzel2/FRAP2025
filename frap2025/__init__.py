@@ -14,7 +14,7 @@ if _LEGACY_MODULE_DIR.exists():
 from . import calibration, core, database, frap_fitting, image, io, reports, spt_models, stats, ui  # noqa: E402
 from . import material_mechanics, optical_flow_analysis, population_analysis  # noqa: E402
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "__version__",

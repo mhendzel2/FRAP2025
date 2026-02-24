@@ -26,6 +26,18 @@ pip install -e .[dev]
 pip install -e .[dev,db,viz]
 ```
 
+### 4. Advanced Biophysics + ML
+
+```bash
+pip install -e .[advanced]
+```
+
+### 5. Full + Advanced
+
+```bash
+pip install -e .[dev,db,viz,advanced]
+```
+
 ## Quick Start (5 steps)
 
 1. Install dependencies (`pip install -e .[dev]`).
@@ -33,6 +45,16 @@ pip install -e .[dev,db,viz]
 3. Load synthetic or experimental traces (`sample_data/` for reproducible examples).
 4. Choose normalization mode explicitly (`simple`, `double`, `full_scale`).
 5. Fit models, review quality flags, and export CSV/figures/reports.
+
+## Advanced Analysis Modules (2025/2026)
+
+- **Heterogeneity-aware population analysis**: Wasserstein/earth-mover population comparison with permutation testing in `frap2025.population_analysis.compare_populations_wasserstein`.
+- **Condensate capillary wave spectroscopy**: FFT-based boundary mode analysis and equipartition-based relative surface tension estimation in `frap2025.material_mechanics.compute_capillary_waves`.
+- **Non-parametric Bayesian SPT**: HDP-HMM-style analyzer with Pyro backend and automatic fallback in `frap2025.spt_models.HDPHMM_Analyzer`.
+- **Physics-informed FRAP fitting**: reaction-diffusion PINN hooks with classical fallback in `frap2025.frap_fitting.fit_frap_pinn`.
+- **Deep-learning optical flow hooks**: unified deformation-field interface with Farneback and optional RAFT backend in `frap2025.optical_flow_analysis.compute_deformation_field`.
+
+All advanced modules use graceful degradation: when optional dependencies are missing, supported fallback methods are used and the application remains operational.
 
 ## Mathematical Models
 

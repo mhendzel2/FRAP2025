@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "frap2025"
-version = "0.3.1"
+version = "0.4.0"
 requires-python = ">=3.11"
 description = "FRAP kinetics analysis platform for quantitative cell biology"
 license = { text = "MIT" }
@@ -14,11 +14,11 @@ dependencies = [
     "streamlit>=1.28",
     "pandas>=2.0",
     "numpy>=1.25",
-    "scipy>=1.11",
+    "scipy>=1.13",
     "matplotlib>=3.8",
     "plotly>=5.17",
     "seaborn>=0.13",
-    "scikit-image>=0.22",
+    "scikit-image>=0.23",
     "opencv-python>=4.8",
     "tifffile>=2023.7",
     "openpyxl>=3.1",
@@ -37,8 +37,6 @@ advanced = [
     "torchvision>=0.18",
     "POT>=0.9.4",
     "pyro-ppl>=1.9",
-    "scikit-image>=0.23",
-    "scipy>=1.13",
 ]
 dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.1", "black>=23.0", "mypy>=1.5"]
 
