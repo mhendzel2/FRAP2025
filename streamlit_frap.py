@@ -3155,48 +3155,48 @@ with tab6:
         # Session save functionality
         if st.button("💾 Save Current Session", type="primary"):
             try:
-                import pickle
+                import json
                 from datetime import datetime
 
-                def sanitize_for_pickle(data):
-                    """Remove unpickleable objects like function references"""
+                def _serialize_session(data):
+                    """Recursively convert session data to JSON-serializable types."""
                     if isinstance(data, dict):
-                        sanitized = {}
-                        for key, value in data.items():
-                            if key == 'func':  # Skip function objects
-                                continue
-                            elif callable(value):  # Skip any callable objects
-                                continue
-                            else:
-                                sanitized[key] = sanitize_for_pickle(value)
-                        return sanitized
-                    elif isinstance(data, list):
-                        return [sanitize_for_pickle(item) for item in data]
-                    elif isinstance(data, tuple):
-                        return tuple(sanitize_for_pickle(item) for item in data)
+                        return {
+                            k: _serialize_session(v)
+                            for k, v in data.items()
+                            if k != 'func' and not callable(v)
+                        }
+                    elif isinstance(data, (list, tuple)):
+                        return [_serialize_session(item) for item in data]
+                    elif isinstance(data, np.ndarray):
+                        return {'__ndarray__': data.tolist(), 'dtype': str(data.dtype)}
+                    elif isinstance(data, pd.DataFrame):
+                        return {'__dataframe__': data.to_dict(orient='list')}
+                    elif isinstance(data, (np.integer,)):
+                        return int(data)
+                    elif isinstance(data, (np.floating,)):
+                        return float(data)
+                    elif isinstance(data, (np.bool_,)):
+                        return bool(data)
                     else:
                         return data
 
-                # Sanitize the data to remove unpickleable objects
-                sanitized_files = sanitize_for_pickle(dm.files)
-                sanitized_groups = sanitize_for_pickle(dm.groups)
-
                 session_data = {
-                    'files': sanitized_files,
-                    'groups': sanitized_groups,
-                    'settings': st.session_state.settings,
+                    'files': _serialize_session(dm.files),
+                    'groups': _serialize_session(dm.groups),
+                    'settings': _serialize_session(st.session_state.settings),
                     'timestamp': datetime.now().isoformat(),
-                    'version': '1.0'
+                    'version': '2.0'
                 }
 
-                session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-                session_bytes = pickle.dumps(session_data)
+                session_filename = f"FRAP_Session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                session_bytes = json.dumps(session_data, allow_nan=False).encode('utf-8')
 
                 st.download_button(
                     label="⬇️ Download Session File",
                     data=session_bytes,
                     file_name=session_filename,
-                    mime="application/octet-stream",
+                    mime="application/json",
                     help="Save current analysis session for later"
                 )
 
@@ -3208,16 +3208,32 @@ with tab6:
         # Session load functionality
         st.markdown("### Load Previous Session")
         uploaded_session = st.file_uploader(
-            "Upload session file (.pkl)",
-            type=['pkl'],
+            "Upload session file (.json)",
+            type=['json'],
             help="Load a previously saved analysis session"
         )
 
         if uploaded_session is not None:
             if st.button("📂 Load Session", type="secondary"):
                 try:
-                    import pickle
-                    session_data = pickle.load(uploaded_session)
+                    import json
+
+                    def _deserialize_session(data):
+                        """Reconstruct session data from JSON-compatible format."""
+                        if isinstance(data, dict):
+                            if '__ndarray__' in data:
+                                return np.array(data['__ndarray__'], dtype=data['dtype'])
+                            elif '__dataframe__' in data:
+                                return pd.DataFrame(data['__dataframe__'])
+                            else:
+                                return {k: _deserialize_session(v) for k, v in data.items()}
+                        elif isinstance(data, list):
+                            return [_deserialize_session(item) for item in data]
+                        else:
+                            return data
+
+                    raw = uploaded_session.read()
+                    session_data = _deserialize_session(json.loads(raw.decode('utf-8')))
 
                     # Validate session data
                     required_keys = ['files', 'groups', 'settings']

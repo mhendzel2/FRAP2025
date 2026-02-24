@@ -591,7 +591,8 @@ def compute_fit_diagnostics(fit: FitResult, t: np.ndarray, y: np.ndarray) -> dic
     norm_residuals = residuals / rmse if rmse > 0 else residuals
     
     # Durbin-Watson statistic (autocorrelation test)
-    dw = np.sum(np.diff(residuals) ** 2) / np.sum(residuals ** 2)
+    ss_residuals = np.sum(residuals ** 2)
+    dw = np.sum(np.diff(residuals) ** 2) / ss_residuals if ss_residuals > 0 else 2.0
     
     # Mean absolute percentage error
     mape = np.mean(np.abs(residuals / (y + 1e-10))) * 100
